@@ -649,6 +649,7 @@ gpui_kit::assets::icon_assets!(
         LayoutGrid,
         Link,
         LockKeyholeOpen,
+        LogIn,
         ListChecks,
         ListTodo,
         ListTree,

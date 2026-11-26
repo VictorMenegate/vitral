@@ -2131,6 +2131,10 @@ fn comandos_fora_do_claude(chat: &Chat) -> Option<Vec<String>> {
         crate::modelo::Agente::Codex => chat.comandos.clone(),
     };
     let mut lista = vec!["clear".to_string()];
+    // O `/conta` do Vitral também troca a conta do Codex (26/11/2026).
+    if chat.agente == crate::modelo::Agente::Codex {
+        lista.push("conta".to_string());
+    }
     for comando in do_agente {
         if !lista.contains(&comando) {
             lista.push(comando);
@@ -2142,6 +2146,7 @@ fn comandos_fora_do_claude(chat: &Chat) -> Option<Vec<String>> {
 fn descricao_comando(comando: &str) -> Option<&'static str> {
     Some(match comando {
         "clear" => "Começa uma sessão nova (o agente esquece a conversa)",
+        "conta" => "Troca a conta deste chat (/conta nome ou padrão)",
         "compact" => "Resume a conversa para liberar contexto",
         "context" => "Mostra o uso do contexto",
         "usage" => "Uso do plano",
@@ -2396,9 +2401,9 @@ mod testes_sugestoes {
         let mut chat = Chat::novo("c".into(), "t", std::path::PathBuf::from("/p"));
         assert_eq!(comandos_fora_do_claude(&chat), None, "o Claude tem os do Claude Code");
         chat.agente = Agente::Codex;
-        assert_eq!(comandos_fora_do_claude(&chat).unwrap(), ["clear", "compact", "review"]);
+        assert_eq!(comandos_fora_do_claude(&chat).unwrap(), ["clear", "conta", "compact", "review"]);
         chat.comandos = vec!["compact".into(), "review".into(), "revisar-pr".into(), "clear".into()];
-        assert_eq!(comandos_fora_do_claude(&chat).unwrap(), ["clear", "compact", "review", "revisar-pr"]);
+        assert_eq!(comandos_fora_do_claude(&chat).unwrap(), ["clear", "conta", "compact", "review", "revisar-pr"]);
         chat.agente = Agente::Gemini;
         chat.comandos.clear();
         assert_eq!(comandos_fora_do_claude(&chat).unwrap(), ["clear"]);

@@ -50,6 +50,11 @@ pub fn usar_pasta(config: PathBuf) {
     let _ = CONFIG.set(config);
 }
 
+/// A pasta da configuração do Vitral (as contas do Codex também moram nela).
+pub(crate) fn pasta_da_config() -> Option<PathBuf> {
+    CONFIG.get().cloned()
+}
+
 /// Sem a pasta da configuração não há contas extras: nunca cai em ".".
 fn pasta_contas() -> Option<PathBuf> {
     Some(CONFIG.get()?.join("contas"))
@@ -167,14 +172,14 @@ pub fn preparar_pasta(id: &str) -> Result<PathBuf> {
 }
 
 #[cfg(unix)]
-fn ligar(fonte: &Path, destino: &Path) -> std::io::Result<()> {
+pub(crate) fn ligar(fonte: &Path, destino: &Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(fonte, destino)
 }
 
 /// No Windows o link pede o Modo de Desenvolvedor (o certo lá é junction e hard link): as contas
 /// extras ficam para depois.
 #[cfg(windows)]
-fn ligar(_fonte: &Path, _destino: &Path) -> std::io::Result<()> {
+pub(crate) fn ligar(_fonte: &Path, _destino: &Path) -> std::io::Result<()> {
     Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "as contas extras ainda não funcionam no Windows"))
 }
 

@@ -419,7 +419,7 @@ fn itens_de_modelo(linhas: Vec<LinhaDeModelo>, marca: Marca) -> Vec<ItemDeEscolh
                     (Simbolo::icone(if aberta { Lucide::ChevronDown } else { Lucide::ChevronRight }), None)
                 }
                 A_CONTA => (Simbolo::icone(Lucide::CircleUserRound), l.seta),
-                v if v.starts_with(DA_CONTA) || v == SEM_VERSOES => (Simbolo::Icone(Icon::empty(), None), l.seta),
+                v if v.starts_with(DA_CONTA) || v.starts_with(DA_CONTA_CODEX) || v == SEM_VERSOES => (Simbolo::Icone(Icon::empty(), None), l.seta),
                 _ => (Simbolo::Glifo(marca), l.seta),
             };
             let titulo = match &l.versao {
@@ -625,7 +625,10 @@ fn partes_do_seletor(motor: &Motor, chat: &Chat, aba: Agente) -> PartesDoSeletor
     let mut partes = PartesDoSeletor::default();
     let titulo_dos_modelos = || None::<String>;
     match aba {
-        Agente::Codex => partes.grupos.push((titulo_dos_modelos(), linhas_do_codex(escolhido, &agente_codex::modelos()))),
+        Agente::Codex => {
+            partes.grupos.push((titulo_dos_modelos(), linhas_do_codex(escolhido, &agente_codex::modelos())));
+            partes.conta = pe_da_conta_codex(motor, chat);
+        }
         Agente::Gemini => partes.grupos.push((titulo_dos_modelos(), linhas_do_gemini(escolhido, &agente_gemini::modelos()))),
         Agente::Claude => {
             let em_uso = chat.modelo_atual.as_deref().filter(|_| do_chat);
@@ -643,6 +646,8 @@ fn partes_do_seletor(motor: &Motor, chat: &Chat, aba: Agente) -> PartesDoSeletor
 
 /// O prefixo das chaves do grupo "Conta do Claude" no seletor: `conta:<id>`, ou `conta:auto`.
 const DA_CONTA: &str = "conta:";
+/// O prefixo das chaves das contas do Codex no seletor: `conta-codex:<id>`.
+const DA_CONTA_CODEX: &str = "conta-codex:";
 
 /// A linha da conta no pé do seletor: qual o chat usa agora e quanto ela gastou ("tecnologia ·
 /// semana 44%"). Na Automática, a conta que ela escolheu.
@@ -679,6 +684,24 @@ fn pe_da_conta(motor: &Motor, chat: &Chat) -> Option<PeDaConta> {
     let usada = motor.conta_para(chat);
     let uso = if motor.conta_sem_login(&usada.id) { "sem login".to_string() } else { descricao_da_conta(&motor.uso_da_conta(&usada.id)) };
     Some(PeDaConta { rotulo: rotulo_da_conta(&usada.nome, escolha == contas::AUTOMATICA, &uso), contas: linhas })
+}
+
+/// A conta do Codex no pé do seletor, como a do Claude: a em uso e, aberta, cada conta com o
+/// login dela. Só com mais de uma conta do Codex.
+fn pe_da_conta_codex(motor: &Motor, chat: &Chat) -> Option<PeDaConta> {
+    if motor.contas_codex.len() < 2 {
+        return None;
+    }
+    let usada = motor.conta_codex_para(chat);
+    let contas = motor
+        .contas_codex
+        .iter()
+        .map(|c| LinhaDeModelo {
+            em_uso: c.id == usada.id,
+            ..LinhaDeModelo::new(format!("{DA_CONTA_CODEX}{}", c.id), c.nome.clone(), if c.logada() { "Com login" } else { "Sem login: entre em Configurações, Agentes, Codex" })
+        })
+        .collect();
+    Some(PeDaConta { rotulo: format!("{} · {}", usada.nome, if usada.logada() { "com login" } else { "sem login" }), contas })
 }
 
 /// A linha discreta embaixo da lista: trocar o modelo de uma conversa do Claude já grande
@@ -1105,6 +1128,15 @@ impl Janela {
                                     return;
                                 }
                                 // Uma linha do grupo da conta troca só a conta do chat.
+                                // A conta do Codex: no motor, que abre a sessão nova quando precisa.
+                                if let Some(conta) = valor.strip_prefix(DA_CONTA_CODEX) {
+                                    let conta = conta.to_string();
+                                    if let Some(m) = &motor_e {
+                                        m.update(cx, |m, cx| m.definir_conta_codex(&chat_id, Some(conta), cx));
+                                    }
+                                    abrir_ou_fechar(&janela, painel, PopCaixa::Modelo, false, cx);
+                                    return;
+                                }
                                 if let Some(conta) = valor.strip_prefix(DA_CONTA) {
                                     let conta = conta.to_string();
                                     mudar(&motor_e, &chat_id, cx, move |c| c.conta = Some(conta));

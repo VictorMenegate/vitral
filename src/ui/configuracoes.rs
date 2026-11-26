@@ -1151,6 +1151,73 @@ impl Configuracoes {
 
     /// Contas: a padrão dos chats (a automática, a com mais folga, ou uma das contas) e o entrar
     /// com outra.
+    /// As contas do Codex (26/11/2026, no jeito do Zerosub): cada uma com o login (ou o Entrar), a
+    /// escolha da padrão dos chats novos, o Tirar das extras e o Adicionar conta, que abre o login
+    /// da nova no terminal.
+    fn grupo_das_contas_codex(&self, window: &Window, cx: &Context<Self>) -> GrupoDeOpcoes {
+        let motor = self.motor.read(cx);
+        let padrao = if motor.config.conta_codex.is_empty() { crate::contas_codex::PRINCIPAL.to_string() } else { motor.config.conta_codex.clone() };
+        let mut grupo = GrupoDeOpcoes::new(Some("Contas do Codex".into()));
+        for conta in &motor.contas_codex {
+            let (id, logada) = (conta.id.clone(), conta.logada());
+            let principal = id == crate::contas_codex::PRINCIPAL;
+            let mut botoes: Vec<AnyElement> = Vec::new();
+            if padrao != id {
+                let (motor_e, valor) = (self.motor.clone(), if principal { String::new() } else { id.clone() });
+                botoes.push(
+                    botao_fantasma(SharedString::from(format!("cfg-codex-padrao-{id}")), None, "Usar nos novos", TamanhoBotao::Barra, window, cx)
+                        .bg(Cores::recuo())
+                        .on_click(move |_, _, cx| {
+                            let valor = valor.clone();
+                            motor_e.update(cx, |m, cx| m.mudar_config(|c| c.conta_codex = valor, cx))
+                        })
+                        .into_any_element(),
+                );
+            }
+            if !logada || !principal {
+                let (motor_e, conta_id) = (self.motor.clone(), id.clone());
+                botoes.push(
+                    botao_fantasma(SharedString::from(format!("cfg-codex-entrar-{id}")), Some(Lucide::LogIn.into()), if logada { "Entrar de novo" } else { "Entrar…" }, TamanhoBotao::Barra, window, cx)
+                        .bg(Cores::recuo())
+                        .on_click(move |_, _, cx| motor_e.read(cx).entrar_conta_codex(&conta_id))
+                        .into_any_element(),
+                );
+            }
+            if !principal {
+                let (motor_e, conta_id) = (self.motor.clone(), id.clone());
+                botoes.push(
+                    botao_icone(SharedString::from(format!("cfg-codex-tirar-{id}")), Lucide::Trash, "Tirar esta conta (o login dela some)", TamanhoBotao::Barra, window, cx)
+                        .on_click(move |_, _, cx| motor_e.update(cx, |m, cx| m.remover_conta_codex(&conta_id, cx)))
+                        .into_any_element(),
+                );
+            }
+            let descricao = match (logada, padrao == id) {
+                (true, true) => "Com login · padrão dos chats novos",
+                (true, false) => "Com login",
+                (false, _) => "Sem login",
+            };
+            grupo = grupo.linha(
+                LinhaDeOpcao::new(SharedString::from(format!("cfg-codex-conta-{id}")), conta.nome.clone())
+                    .descricao(div().text_color(if logada { Cores::tenue() } else { Cores::ambar() }).child(descricao))
+                    .controle(h_flex().gap(esp::E4).children(botoes)),
+            );
+        }
+        let motor_e = self.motor.clone();
+        grupo.linha(
+            LinhaDeOpcao::new("cfg-codex-adicionar", "Outra conta do Codex")
+                .info(
+                    "Cada conta tem uma pasta própria, em que só o login é dela: a configuração e as conversas são as da \
+                     principal. Trocar a conta de um chat que já conversou abre uma sessão nova, com a conversa até ali \
+                     junto da próxima mensagem. Não funciona no Windows por enquanto.",
+                )
+                .controle(botao_cfg("cfg-codex-adicionar", "Adicionar…", window, cx).on_click(move |_, window, cx| {
+                    if let Err(erro) = motor_e.update(cx, |m, cx| m.adicionar_conta_codex(cx)) {
+                        window.push_notification(super::componentes::aviso(super::componentes::Tom::Erro, format!("Não deu para criar a conta: {erro}")), cx);
+                    }
+                })),
+        )
+    }
+
     fn grupos_das_contas(&self, window: &Window, cx: &Context<Self>) -> Vec<AnyElement> {
         let motor = self.motor.read(cx);
         let escolha = if motor.config.conta.is_empty() { crate::contas::PRINCIPAL.to_string() } else { motor.config.conta.clone() };
@@ -1780,7 +1847,10 @@ impl Render for Configuracoes {
                 .collect(),
             Parte::Atalhos => atalhos_grupos,
             Parte::ClaudeCode => std::iter::once(claude_grupo.into_any_element()).chain(contas_grupos).collect(),
-            Parte::Codex => vec![self.grupo_do_agente(Agente::Codex, estreito, window, cx).into_any_element()],
+            Parte::Codex => vec![
+                self.grupo_do_agente(Agente::Codex, estreito, window, cx).into_any_element(),
+                self.grupo_das_contas_codex(window, cx).into_any_element(),
+            ],
             Parte::Gemini => vec![self.grupo_do_agente(Agente::Gemini, estreito, window, cx).into_any_element()],
             Parte::Atualizacoes => {
                 atualizacoes.into_iter().map(IntoElement::into_any_element).chain([ajuda.into_any_element()]).collect()

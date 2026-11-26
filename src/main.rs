@@ -9,6 +9,7 @@ mod claude;
 mod cli_agentes;
 mod codex;
 mod contas;
+mod contas_codex;
 mod dados;
 mod diagnostico;
 mod git;

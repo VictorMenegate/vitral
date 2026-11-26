@@ -874,6 +874,7 @@ mod testes {
             esforco: Some("xhigh".into()),
             ultracode: false,
             pasta_conta: None,
+            ambiente_codex: Vec::new(),
             memoria_nativa: false,
             sugestoes: false,
             mcp_da_equipe: None,

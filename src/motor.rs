@@ -31,6 +31,7 @@ pub mod fundo;
 pub mod passos;
 mod ajustes;
 mod cli_fora;
+mod contas_do_codex;
 pub use ideias::SituacaoDoLinear;
 
 use conversas::{Ciclos, MotivoPassagem};
@@ -295,6 +296,8 @@ pub struct Motor {
     ultima_entrada: HashMap<String, (String, Vec<Entrada>)>,
     /// Contas do Claude (a principal primeiro) e o uso do plano de cada uma.
     pub contas: Vec<Conta>,
+    /// As contas do Codex (`crate::contas_codex`), com a principal primeiro.
+    pub contas_codex: Vec<crate::contas_codex::ContaCodex>,
     uso_por_conta: HashMap<String, Uso>,
     /// As últimas leituras do uso de cada conta, para a previsão de quando o limite acaba.
     historico_uso: HashMap<String, contas::previsao::Historico>,
@@ -707,6 +710,7 @@ impl Motor {
             geracao_atual: HashMap::new(),
             ultima_entrada: HashMap::new(),
             contas: contas::carregar(),
+            contas_codex: crate::contas_codex::carregar(),
             uso_por_conta: HashMap::new(),
             historico_uso: HashMap::new(),
             limite_ate: HashMap::new(),
@@ -2576,6 +2580,7 @@ impl Motor {
         let conta = self.conta_para(&chat);
         let mut opcoes = self.opcoes(&chat, servidor.url(&chat.id));
         opcoes.pasta_conta = conta.pasta();
+        opcoes.ambiente_codex = crate::contas_codex::ambiente(&self.conta_codex_para(&chat));
         // A revisão pelo outro agente só lê: Planejar no Claude, que no Codex é o sandbox
         // `read-only` (`agente_codex::sandbox_de`).
         if self.revisoes_do_par.contains_key(chat_id) {
@@ -2755,6 +2760,7 @@ impl Motor {
             esforco: chat.esforco.clone(),
             ultracode: false,
             pasta_conta: None,
+            ambiente_codex: Vec::new(),
             memoria_nativa: self.config.memoria_ao_terminar,
             sugestoes: self.config.sugerir_resposta && claude,
             mcp_da_equipe,
@@ -3168,8 +3174,12 @@ impl Motor {
         let Some(chat) = self.chat_mut(chat_id).map(Chat::copia_sem_itens) else {
             return;
         };
+        if chat.agente == Agente::Codex {
+            self.comando_conta_codex(chat_id, argumento, cx);
+            return;
+        }
         if chat.agente != Agente::Claude {
-            self.avisar(chat_id, "As contas são do Claude: este chat é de outro agente.", false);
+            self.avisar(chat_id, "Este agente ainda tem uma conta só.", false);
             cx.notify();
             return;
         }
@@ -4410,6 +4420,10 @@ impl Motor {
                 // Limite do plano numa conta, com outra disponível na escolha automática: o
                 // mesmo turno roda de novo na outra conta.
                 if erro && self.trocar_de_conta(chat_id, &texto, cx) {
+                    return;
+                }
+                // O mesmo no Codex, entre as contas dele (`motor/contas_do_codex.rs`).
+                if erro && self.trocar_conta_codex_no_limite(chat_id, &texto, cx) {
                     return;
                 }
                 // O turno deu certo nesta conta: o login dela está valendo.

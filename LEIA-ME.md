@@ -1823,6 +1823,21 @@ Claude Code, ligada de fábrica): um chat com a conta escolhida à mão que bate
 a conta com mais folga, repete o turno nela e fica nela, com o aviso na conversa; desligada, só a
 Automática troca, e as outras mostram o **Continuar na…**.
 
+**Contas do Codex** (26/11/2026; `src/contas_codex.rs` e `src/motor/contas_do_codex.rs`): em
+Configurações > Agentes > Codex, **Contas do Codex** lista a principal (o login normal, em
+`~/.codex` ou `$CODEX_HOME`) e as extras, cada uma com o login (ou **Entrar…**, que abre o `codex
+login` da conta no terminal), **Usar nos novos** (a padrão dos chats novos, `Config.conta_codex`) e,
+nas extras, a lixeira. **Adicionar…** cria a conta ("Codex 2", "Codex 3"…) e abre o login dela. Cada
+extra é uma pasta em `~/.config/vitral/contas-codex/<id>` usada como `CODEX_HOME`, onde só o
+`auth.json` é dela: `config.toml`, `AGENTS.md`, prompts, skills e as sessões são links para a
+principal, e o processo leva `CODEX_SQLITE_HOME` da principal. A conta de um chat do Codex se troca
+no seletor de modelo (a linha da conta, com mais de uma) ou com `/conta <nome>` e `/conta padrão`.
+O Codex não continua uma conversa noutra conta: com a sessão já aberta, a troca começa uma sessão
+nova, e a conversa até ali, exportada num arquivo, vai como nota junto da próxima mensagem. Com
+**Trocar sozinho no limite**, o limite do plano numa conta passa o chat para outra conta do Codex
+com login e repete o turno nela. O anel de uso do Codex continua um só (as sessões são as mesmas).
+No Windows as contas extras ainda não funcionam (os links pedem o Modo de Desenvolvedor).
+
 No canto de cima, à direita, da janela, logo abaixo do ×, flutua um anel de 30 por serviço, um em cima do
 outro, cada um num disco opaco da peça (`uso_no_canto`, em `src/ui/uso_plano.rs`): cada um só com a conta daquele serviço conectada (o do Codex,
 também com uso lido). Cada um é o disco da marca com **um** anel em volta (com a fenda

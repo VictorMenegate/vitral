@@ -462,6 +462,9 @@ pub struct Chat {
     /// Conta do Claude (id, ou "auto"); `None` segue a configuração.
     #[serde(default)]
     pub conta: Option<String>,
+    /// Conta do Codex (id em `contas_codex`); `None` segue a configuração (`Config.conta_codex`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conta_codex: Option<String>,
     /// Tokens no contexto e tamanho da janela, do último turno.
     #[serde(default)]
     pub contexto: Option<u64>,
@@ -543,6 +546,7 @@ impl Chat {
             permitidas: Vec::new(),
             esforco: None,
             conta: None,
+            conta_codex: None,
             contexto: None,
             janela: None,
             comandos: Vec::new(),
@@ -762,6 +766,8 @@ pub struct Config {
     /// com mais folga, e fica nela (como o Zerosub do Paseo; dono, 26/11/2026: "melhora a troca de
     /// conta"). Desligado, só a Automática troca, e as outras mostram o "Continuar na…".
     pub trocar_conta_no_limite: bool,
+    /// A conta do Codex dos chats novos (id em `contas_codex`; vazio é a principal).
+    pub conta_codex: String,
     /// Modo foco: as conversas mostram só as mensagens, sem as chamadas de ferramenta. Vale para
     /// todos os chats (era por painel; dono, 18/11/2026: "ser pra todos os chats").
     pub modo_foco: bool,
@@ -936,6 +942,7 @@ impl Default for Config {
             mcp_trabalhadores: false,
             arquivar_apos_dias: 0,
             uso_no_canto: true,
+            conta_codex: String::new(),
             trocar_conta_no_limite: true,
             modo_foco: false,
             transparencia: crate::tema::TRANSPARENCIA_PADRAO,
