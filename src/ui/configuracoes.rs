@@ -109,7 +109,6 @@ enum Parte {
     Chats,
     Agentes,
     Revisao,
-    Contas,
     Notificacoes,
     Memoria,
     Aparencia,
@@ -121,12 +120,12 @@ enum Parte {
 }
 
 impl Parte {
-    /// As partes do protótipo Linear (25/11/2026); os Perfis saíram.
-    const TODAS: [Parte; 12] = [
+    /// As partes do protótipo Linear (25/11/2026); os Perfis saíram, e as Contas moram no Claude
+    /// Code, porque são só contas do Claude (dono, 26/11/2026).
+    const TODAS: [Parte; 11] = [
         Parte::Chats,
         Parte::Agentes,
         Parte::Revisao,
-        Parte::Contas,
         Parte::Notificacoes,
         Parte::Memoria,
         Parte::Aparencia,
@@ -142,7 +141,6 @@ impl Parte {
             Parte::Chats => "Chats",
             Parte::Agentes => "Agentes",
             Parte::Revisao => "Revisão",
-            Parte::Contas => "Contas",
             Parte::Notificacoes => "Notificações",
             Parte::Memoria => "Memória",
             Parte::Aparencia => "Aparência",
@@ -159,7 +157,6 @@ impl Parte {
             Parte::Chats => Lucide::MessagesSquare,
             Parte::Agentes => Lucide::UsersRound,
             Parte::Revisao => Lucide::Eye,
-            Parte::Contas => Lucide::User,
             Parte::Notificacoes => Lucide::Bell,
             Parte::Memoria => Lucide::Brain,
             Parte::Aparencia => Lucide::Sun,
@@ -1600,7 +1597,6 @@ impl Render for Configuracoes {
                 versoes_grupo.into_any_element(),
             ],
             Parte::Revisao => revisao_grupos,
-            Parte::Contas => contas_grupos,
             Parte::Notificacoes => vec![notificacoes_grupo.into_any_element()],
             Parte::Memoria => vec![memoria_grupo.into_any_element()],
             Parte::Aparencia => std::iter::once(tamanho.into_any_element())
@@ -1608,7 +1604,7 @@ impl Render for Configuracoes {
                 .chain([interface.into_any_element()])
                 .collect(),
             Parte::Atalhos => atalhos_grupos,
-            Parte::ClaudeCode => vec![claude_grupo.into_any_element()],
+            Parte::ClaudeCode => std::iter::once(claude_grupo.into_any_element()).chain(contas_grupos).collect(),
             Parte::Codex => vec![self.grupo_do_agente(Agente::Codex, estreito, window, cx).into_any_element()],
             Parte::Gemini => vec![self.grupo_do_agente(Agente::Gemini, estreito, window, cx).into_any_element()],
             Parte::Atualizacoes => {
@@ -1728,11 +1724,12 @@ mod testes {
     /// Agentes e o Codex e o Gemini, depois do Claude Code; cada nome é um só, e cabe na coluna.
     #[test]
     fn as_partes_da_coluna_sao_as_do_prototipo() {
-        // Protótipo Linear (25/11/2026): entram Revisão, Contas, Notificações e Atalhos; os Perfis saem.
+        // Protótipo Linear (25/11/2026): entram Revisão, Notificações e Atalhos; os Perfis saem. As
+        // Contas ficam dentro do Claude Code (são só do Claude).
         let nomes: Vec<&str> = Parte::TODAS.into_iter().map(Parte::nome).collect();
         assert_eq!(
             nomes,
-            ["Chats", "Agentes", "Revisão", "Contas", "Notificações", "Memória", "Aparência", "Atalhos", "Claude Code", "Codex", "Gemini", "Atualizações"]
+            ["Chats", "Agentes", "Revisão", "Notificações", "Memória", "Aparência", "Atalhos", "Claude Code", "Codex", "Gemini", "Atualizações"]
         );
     }
 
