@@ -3,6 +3,24 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.11.2
+
+Bem mais fluido com um chat trabalhando, e os ramos e a dupla de agentes mais firmes.
+
+- **Mais fluido.** Os anéis viraram imagens, as partes da janela que não mudam não são refeitas
+  a cada quadro e o fundo animado é calculado à parte. Com um chat escrevendo, a janela passou
+  de uns 22 para uns 33 quadros por segundo, com metade do trabalho da placa de vídeo.
+- **Ramo com o Claude.** O ramo aberto na vez do Codex não quebra mais quando o Claude entra, e o
+  erro de um turno diz o motivo, e não só "error_during_execution".
+- **Dupla de agentes.** A mensagem com @ para o outro agente espera o turno atual terminar; o
+  "Negar e explicar" chega ao Codex e ao Gemini; e uma pasta que sumiu ou um agente não
+  instalado deixam a mensagem na fila, sem perdê-la.
+- **Lista.** Volta a estreitar até bem pequena, sem recolher, e o fundo dela ficou menos
+  transparente.
+- **Detalhes.** O metal segue também a intensidade da cor de destaque (um destaque cinza deixa
+  o metal cinza), a hora do Nesta conversa foi para o canto, e a barra das mensagens não passa
+  mais por cima da caixa.
+
 ## 0.11.1
 
 Mais fluido, com os menus chapados e uma rodada de ajustes do jeito novo.
