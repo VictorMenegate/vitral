@@ -742,10 +742,10 @@ impl Janela {
             let compactando = motor.compactando(&chat.id);
             if (no_fundo.is_empty() || compactando)
                 && parcial.is_none()
-                && texto_atividade(&chat.itens, false, motor.dirigidas_no_turno(&chat.id)) == "Pensando…"
+                && texto_atividade(&chat.itens, false, motor.dirigidas_no_turno(&chat.id)) == *crate::tr!("Pensando…")
             {
                 let rotulo = rotulo_do_turno_calado(compactando, motor.esperando_agentes(&chat.id));
-                blocos.push(Planejado::pronto(Bloco::Log, None, linha_pensando(painel_id, rotulo, cx.theme().font_family.clone())));
+                blocos.push(Planejado::pronto(Bloco::Log, None, linha_pensando(painel_id, crate::i18n::traduzir(rotulo).into(), cx.theme().font_family.clone())));
             }
         }
         // Só o que está à vista (e a sobra em volta) é montado; o resto entra como um espaço da
@@ -1099,7 +1099,7 @@ impl Janela {
                             // A cor cheia dos balões da conversa (Linear, 25/11/2026).
                             .bg(Cores::balao())
                             .child(div().relative().fala().text_color(Cores::texto_do_balao()).line_clamp(2).child(texto))
-                            .dica_no_ponteiro(|window, cx| Tooltip::new("Ir até esta mensagem").build(window, cx))
+                            .dica_no_ponteiro(|window, cx| Tooltip::new(crate::tr!("Ir até esta mensagem")).build(window, cx))
                             .on_click(move |_, _, cx| {
                                 let _ = janela.update(cx, |j, cx| j.ir_para_a_mensagem(painel_id, i, alto, cx));
                             }),
@@ -1200,15 +1200,15 @@ impl Janela {
         // ou ele acabou de abrir.
         if let Some(sub) = motor.subconversa(&chat.id) {
             let (titulo, texto) = if motor.execucao(&chat.id).rodando() {
-                ("O subagente está começando", "O que ele ler, rodar e responder aparece aqui.")
+                (crate::tr!("O subagente está começando"), crate::tr!("O que ele ler, rodar e responder aparece aqui."))
             } else if sub.fonte == crate::motor::subconversa::Fonte::Lendo {
-                ("Lendo a conversa do subagente…", "Ela vem do arquivo que o Claude Code gravou.")
+                (crate::tr!("Lendo a conversa do subagente…"), crate::tr!("Ela vem do arquivo que o Claude Code gravou."))
             } else {
-                ("Sem conversa guardada", "O Claude Code não tem mais o arquivo deste subagente, e o cartão dele não guardou nada.")
+                (crate::tr!("Sem conversa guardada"), crate::tr!("O Claude Code não tem mais o arquivo deste subagente, e o cartão dele não guardou nada."))
             };
             return EstadoVazio::new(Lucide::Workflow, titulo).texto(texto).amplo().into_any_element();
         }
-        EstadoVazio::new(Lucide::MessagesSquare, "Converse com este chat")
+        EstadoVazio::new(Lucide::MessagesSquare, crate::tr!("Converse com este chat"))
             .texto(onde_o_chat_trabalha(motor, chat))
             .amplo()
             .into_any_element()
@@ -1270,14 +1270,14 @@ impl Janela {
                 let rolar = RolarAoAchado::novo(format!("rolar-{chave}").into(), &realce, contexto.rolagem, elemento);
                 (bloco, rolar.into_any_element())
             }
-            Item::Cartao { id, .. } => aviso_do_chat(&format!("Cartão #{id}"), false, &Realce::default()),
+            Item::Cartao { id, .. } => aviso_do_chat(&crate::tr!("Cartão #{id}", id = id), false, &Realce::default()),
             Item::Vez { agente, .. } => (Bloco::Marco, marca_da_vez(*agente)),
             Item::FimDoAgente { .. } => (Bloco::Log, self.fim_do_agente(contexto, indice, item, cx)),
             Item::Revisao { de, texto, mandada, .. } => {
                 (Bloco::Recebida, self.cartao_da_revisao(contexto, indice, *de, texto, *mandada, window, cx))
             }
             Item::Desconhecido(_) => {
-                aviso_do_chat("(mensagem de uma versão mais nova)", false, &Realce::default())
+                aviso_do_chat(&crate::tr!("(mensagem de uma versão mais nova)"), false, &Realce::default())
             }
         }
     }
@@ -1487,7 +1487,7 @@ impl Janela {
         let realce = contexto.busca.realce(indice, Campo::Texto);
         let id = |nome: &str| SharedString::from(format!("erro-{chave}-{nome}"));
         let mut cartao = CartaoDeErro::new(icone, cor, lido.titulo.clone())
-            .canto(BotaoCopiar::new(id("copiar"), lido.para_copiar.clone()).dica("Copiar o erro"));
+            .canto(BotaoCopiar::new(id("copiar"), lido.para_copiar.clone()).dica(crate::tr!("Copiar o erro")));
         if let Some(frase) = lido.frase.clone() {
             cartao = if lido.cru.is_none() && !realce.vazio() {
                 cartao.frase(busca_conversa::realcar(frase, &realce))
@@ -1509,14 +1509,14 @@ impl Janela {
             let aberto = !lido.recolhido || self.expandidos.contains(&chave_detalhes) || !realce.vazio();
             if lido.recolhido {
                 let icone = if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight };
-                cartao = cartao.acao(fantasma(id("detalhes"), Some(icone), "Detalhes", TamanhoBotao::Linha, alternar(chave_detalhes.clone(), cx), window, cx));
+                cartao = cartao.acao(fantasma(id("detalhes"), Some(icone), crate::tr!("Detalhes"), TamanhoBotao::Linha, alternar(chave_detalhes.clone(), cx), window, cx));
             }
             if aberto {
                 let tudo = self.expandidos.contains(&chave_tudo);
                 let longo = cru.lines().count() > 8 || cru.chars().count() > 640;
                 let cortar = longo && !tudo;
                 let mostrar = longo.then(|| {
-                    let (icone, rotulo) = if tudo { (Lucide::ChevronUp, "Mostrar menos") } else { (Lucide::ChevronDown, "Mostrar tudo") };
+                    let (icone, rotulo) = if tudo { (Lucide::ChevronUp, crate::tr!("Mostrar menos")) } else { (Lucide::ChevronDown, crate::tr!("Mostrar tudo")) };
                     h_flex().ml(r(-8.)).child(fantasma(id("tudo"), Some(icone), rotulo, TamanhoBotao::Linha, alternar(chave_tudo, cx), window, cx))
                 });
                 // 14 do cartão menos 8: o mínimo, 10.
@@ -1570,7 +1570,7 @@ impl Janela {
                 return;
             }
             let (motor_e, id_chat, dupla) = (self.motor.clone(), chat.id.clone(), chat.parceiro.is_some());
-            let rotulo = format!("Continuar no {}", outro.nome());
+            let rotulo = crate::tr!("Continuar no {nome}", nome = outro.nome());
             acoes.push(
                 fantasma(
                     id("continuar"),
@@ -1594,40 +1594,40 @@ impl Janela {
                 .into_any_element(),
             );
         };
-        let contas = |rotulo: &str, icone: Lucide, nome: &str| {
-            fantasma(id(nome), Some(icone), rotulo.to_string(), TamanhoBotao::Linha, cx.listener(|this, _, window, cx| this.dialogo_contas(window, cx)), window, cx)
+        let contas = |rotulo: SharedString, icone: Lucide, nome: &str| {
+            fantasma(id(nome), Some(icone), rotulo, TamanhoBotao::Linha, cx.listener(|this, _, window, cx| this.dialogo_contas(window, cx)), window, cx)
                 .into_any_element()
         };
-        let instalar = |rotulo: &str, icone: Lucide, nome: &str| {
-            fantasma(id(nome), Some(icone), rotulo.to_string(), TamanhoBotao::Linha, |_, _, _| super::uso_plano::instalar_codex(), window, cx)
+        let instalar = |rotulo: SharedString, icone: Lucide, nome: &str| {
+            fantasma(id(nome), Some(icone), rotulo, TamanhoBotao::Linha, |_, _, _| super::uso_plano::instalar_codex(), window, cx)
                 .into_any_element()
         };
         // O instalador do Gemini também faz o login (`agy acp --login`), e sem instalar só entra.
-        let gemini = |rotulo: &str, icone: Lucide, nome: &str| {
-            fantasma(id(nome), Some(icone), rotulo.to_string(), TamanhoBotao::Linha, |_, _, _| super::uso_plano::instalar_gemini(), window, cx)
+        let gemini = |rotulo: SharedString, icone: Lucide, nome: &str| {
+            fantasma(id(nome), Some(icone), rotulo, TamanhoBotao::Linha, |_, _, _| super::uso_plano::instalar_gemini(), window, cx)
                 .into_any_element()
         };
         match (lido.tipo, lido.agente) {
             (TipoDeErro::Limite, Agente::Codex) => {
                 if let Some(url) = lido.url_de_uso.clone() {
                     acoes.push(
-                        fantasma(id("uso"), Some(Lucide::ExternalLink), "Ver o uso", TamanhoBotao::Linha, move |_, _, cx| cx.open_url(&url), window, cx)
+                        fantasma(id("uso"), Some(Lucide::ExternalLink), crate::tr!("Ver o uso"), TamanhoBotao::Linha, move |_, _, cx| cx.open_url(&url), window, cx)
                             .into_any_element(),
                     );
                 }
                 continuar(&mut acoes);
             }
             (TipoDeErro::Limite, Agente::Claude) => {
-                acoes.push(contas("Contas do Claude", Lucide::CircleUserRound, "contas"));
+                acoes.push(contas(crate::tr!("Contas do Claude"), Lucide::CircleUserRound, "contas"));
                 continuar(&mut acoes);
             }
             (TipoDeErro::Limite, Agente::Gemini) => continuar(&mut acoes),
-            (TipoDeErro::Login, Agente::Gemini) => acoes.push(gemini("Entrar no Gemini", Lucide::KeyRound, "entrar")),
-            (TipoDeErro::SemAgente, Agente::Gemini) => acoes.push(gemini("Instalar o Gemini", Lucide::Download, "instalar")),
+            (TipoDeErro::Login, Agente::Gemini) => acoes.push(gemini(crate::tr!("Entrar no Gemini"), Lucide::KeyRound, "entrar")),
+            (TipoDeErro::SemAgente, Agente::Gemini) => acoes.push(gemini(crate::tr!("Instalar o Gemini"), Lucide::Download, "instalar")),
             // Os ACP novos: o instalador (que também entra) e o login, pelo perfil de cada um.
             (TipoDeErro::Limite, outro) if outro.acp() => continuar(&mut acoes),
             (TipoDeErro::Login | TipoDeErro::SemAgente, outro) if outro.acp() => {
-                let rotulo = if lido.tipo == TipoDeErro::Login { format!("Entrar no {}", outro.nome()) } else { format!("Instalar o {}", outro.nome()) };
+                let rotulo = if lido.tipo == TipoDeErro::Login { crate::tr!("Entrar no {nome}", nome = outro.nome()) } else { crate::tr!("Instalar o {nome}", nome = outro.nome()) };
                 let login = lido.tipo == TipoDeErro::Login;
                 acoes.push(
                     fantasma(
@@ -1652,7 +1652,7 @@ impl Janela {
                     fantasma(
                         id("entrar"),
                         Some(Lucide::KeyRound),
-                        "Entrar de novo",
+                        crate::tr!("Entrar de novo"),
                         TamanhoBotao::Linha,
                         cx.listener(move |this, _, window, cx| this.entrar_de_novo_na_conta(conta.clone(), window, cx)),
                         window,
@@ -1661,15 +1661,15 @@ impl Janela {
                     .into_any_element(),
                 );
             }
-            (TipoDeErro::Login, Agente::Codex) => acoes.push(instalar("Entrar no Codex", Lucide::KeyRound, "entrar")),
-            (TipoDeErro::SemAgente, _) => acoes.push(instalar("Instalar o Codex", Lucide::Download, "instalar")),
+            (TipoDeErro::Login, Agente::Codex) => acoes.push(instalar(crate::tr!("Entrar no Codex"), Lucide::KeyRound, "entrar")),
+            (TipoDeErro::SemAgente, _) => acoes.push(instalar(crate::tr!("Instalar o Codex"), Lucide::Download, "instalar")),
             (TipoDeErro::Contexto, Agente::Claude) => {
                 let painel = contexto.painel;
                 acoes.push(
                     fantasma(
                         id("compactar"),
                         Some(Lucide::Minimize),
-                        "Compactar",
+                        crate::tr!("Compactar"),
                         TamanhoBotao::Linha,
                         cx.listener(move |this, _, _, cx| this.compactar_conversa(painel, cx)),
                         window,
@@ -1738,7 +1738,7 @@ impl Janela {
                             .pr(esp::E32)
                             .child(texto)
                             .child(div().absolute().top_0().right_0().child(
-                                BotaoCopiar::new(SharedString::from(format!("copiar-{chave_do_trecho}")), copiar).dica("Copiar a citação"),
+                                BotaoCopiar::new(SharedString::from(format!("copiar-{chave_do_trecho}")), copiar).dica(crate::tr!("Copiar a citação")),
                             ))
                             .into_any_element(),
                         None => texto.into_any_element(),
@@ -1853,7 +1853,7 @@ impl Janela {
                 botao_so_icone(
                     SharedString::from(format!("abrir-de-{chave}")),
                     Lucide::ArrowRight,
-                    format!("Abrir o chat “{titulo}”\nCtrl+clique abre ao lado"),
+                    crate::tr!("Abrir o chat “{titulo}”\nCtrl+clique abre ao lado", titulo = titulo),
                     TamanhoBotao::Linha,
                     abrir_chat(alvo, cx),
                     window,
@@ -1941,8 +1941,8 @@ fn estilo_das_mensagens(vista: TextView, cx: &App) -> TextView {
         .selectable(true)
         .code_block_actions(move |bloco, _, _| {
             let dica = match bloco.lang().filter(|l| !l.is_empty()) {
-                Some(l) => format!("Copiar código {l}"),
-                None => "Copiar código".to_string(),
+                Some(l) => crate::tr!("Copiar código {linguagem}", linguagem = l),
+                None => crate::tr!("Copiar código"),
             };
             // Opaco, no preto do poço: o código não quebra mais a linha e passa por baixo do botão
             // (o fundo que o kit põe em volta dele é translúcido, e a letra aparecia através). A
@@ -1959,7 +1959,7 @@ fn estilo_das_mensagens(vista: TextView, cx: &App) -> TextView {
                 // Sem os links internos que os caminhos de arquivo ganharam na resposta.
                 BotaoCopiar::new("copiar-tabela", super::links_arquivo::sem_links_do_vitral(&tabela.markdown))
                     .com_shift(tabela_para_planilha(&tabela.headers, &tabela.rows))
-                    .dica("Copiar a tabela (com Shift, para colar em planilha)"),
+                    .dica(crate::tr!("Copiar a tabela (com Shift, para colar em planilha)")),
             )
         })
 }
@@ -2270,7 +2270,7 @@ fn com_alcance_da_barra_embaixo<E: Styled>(elemento: E) -> E {
 fn mensagens_do_usuario(itens: &[Item]) -> Vec<(usize, String)> {
     itens.iter().enumerate().filter_map(|(i, item)| match item {
         Item::Usuario { texto, .. } if !texto.trim().is_empty() => Some((i, texto_da_presa(texto))),
-        Item::Usuario { anexos, .. } if !anexos.is_empty() => Some((i, contagem(anexos.len(), "anexo", "anexos"))),
+        Item::Usuario { anexos, .. } if !anexos.is_empty() => Some((i, contagem(anexos.len(), &crate::tr!("anexo"), &crate::tr!("anexos")))),
         _ => None,
     })
     .collect()
@@ -2409,7 +2409,7 @@ fn separador_novo() -> AnyElement {
         .min_h(r(24.))
         .gap(r(8.))
         .child(traco())
-        .child(div().flex_none().metadado().font_semibold().text_color(Cores::destaque_texto()).child("Novo"))
+        .child(div().flex_none().metadado().font_semibold().text_color(Cores::destaque_texto()).child(crate::tr!("Novo")))
         .child(traco())
         .into_any_element()
 }
@@ -2463,7 +2463,7 @@ fn selo_ultracode() -> Div {
 /// admin.py"; o que ele disse fica como está.
 pub(super) fn detalhe_do_passo(passo: &str) -> String {
     match passo.split_once(" · ") {
-        Some((nome, resto)) if !nome.contains(' ') => format!("{} {resto}", verbo_da_ferramenta(nome, false)),
+        Some((nome, resto)) if !nome.contains(' ') => format!("{} {resto}", verbo_na_tela(nome, false)),
         _ => passo.to_string(),
     }
 }
@@ -2471,7 +2471,10 @@ pub(super) fn detalhe_do_passo(passo: &str) -> String {
 /// "9,8 s", "1 min 20 s": quanto um bloco de raciocínio durou.
 pub(super) fn duracao_curta(milis: u64) -> String {
     match milis {
-        0..10_000 => format!("{:.1} s", milis as f64 / 1000.).replace('.', ","),
+        0..10_000 => {
+            let segundos = format!("{:.1} s", milis as f64 / 1000.);
+            if crate::i18n::lingua() == crate::i18n::Lingua::Ingles { segundos } else { segundos.replace('.', ",") }
+        }
         10_000..60_000 => format!("{} s", milis / 1000),
         _ => format!("{} min {} s", milis / 60_000, (milis % 60_000) / 1000),
     }
@@ -2529,7 +2532,7 @@ const NOMES_NA_DICA: usize = 10;
 fn dica_da_pilha(nomes: &[String]) -> String {
     let mut linhas: Vec<String> = nomes.iter().take(NOMES_NA_DICA).cloned().collect();
     if nomes.len() > NOMES_NA_DICA {
-        linhas.push(format!("e mais {}", nomes.len() - NOMES_NA_DICA));
+        linhas.push(crate::tr!("e mais {n}", n = nomes.len() - NOMES_NA_DICA).to_string());
     }
     linhas.join("\n")
 }
@@ -2563,7 +2566,7 @@ fn pilha_de_imagens(chat: &str, lista: &[(usize, PathBuf)], cx: &Context<Janela>
                     .overflow_hidden()
                     .child(img(caminho.clone()).size_full().rounded(raio::CONTROLE).object_fit(ObjectFit::Cover))
             })))
-            .child(div().flex_none().metadado().text_color(Cores::tenue()).child(contagem(n, "imagem", "imagens")))
+            .child(div().flex_none().metadado().text_color(Cores::tenue()).child(contagem(n, &crate::tr!("imagem"), &crate::tr!("imagens"))))
             .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor(&chat_id, &primeira, window, cx)))
             .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
     )
@@ -2583,14 +2586,14 @@ fn pilula_de_arquivo(id: String, caminho: &Path, chat: &str, no_balao: bool, cx:
     let detalhe = lido.detalhe();
     let imagem = crate::claude::tipo_imagem(caminho).is_some();
     let dica = SharedString::from(match (lido.existe, detalhe.is_empty()) {
-        (false, _) => format!("Não está mais em {}", caminho.display()),
+        (false, _) => crate::tr!("Não está mais em {caminho}", caminho = caminho.display()).to_string(),
         (true, true) => format!("{nome}\n{}", caminho.display()),
         (true, false) => format!("{nome} · {detalhe}\n{}", caminho.display()),
     });
     let medida = match (lido.medidas, &lido.tamanho) {
         (Some((largura, altura)), _) => format!("{largura}×{altura}"),
         (None, Some(tamanho)) => tamanho.to_string(),
-        (None, None) => "sumiu".into(),
+        (None, None) => crate::tr!("sumiu").to_string(),
     };
     let abre = imagem && lido.existe;
     let simbolo = if abre {
@@ -2682,7 +2685,7 @@ fn remetente(motor: &Motor, de: &str) -> (Option<Quem>, String) {
         return (None, "Vitral".into());
     }
     if de == "coordenador" {
-        return (Some(Quem::Coordenador), "Conversa antiga".into());
+        return (Some(Quem::Coordenador), crate::tr!("Conversa antiga").to_string());
     }
     if de == "Mestre" {
         return (Some(Quem::Mestre), "Mestre".into());
@@ -2811,22 +2814,22 @@ pub(super) fn resumo_das_chamadas(chamadas: &[(usize, &Item)], curto: bool) -> S
     let editados = editados_nas_chamadas(chamadas.iter().map(|(_, item)| *item));
     let mut partes = Vec::new();
     if curto {
-        if comandos > 0 { partes.push(contagem(comandos, "comando", "comandos")); }
+        if comandos > 0 { partes.push(contagem(comandos, &crate::tr!("comando"), &crate::tr!("comandos"))); }
         if (1..=2).contains(&editados.len()) { partes.push(editou(&editados)); }
-        else if !editados.is_empty() { partes.push(contagem(editados.len(), "editado", "editados")); }
-        if leituras > 0 { partes.push(contagem(leituras, "lido", "lidos")); }
-        if buscas > 0 { partes.push(contagem(buscas, "busca", "buscas")); }
-        if outras > 0 { partes.push(contagem(outras, "ferramenta", "ferramentas")); }
-        if passos { partes.push("passos".into()); }
-        if partes.is_empty() && pensamentos > 0 { partes.push("Pensou".into()); }
+        else if !editados.is_empty() { partes.push(contagem(editados.len(), &crate::tr!("editado"), &crate::tr!("editados"))); }
+        if leituras > 0 { partes.push(contagem(leituras, &crate::tr!("lido"), &crate::tr!("lidos"))); }
+        if buscas > 0 { partes.push(contagem(buscas, &crate::tr!("busca"), &crate::tr!("buscas"))); }
+        if outras > 0 { partes.push(contagem(outras, &crate::tr!("ferramenta"), &crate::tr!("ferramentas"))); }
+        if passos { partes.push(crate::tr!("passos").to_string()); }
+        if partes.is_empty() && pensamentos > 0 { partes.push(crate::tr!("Pensou").to_string()); }
     } else {
-        if comandos > 0 { partes.push(format!("rodou {}", contagem(comandos, "comando", "comandos"))); }
+        if comandos > 0 { partes.push(crate::tr!("rodou {contagem}", contagem = contagem(comandos, &crate::tr!("comando"), &crate::tr!("comandos"))).to_string()); }
         if !editados.is_empty() { partes.push(editou(&editados)); }
-        if leituras > 0 { partes.push(format!("leu {}", contagem(leituras, "arquivo", "arquivos"))); }
-        if buscas > 0 { partes.push(format!("fez {}", contagem(buscas, "busca", "buscas"))); }
-        if outras > 0 { partes.push(format!("usou {}", contagem(outras, "ferramenta", "ferramentas"))); }
-        if passos { partes.push("atualizou os passos".into()); }
-        if partes.is_empty() && pensamentos > 0 { partes.push("Pensou sobre o pedido".into()); }
+        if leituras > 0 { partes.push(crate::tr!("leu {contagem}", contagem = contagem(leituras, &crate::tr!("arquivo"), &crate::tr!("arquivos"))).to_string()); }
+        if buscas > 0 { partes.push(crate::tr!("fez {contagem}", contagem = contagem(buscas, &crate::tr!("busca"), &crate::tr!("buscas"))).to_string()); }
+        if outras > 0 { partes.push(crate::tr!("usou {contagem}", contagem = contagem(outras, &crate::tr!("ferramenta"), &crate::tr!("ferramentas"))).to_string()); }
+        if passos { partes.push(crate::tr!("atualizou os passos").to_string()); }
+        if partes.is_empty() && pensamentos > 0 { partes.push(crate::tr!("Pensou sobre o pedido").to_string()); }
     }
     let mut resumo = partes.join(" · ");
     if let Some(primeira) = resumo.get_mut(..1) { primeira.make_ascii_uppercase(); }
@@ -2939,15 +2942,15 @@ fn resumo_ao_vivo(itens: &[Item], turno: TurnoRecolhivel) -> String {
     let agora = trecho.iter().rev().find_map(|i| match i {
         Item::Ferramenta { nome, resumo, resultado, .. } => {
             let detalhe = detalhe_da_chamada(nome, resumo);
-            let verbo = verbo_da_ferramenta(nome, resultado.is_none());
-            Some(if detalhe.is_empty() { verbo.to_string() } else { format!("{verbo} {detalhe}") })
+            let verbo = verbo_na_tela(nome, resultado.is_none());
+            Some(if detalhe.is_empty() { verbo } else { format!("{verbo} {detalhe}") })
         }
-        Item::Raciocinio { .. } => Some("Pensou".to_string()),
+        Item::Raciocinio { .. } => Some(crate::tr!("Pensou").to_string()),
         _ => None,
     });
-    let mut partes = vec![agora.unwrap_or_else(|| "Trabalhando".to_string())];
+    let mut partes = vec![agora.unwrap_or_else(|| crate::tr!("Trabalhando").to_string())];
     if chamadas > 0 {
-        partes.push(contagem(chamadas, "chamada", "chamadas"));
+        partes.push(contagem(chamadas, &crate::tr!("chamada"), &crate::tr!("chamadas")));
     }
     partes.join(" · ")
 }
@@ -3037,11 +3040,11 @@ pub(super) fn resumo_da_revisao(itens: &[Item]) -> (String, Vec<String>) {
         })
         .collect();
     let texto = if !nomes.is_empty() {
-        format!("Memória: {}", editou(&nomes))
+        crate::tr!("Memória: {editou}", editou = editou(&nomes)).to_string()
     } else if !escritas.is_empty() {
-        "Memória: guardou o que valia".to_string()
+        crate::tr!("Memória: guardou o que valia").to_string()
     } else {
-        "Memória revista · nada a guardar".to_string()
+        crate::tr!("Memória revista · nada a guardar").to_string()
     };
     (texto, caminhos)
 }
@@ -3249,9 +3252,9 @@ fn editados_nas_chamadas<'a>(chamadas: impl IntoIterator<Item = &'a Item>) -> Ve
 pub(super) fn editou(nomes: &[String]) -> String {
     match nomes {
         [] => String::new(),
-        [um] => format!("editou {um}"),
-        [um, dois] => format!("editou {um} e {dois}"),
-        varios => format!("editou {}", contagem(varios.len(), "arquivo", "arquivos")),
+        [um] => crate::tr!("editou {um}", um = um).to_string(),
+        [um, dois] => crate::tr!("editou {um} e {dois}", um = um, dois = dois).to_string(),
+        varios => crate::tr!("editou {contagem}", contagem = contagem(varios.len(), &crate::tr!("arquivo"), &crate::tr!("arquivos"))).to_string(),
     }
 }
 
@@ -3262,14 +3265,14 @@ pub(super) fn resumo_do_turno(itens: &[Item], turno: TurnoRecolhivel) -> String 
     let inicio = itens[turno.mensagem].em();
     let fim = itens[turno.mensagem..=turno.resposta].iter().map(Item::em).max().unwrap_or(0);
     let mut partes = vec![if inicio > 0 && fim >= inicio {
-        format!("Trabalhou {}", duracao_do_turno(fim - inicio))
+        crate::tr!("Trabalhou {duracao}", duracao = duracao_do_turno(fim - inicio)).to_string()
     } else {
-        "Trabalhou".to_string()
+        crate::tr!("Trabalhou").to_string()
     }];
     let trecho = &itens[turno.mensagem + 1..turno.resposta];
     let comandos = trecho.iter().filter(|i| matches!(i, Item::Ferramenta { nome, .. } if nome == "Bash")).count();
     if comandos > 0 {
-        partes.push(contagem(comandos, "comando", "comandos"));
+        partes.push(contagem(comandos, &crate::tr!("comando"), &crate::tr!("comandos")));
     }
     // As checagens que o turno rodou e como cada uma terminou, ao lado dos comandos.
     partes.extend(super::checagens::checagens_do_turno(trecho).iter().map(super::checagens::Checagem::texto));
@@ -3279,7 +3282,7 @@ pub(super) fn resumo_do_turno(itens: &[Item], turno: TurnoRecolhivel) -> String 
     } else {
         let lidos = trecho.iter().filter(|i| matches!(i, Item::Ferramenta { nome, .. } if nome == "Read")).count();
         if lidos > 0 {
-            partes.push(format!("leu {}", contagem(lidos, "arquivo", "arquivos")));
+            partes.push(crate::tr!("leu {contagem}", contagem = contagem(lidos, &crate::tr!("arquivo"), &crate::tr!("arquivos"))).to_string());
         }
     }
     partes.join(" · ")
@@ -3417,7 +3420,7 @@ impl Janela {
                     partes_inteiras(&resumo).text_color(Cores::tenue()).into_any_element()
                 })
                 .when(falhas > 0, |s| {
-                    s.child(Selo::cor(contagem(falhas, "falhou", "falharam"), Cores::vermelho()))
+                    s.child(Selo::cor(contagem(falhas, &crate::tr!("falhou"), &crate::tr!("falharam")), Cores::vermelho()))
                 })
                 .when(rodando_escondida, |s| s.child(super::componentes::lugar_do_anel(contexto.painel, Cores::destaque(), 14.)))
                 .child(div().flex_none().text_color(Cores::apagado()).child(chevron(&chave, aberto)))
@@ -3532,7 +3535,7 @@ impl Janela {
         let gasto = livro.do_turno(&contexto.chat.id, turno.mensagem, quando);
         let estatistica = gasto.and_then(|_| livro.estatistica(&contexto.chat.id, turno.mensagem, quando));
         let resumo = if turno.ao_vivo { resumo_ao_vivo(&contexto.chat.itens, turno) } else { resumo_do_turno(&contexto.chat.itens, turno) };
-        let dica = if aberto { "Recolher o que o agente fez neste turno" } else { "Ver o que o agente fez neste turno" };
+        let dica = if aberto { crate::tr!("Recolher o que o agente fez neste turno") } else { crate::tr!("Ver o que o agente fez neste turno") };
         // As checagens também na dica: no painel estreito, a parte que não cabe na linha some inteira.
         let checagens = super::checagens::checagens_do_turno(&contexto.chat.itens[turno.mensagem + 1..turno.resposta]);
         let checagens = checagens.iter().map(super::checagens::Checagem::texto).collect::<Vec<_>>().join(" · ");
@@ -3626,7 +3629,7 @@ impl Janela {
                             .text_color(Cores::tenue())
                             .cursor_pointer()
                             .hover(|s| s.text_color(Cores::texto()))
-                            .child(format!("e mais {}", contagem(sobra, "arquivo", "arquivos")))
+                            .child(crate::tr!("e mais {contagem}", contagem = contagem(sobra, &crate::tr!("arquivo"), &crate::tr!("arquivos"))))
                             .on_click(mais),
                     )
                 })
@@ -3655,16 +3658,16 @@ impl Janela {
             caminho: editado.antigo.then(|| editado.caminho.clone()),
         };
         let dica = SharedString::from(match (existe, editado.antigo) {
-            (false, _) => format!("{} (não está mais no disco)", editado.caminho),
-            (true, false) => format!("Ver a edição em {}", editado.caminho),
-            (true, true) => format!("Abrir {} (este registro não guardou a edição)", editado.caminho),
+            (false, _) => crate::tr!("{caminho} (não está mais no disco)", caminho = editado.caminho).to_string(),
+            (true, false) => crate::tr!("Ver a edição em {caminho}", caminho = editado.caminho).to_string(),
+            (true, true) => crate::tr!("Abrir {caminho} (este registro não guardou a edição)", caminho = editado.caminho).to_string(),
         });
         h_flex()
             .id(SharedString::from(format!("editado-{chave}")))
             .map(linha_de_log)
             .child(coluna_do_icone().text_color(Cores::tenue()).child(icone_de(icone, 14.)))
             .when_some(verbo, |s, (verbo, em_grupo)| {
-                s.child(div().flex_none().when(em_grupo, |s| s.min_w(r(56.))).text_color(Cores::tenue()).child(verbo))
+                s.child(div().flex_none().when(em_grupo, |s| s.min_w(r(56.))).text_color(Cores::tenue()).child(crate::i18n::traduzir(verbo)))
             })
             .child(
                 div()
@@ -3689,7 +3692,7 @@ impl Janela {
                         .when(editado.saem > 0, |s| s.child(div().text_color(Cores::vermelho()).child(format!("−{}", editado.saem)))),
                 )
             })
-            .when(editado.novo, |s| s.child(Selo::cor("novo", Cores::verde())))
+            .when(editado.novo, |s| s.child(Selo::cor(crate::tr!("novo"), Cores::verde())))
             .when(existe, |s| {
                 s.cursor_pointer()
                     .hover(|s| s.bg(Cores::hover()))
@@ -3712,7 +3715,7 @@ impl Janela {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let (texto, caminhos) = if rodando { ("Revendo a memória…".to_string(), Vec::new()) } else { resumo_da_revisao(itens) };
+        let (texto, caminhos) = if rodando { (crate::tr!("Revendo a memória…").to_string(), Vec::new()) } else { resumo_da_revisao(itens) };
         let abrir = caminhos
             .first()
             .and_then(|a| super::links_arquivo::resolver(&contexto.chat.cwd, a))
@@ -3734,7 +3737,7 @@ impl Janela {
                     botao_so_icone(
                         SharedString::from(format!("memoria-abrir-{chave}")),
                         Lucide::PanelRight,
-                        "Abrir o arquivo ao lado",
+                        crate::tr!("Abrir o arquivo ao lado"),
                         TamanhoBotao::Linha,
                         move |_, window, cx| window.dispatch_action(Box::new(super::links_arquivo::AbrirLinkVitral(alvo.clone())), cx),
                         window,
@@ -3775,11 +3778,11 @@ impl Janela {
             .tab_index(0)
             .focus_visible(|s| s.shadow(halo_foco()))
             .child(coluna_do_icone().child(icone_de(icone, 14.).text_color(cor)))
-            .child(div().flex_none().rotulo().text_color(Cores::forte()).child(plano.titulo))
+            .child(div().flex_none().rotulo().text_color(Cores::forte()).child(crate::i18n::traduzir(plano.titulo)))
             .child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::tenue()).child(if aberto { String::new() } else { previa }))
             .when(aberto, |s| {
                 s.child(div().flex_none().on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()).child(
-                    BotaoCopiar::new(SharedString::from(format!("copiar-plano-{chave}")), plano.texto.to_string()).dica("Copiar o plano"),
+                    BotaoCopiar::new(SharedString::from(format!("copiar-plano-{chave}")), plano.texto.to_string()).dica(crate::tr!("Copiar o plano")),
                 ))
             })
             .child(div().flex_none().text_color(Cores::apagado()).child(chevron(&chave, aberto)))
@@ -3807,7 +3810,7 @@ impl Janela {
                                     .items_start()
                                     .gap(esp::E6)
                                     .child(div().flex_none().pt(esp::E2).child(icone_de(Lucide::MessageSquareQuote, 14.).text_color(Cores::tenue())))
-                                    .child(div().flex_1().min_w_0().metadado().text_color(Cores::texto()).child(format!("Você pediu: {}", sem_marcacao(mudancas)))),
+                                    .child(div().flex_1().min_w_0().metadado().text_color(Cores::texto()).child(crate::tr!("Você pediu: {mudancas}", mudancas = sem_marcacao(mudancas)))),
                             )
                         }),
                 ))
@@ -3829,7 +3832,7 @@ impl Janela {
             // O verbo como o das chamadas: tênue e sem peso, na coluna de 56 dentro de um grupo, com
             // a duração na coluna dos detalhes. Em negrito branco, o "Pensou" era a linha mais
             // forte da trilha, e é a que menos importa.
-            .child(div().flex_none().when(ramo.is_some(), |s| s.min_w(r(56.))).text_color(Cores::tenue()).child("Pensou"))
+            .child(div().flex_none().when(ramo.is_some(), |s| s.min_w(r(56.))).text_color(Cores::tenue()).child(crate::tr!("Pensou")))
             // Sem `flex_1`: o chevron vem logo depois do texto, como na chamada.
             .child(
                 div()
@@ -3838,7 +3841,7 @@ impl Janela {
                     .truncate()
                     .font_family(FONTE_MONO)
                     .text_color(Cores::tenue())
-                    .child(if milis > 0 { format!("por {}", duracao_curta(milis)) } else { String::new() }),
+                    .child(if milis > 0 { crate::tr!("por {duracao}", duracao = duracao_curta(milis)).to_string() } else { String::new() }),
             )
             .when(tem_texto, |s| {
                 s.cursor_pointer()
@@ -3943,9 +3946,9 @@ impl Janela {
             let segundos = if s.fim > 0 { s.fim.saturating_sub(*em) } else { crate::modelo::agora().saturating_sub(*em) };
             let mut partes = Vec::new();
             if s.tokens > 0 {
-                partes.push(format!("{} tokens", super::mapa_agentes::em_mil(s.tokens)));
+                partes.push(crate::tr!("{n} tokens", n = super::mapa_agentes::em_mil(s.tokens)).to_string());
             }
-            partes.push(contagem(s.ferramentas as usize, "ferramenta", "ferramentas"));
+            partes.push(contagem(s.ferramentas as usize, &crate::tr!("ferramenta"), &crate::tr!("ferramentas")));
             partes.push(relogio(segundos));
             (partes, s)
         });
@@ -4016,7 +4019,7 @@ impl Janela {
         // O +N −M contado com o texto inteiro quando a chamada chegou (item 5.1); as chamadas de
         // antes disso contam pelo detalhe gravado.
         let linhas_do_diff = linhas_da_edicao_gravada(item);
-        let verbo = verbo_da_ferramenta(nome, pendente).to_string();
+        let verbo = verbo_na_tela(nome, pendente);
         let detalhe = sem_marcacao(&detalhe_da_chamada(nome, resumo));
         let detalhe = if detalhe.is_empty() && nome == "Bash" {
             pedido.as_deref().and_then(|p| p.strip_prefix("$ ")).unwrap_or(resumo).to_string()
@@ -4034,9 +4037,9 @@ impl Janela {
         // A falha fica no ícone e na palavra, em vermelho, em qualquer largura. A linha inteira com
         // fundo vermelho pesava mais que a resposta e, com três falhas seguidas, virava uma parede.
         let meta = if *erro {
-            Some(("falhou", Cores::vermelho()))
+            Some((crate::tr!("falhou"), Cores::vermelho()))
         } else if interrompida {
-            Some(("interrompida", Cores::apagado()))
+            Some((crate::tr!("interrompida"), Cores::apagado()))
         } else {
             None
         };
@@ -4044,13 +4047,13 @@ impl Janela {
         let dica = SharedString::from(format!(
             "{verbo} ({})\n{detalhe}{}{}",
             nome_curto(nome),
-            meta.map(|(m, _)| format!(" · {m}")).unwrap_or_default(),
+            meta.as_ref().map(|(m, _)| format!(" · {m}")).unwrap_or_default(),
             if edicao.is_some() {
-                "\nClique para ver a edição no arquivo"
+                crate::tr!("\nClique para ver a edição no arquivo")
             } else if subagente.is_some() {
-                "\nClique para abrir a conversa dele numa aba"
+                crate::tr!("\nClique para abrir a conversa dele numa aba")
             } else {
-                ""
+                SharedString::default()
             }
         ));
         // O detalhe: o que é código (comando, caminho, padrão de busca, endereço, ferramenta MCP)
@@ -4114,7 +4117,7 @@ impl Janela {
                         .when(saem > 0, |s| s.child(div().text_color(Cores::vermelho()).child(format!("−{saem}")))),
                 )
             })
-            .when(novo && !minima && !*erro, |s| s.child(Selo::cor("novo", Cores::verde())))
+            .when(novo && !minima && !*erro, |s| s.child(Selo::cor(crate::tr!("novo"), Cores::verde())))
             .when_some(meta.filter(|_| *erro || !estreita), |s, (meta, cor)| {
                 s.child(div().flex_none().text_color(cor).child(meta))
             })
@@ -4128,10 +4131,10 @@ impl Janela {
                 // No subagente também: a linha abre a conversa dele; ele, os passos e o relatório.
                 let alterna = alternar(chave.clone(), cx);
                 let dica_chevron = match (edicao.is_some(), aberto) {
-                    (true, true) => "Recolher o diff",
-                    (true, false) => "Mostrar o diff aqui",
-                    (false, true) => "Recolher os passos e o relatório",
-                    (false, false) => "Mostrar os passos e o relatório aqui",
+                    (true, true) => crate::tr!("Recolher o diff"),
+                    (true, false) => crate::tr!("Mostrar o diff aqui"),
+                    (false, true) => crate::tr!("Recolher os passos e o relatório"),
+                    (false, false) => crate::tr!("Mostrar os passos e o relatório aqui"),
                 };
                 s.child(
                     div()
@@ -4144,7 +4147,7 @@ impl Janela {
                         .rounded(raio::CONTROLE)
                         .hover(|s| s.bg(Cores::hover()))
                         .child(seta)
-                        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica_chevron).build(window, cx))
+                        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica_chevron.clone()).build(window, cx))
                         .on_click(move |evento, window, cx| {
                             cx.stop_propagation();
                             alterna(evento, window, cx);
@@ -4166,7 +4169,7 @@ impl Janela {
                         .group_hover(grupo.clone(), |s| s.opacity(1.))
                         .hover(|s| s.bg(Cores::hover()).text_color(Cores::texto()))
                         .child(icone_de(Lucide::PanelRight, 13.))
-                        .dica_no_ponteiro(|window, cx| Tooltip::new("Abrir o arquivo ao lado").build(window, cx))
+                        .dica_no_ponteiro(|window, cx| Tooltip::new(crate::tr!("Abrir o arquivo ao lado")).build(window, cx))
                         .on_click(move |_, window, cx| {
                             // Não abre nem fecha o detalhe da linha.
                             cx.stop_propagation();
@@ -4213,7 +4216,7 @@ impl Janela {
                 .when_some(comando, |s, comando| {
                     s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(
                         CaixaDeCodigo::new(SharedString::from(format!("terminal-{chave}")), resultado.as_deref()
-                            .unwrap_or(if pendente { "A saída aparece quando terminar." } else { "(interrompido, sem saída)" }).to_string().into())
+                            .map(str::to_string).unwrap_or_else(|| if pendente { crate::tr!("A saída aparece quando terminar.").to_string() } else { crate::tr!("(interrompido, sem saída)").to_string() }).into())
                             // A busca da conversa conta a saída do comando: o achado ganha o realce
                             // e a caixa rola até ele (conferência na bancada, 16/11/2026).
                             .realce(&no_resultado)
@@ -4222,7 +4225,7 @@ impl Janela {
                             .comando(comando.to_string()).raio_chat().erro(*erro)
                             // O "Concluído" em toda saída não dizia nada: o comando que terminou bem
                             // é o caso comum, e a linha acima já marca o que falhou.
-                            .when(pendente || *erro, |c| c.tempo(if pendente { "Em execução" } else { "Falhou" })),
+                            .when(pendente || *erro, |c| c.tempo(if pendente { crate::tr!("Em execução") } else { crate::tr!("Falhou") })),
                     ))
                 })
                 // Rodando ainda não há saída: em vez da caixa do resultado vazia, com o Copiar e
@@ -4230,8 +4233,8 @@ impl Janela {
                 // fica o rodando").
                 .when(comando.is_none() && pendente && resultado.is_none(), |s| {
                     let texto = match rodando_ha {
-                        Some(segundos) => format!("A saída aparece quando terminar · rodando há {}", relogio(segundos)),
-                        None => "A saída aparece quando terminar".to_string(),
+                        Some(segundos) => crate::tr!("A saída aparece quando terminar · rodando há {tempo}", tempo = relogio(segundos)).to_string(),
+                        None => crate::tr!("A saída aparece quando terminar").to_string(),
                     };
                     s.child(div().pl(RECUO_DO_LOG).pt(esp::E6).pb(esp::E4).child(
                         div().px(esp::E12).metadado().font_family(FONTE_MONO).text_color(Cores::apagado()).child(texto),
@@ -4266,7 +4269,7 @@ impl Janela {
                                         .right(esp::E6)
                                         .invisible()
                                         .group_hover("relatorio", |s| s.visible())
-                                        .child(BotaoCopiar::new(SharedString::from(format!("copiar-relatorio-{chave}")), relatorio).dica("Copiar o relatório")),
+                                        .child(BotaoCopiar::new(SharedString::from(format!("copiar-relatorio-{chave}")), relatorio).dica(crate::tr!("Copiar o relatório"))),
                                 ),
                         ))
                     },
@@ -4279,7 +4282,7 @@ impl Janela {
                         && !(matches!(nome.as_str(), "Agent" | "Task") && !*erro && resultado.as_deref().is_some_and(|r| !crate::claude::relatorio_do_subagente(r).is_empty())),
                     |s| {
                         s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(
-                            bloco_resultado(&chave, resultado.as_deref(), *erro, "(interrompida, sem resultado)")
+                            bloco_resultado(&chave, resultado.as_deref(), *erro, &crate::tr!("(interrompida, sem resultado)"))
                                 .realce(&no_resultado)
                                 .arquivos(self.ligador(&contexto.chat.cwd, cx)),
                         ))
@@ -4346,7 +4349,7 @@ fn cartao_de_edicao(chave: &str, pedido: &str) -> Div {
                 .bg(Cores::preto())
                 .invisible()
                 .group_hover(grupo, |s| s.visible())
-                .child(BotaoCopiar::new(SharedString::from(format!("copiar-diff-{chave}")), copiar).dica("Copiar o diff")),
+                .child(BotaoCopiar::new(SharedString::from(format!("copiar-diff-{chave}")), copiar).dica(crate::tr!("Copiar o diff"))),
         )
 }
 
@@ -4386,7 +4389,7 @@ fn bloco_do_pedido(pedido: &str, diff: &[LinhaDoDiff]) -> impl IntoElement + use
             LinhaDoDiff::Sai(texto, trechos) => linha(format!("- {texto}"), Cores::vermelho(), Some(fundo_sai()), marcados(trechos, false)),
             LinhaDoDiff::Entra(texto, trechos) => linha(format!("+ {texto}"), Cores::verde(), Some(fundo_entra()), marcados(trechos, true)),
             LinhaDoDiff::Pulo(0) => linha("…".into(), Cores::apagado(), None, Vec::new()),
-            LinhaDoDiff::Pulo(n) => linha(format!("… {}", contagem(*n, "linha igual", "linhas iguais")), Cores::apagado(), None, Vec::new()),
+            LinhaDoDiff::Pulo(n) => linha(format!("… {}", contagem(*n, &crate::tr!("linha igual"), &crate::tr!("linhas iguais"))), Cores::apagado(), None, Vec::new()),
             LinhaDoDiff::Nota(texto) => linha(texto.clone(), Cores::apagado(), None, Vec::new()),
         });
         (diff.len(), linhas.collect())
@@ -4402,7 +4405,7 @@ fn bloco_do_pedido(pedido: &str, diff: &[LinhaDoDiff]) -> impl IntoElement + use
         .py(esp::E8)
         .children(linhas)
         .when(total > LINHAS_DO_PEDIDO, |s| {
-            s.child(div().px(esp::E12).text_color(Cores::apagado()).child(format!("… mais {} linhas", total - LINHAS_DO_PEDIDO)))
+            s.child(div().px(esp::E12).text_color(Cores::apagado()).child(crate::tr!("… mais {n} linhas", n = total - LINHAS_DO_PEDIDO)))
         });
     // Sem fundo nem raio próprios: quem desenha a caixa é o cartão em volta (era uma caixa cinza
     // dentro da preta).
@@ -4421,7 +4424,7 @@ fn bloco_resultado(chave: &str, resultado: Option<&str>, erro: bool, vazio: &str
     let texto = resultado.unwrap_or(vazio);
     CaixaDeCodigo::new(SharedString::from(format!("saida-{chave}")), texto.to_string().into())
         .raio_chat()
-        .when(erro, |c| c.erro(true).tempo("Saiu com erro"))
+        .when(erro, |c| c.erro(true).tempo(crate::tr!("Saiu com erro")))
 }
 
 pub(super) fn nome_curto(nome: &str) -> &str {
@@ -4465,7 +4468,23 @@ fn icone_da_ferramenta(nome: &str) -> Lucide {
 /// O verbo de uma chamada, no passado ou ao vivo ("Leu", "Lendo"). O nome real vai na dica.
 fn verbo_da_ferramenta(nome: &str, ao_vivo: bool) -> &str {
     let curto = nome_curto(nome);
-    let (passado, gerundio) = match curto {
+    match verbos_conhecidos(curto) {
+        Some((passado, gerundio)) => if ao_vivo { gerundio } else { passado },
+        None => curto,
+    }
+}
+
+/// O mesmo verbo, na língua da interface (o nome da ferramenta que não tem verbo fica como veio).
+fn verbo_na_tela(nome: &str, ao_vivo: bool) -> String {
+    match verbos_conhecidos(nome_curto(nome)) {
+        Some((passado, gerundio)) => crate::i18n::traduzir(if ao_vivo { gerundio } else { passado }).into_owned(),
+        None => nome_curto(nome).to_string(),
+    }
+}
+
+/// Os verbos de uma ferramenta: o passado e o gerúndio.
+fn verbos_conhecidos(curto: &str) -> Option<(&'static str, &'static str)> {
+    Some(match curto {
         "Read" => ("Leu", "Lendo"),
         "Edit" | "MultiEdit" | "NotebookEdit" => ("Editou", "Editando"),
         "Write" => ("Gravou", "Gravando"),
@@ -4504,9 +4523,8 @@ fn verbo_da_ferramenta(nome: &str, ao_vivo: bool) -> &str {
         "aprovar_tarefa" => ("Aprovou", "Aprovando"),
         "cancelar_tarefa" => ("Cancelou", "Cancelando"),
         n if n.starts_with("mcp__") => ("Usou", "Usando"),
-        _ => return curto,
-    };
-    if ao_vivo { gerundio } else { passado }
+        _ => return None,
+    })
 }
 
 /// O verbo e o detalhe da linha de uma chamada que mexe nos passos do agente (o `TodoWrite` e as
@@ -4524,7 +4542,7 @@ fn linha_dos_passos(nome: &str, resumo: &str, ao_vivo: bool) -> Option<(String, 
             Some((verbo, detalhe)) => (verbo.to_string(), detalhe.to_string()),
             None => (frase.to_string(), String::new()),
         },
-        None => (verbo_da_ferramenta(nome, ao_vivo).to_string(), String::new()),
+        None => (verbo_na_tela(nome, ao_vivo), String::new()),
     })
 }
 
@@ -4542,7 +4560,7 @@ pub(super) fn detalhe_da_chamada(nome: &str, resumo: &str) -> String {
 fn resumo_da_trilha(nomes: &[&str]) -> String {
     let mut contagem: Vec<(String, usize)> = Vec::new();
     for nome in nomes {
-        let verbo = verbo_da_ferramenta(nome, false).to_lowercase();
+        let verbo = verbo_na_tela(nome, false).to_lowercase();
         match contagem.iter_mut().find(|(v, _)| *v == verbo) {
             Some((_, c)) => *c += 1,
             None => contagem.push((verbo, 1)),
@@ -4559,9 +4577,9 @@ fn resumo_da_trilha(nomes: &[&str]) -> String {
 /// sem pasta).
 fn onde_o_chat_trabalha(motor: &Motor, chat: &Chat) -> String {
     if motor.sem_pasta(chat) {
-        return "Este chat tem uma pasta só dele: os arquivos que ele criar ficam lá.".into();
+        return crate::tr!("Este chat tem uma pasta só dele: os arquivos que ele criar ficam lá.").to_string();
     }
-    format!("Este chat mexe direto em {}.", super::trilho::pasta_curta(&chat.cwd))
+    crate::tr!("Este chat mexe direto em {pasta}.", pasta = super::trilho::pasta_curta(&chat.cwd)).to_string()
 }
 
 /// Como cada aviso do chat aparece.
@@ -4611,12 +4629,12 @@ fn aviso_do_chat(texto: &str, erro: bool, realce: &Realce) -> (Bloco, AnyElement
     // do dia. Eram três: o dia centrado em negrito, o marco centrado entre dois fios com um ícone
     // e o aviso à esquerda com outro ícone e outro tamanho de letra.
     let rotulo = match tipo_aviso(texto, erro) {
-        ClasseAvisoChat::Marco if texto.starts_with(SESSAO_ANTIGA) => "Sessão nova, com um resumo da anterior".to_string(),
-        ClasseAvisoChat::Marco if texto.starts_with("Interrompido") => "Turno interrompido".to_string(),
+        ClasseAvisoChat::Marco if texto.starts_with(SESSAO_ANTIGA) => crate::tr!("Sessão nova, com um resumo da anterior").to_string(),
+        ClasseAvisoChat::Marco if texto.starts_with("Interrompido") => crate::tr!("Turno interrompido").to_string(),
         // Sem a instrução (a faixa logo abaixo já tem o Retomar, e nos antigos não há mais o que
         // retomar) e sem nome de agente (no chat do Codex o texto mandava o Claude continuar).
         // Vale também para os avisos já gravados (relatório de design, 16/11/2026).
-        ClasseAvisoChat::Marco if texto.starts_with(VITRAL_FECHADO) => "O Vitral fechou no meio do turno".to_string(),
+        ClasseAvisoChat::Marco if texto.starts_with(VITRAL_FECHADO) => crate::tr!("O Vitral fechou no meio do turno").to_string(),
         // O erro vai para o cartão (`Janela::cartao_de_erro`); aqui só chega sem ser erro.
         _ => sem_marcacao(texto),
     };
@@ -4687,11 +4705,11 @@ fn situacao_do_chat(motor: &Motor, chat: &Chat) -> Option<Situacao> {
 /// A marca de "dirigido" na faixa do turno: a mensagem que o usuário mandou entrou no turno que
 /// já rodava, sem pará-lo nem abrir outro.
 fn selo_dirigido(painel: u64, n: usize, estreita: bool) -> AnyElement {
-    let rotulo = if n == 1 { "dirigido".to_string() } else { format!("dirigido {n}×") };
+    let rotulo = if n == 1 { crate::tr!("dirigido") } else { crate::tr!("dirigido {n}×", n = n) };
     let dica: SharedString = if n == 1 {
-        "A sua mensagem entrou neste turno: ele não parou nem começou de novo".into()
+        crate::tr!("A sua mensagem entrou neste turno: ele não parou nem começou de novo")
     } else {
-        "As suas mensagens entraram neste turno: ele não parou nem começou de novo".into()
+        crate::tr!("As suas mensagens entraram neste turno: ele não parou nem começou de novo")
     };
     div()
         .id(("selo-dirigido", painel as usize))
@@ -4710,7 +4728,7 @@ fn selo_dirigido(painel: u64, n: usize, estreita: bool) -> AnyElement {
 
 /// A linha viva do turno que pensa, com o desenho de uma chamada em andamento na trilha: o anel
 /// girando e o rótulo com o brilho passando.
-fn linha_pensando(painel: u64, rotulo: &'static str, fonte: SharedString) -> AnyElement {
+fn linha_pensando(painel: u64, rotulo: SharedString, fonte: SharedString) -> AnyElement {
     h_flex()
         .h(ALTURA_DO_LOG)
         .gap(esp::E8)
@@ -4771,9 +4789,9 @@ impl Janela {
         // Esc (item 6.1). Uma mensagem sua a corta (ou espera, se ela já escreveu).
         // A revisão pelo outro agente, igual: por baixo, só lendo, e a sua mensagem a corta.
         let por_baixo = if motor.revendo_memoria(&chat.id) {
-            Some("Revendo a memória…".to_string())
+            Some(crate::tr!("Revendo a memória…").to_string())
         } else {
-            motor.revisando_o_par(&chat.id).map(|revisor| format!("{} revisando o turno…", revisor.nome()))
+            motor.revisando_o_par(&chat.id).map(|revisor| crate::tr!("{nome} revisando o turno…", nome = revisor.nome()).to_string())
         };
         if let Some(texto) = por_baixo {
             let linha = h_flex()
@@ -4799,7 +4817,7 @@ impl Janela {
         // (dono, 13/11/2026: "por que aparece o rodando em cima e embaixo?"). Rolada para cima, a
         // conversa não mostra mais o fim, e aí a linha diz.
         let no_fim = painel.is_none_or(|p| p.seguindo);
-        let esc = move |rotulo: &'static str, window: &Window| {
+        let esc = move |rotulo: SharedString, window: &Window| {
             h_flex()
                 .flex_none()
                 .gap(esp::E6)
@@ -4817,14 +4835,14 @@ impl Janela {
                 // O Claude Code resume a conversa; ou a resposta já veio e os agentes seguem
                 // trabalhando: o agente e o que ele faz (ou quantos são), como nas linhas do fim
                 // da conversa.
-                let calado = !escrevendo && atividade == "Pensando…";
+                let calado = !escrevendo && atividade == *crate::tr!("Pensando…");
                 let no_fundo = if !escrevendo && motor.esperando_agentes(&chat.id) { motor.linhas_do_segundo_plano(&chat.id) } else { Vec::new() };
                 let atividade = if calado && motor.compactando(&chat.id) {
-                    rotulo_do_turno_calado(true, false).to_string()
+                    crate::i18n::traduzir(rotulo_do_turno_calado(true, false)).into_owned()
                 } else if !no_fundo.is_empty() {
                     sem_marcacao(&no_fundo::atividade_no_fundo(&no_fundo))
                 } else if calado {
-                    rotulo_do_turno_calado(false, motor.esperando_agentes(&chat.id)).to_string()
+                    crate::i18n::traduzir(rotulo_do_turno_calado(false, motor.esperando_agentes(&chat.id))).into_owned()
                 } else {
                     sem_marcacao(&atividade)
                 };
@@ -4867,16 +4885,16 @@ impl Janela {
                         // o Esc continua sendo o jeito de parar.
                         .children(motor.silencio(&chat.id).map(|calado| {
                             let minutos = calado.as_secs() / 60;
-                            let dica: SharedString = format!(
-                                "O agente não manda nada há {minutos} min. Se ele roda um comando longo, é normal; se travou, Esc para parar e mande de novo."
-                            )
-                            .into();
+                            let dica: SharedString = crate::tr!(
+                                "O agente não manda nada há {minutos} min. Se ele roda um comando longo, é normal; se travou, Esc para parar e mande de novo.",
+                                minutos = minutos
+                            );
                             div()
                                 .id(("sem-sinal", painel_id as usize))
                                 .flex_none()
                                 .etiqueta()
                                 .text_color(Cores::espera())
-                                .child(if estreita { format!("calado {minutos} min") } else { format!("sem sinal há {minutos} min") })
+                                .child(if estreita { crate::tr!("calado {minutos} min", minutos = minutos) } else { crate::tr!("sem sinal há {minutos} min", minutos = minutos) })
                                 .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                         }))
                         // A mensagem que você mandou entrou neste turno, sem reiniciá-lo.
@@ -4895,9 +4913,9 @@ impl Janela {
                         Some(_) => {
                             let n = motor.agentes_no_fundo(&chat.id).max(agentes);
                             let rotulo = match n {
-                                0 => "Esc de novo para parar o Ultracode".to_string(),
-                                1 => "Esc de novo para parar o agente".to_string(),
-                                n => format!("Esc de novo para parar os {n} agentes"),
+                                0 => crate::tr!("Esc de novo para parar o Ultracode"),
+                                1 => crate::tr!("Esc de novo para parar o agente"),
+                                n => crate::tr!("Esc de novo para parar os {n} agentes", n = n),
                             };
                             h_flex()
                                 .flex_none()
@@ -4907,7 +4925,7 @@ impl Janela {
                                 .child(rotulo)
                                 .into_any_element()
                         }
-                        None => esc("para parar", window),
+                        None => esc(crate::tr!("para parar"), window),
                     }),
                 )
             }
@@ -4997,19 +5015,19 @@ impl Janela {
                     }))
                     .child({
                         let curto = motivo_curto(&motivo);
-                        let dica = SharedString::from(format!("Parada: {motivo}"));
+                        let dica = crate::tr!("Parada: {motivo}", motivo = motivo);
                         div()
                             .id(("faixa-parada", painel_id as usize))
                             .min_w_0()
                             .truncate()
                             .text_size(r(13.))
                             .line_height(r(18.))
-                            .child(format!("Parada · {curto}"))
+                            .child(crate::tr!("Parada · {motivo}", motivo = curto))
                             .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                     })
                     .into_any_element(),
                 Some(
-                    botao_fantasma("faixa-retomar", Some(Lucide::Play.into()), "Retomar", TamanhoBotao::Barra, window, cx)
+                    botao_fantasma("faixa-retomar", Some(Lucide::Play.into()), crate::tr!("Retomar"), TamanhoBotao::Barra, window, cx)
                         .track_focus(&foco_faixa)
                         .on_click(retomar)
                         .into_any_element(),
@@ -5028,7 +5046,7 @@ impl Janela {
                 let (tipo, agente) = erros::tipo_da_execucao(&cru, chat.agente);
                 let conta = motor.conta_do_ultimo_turno(&chat.id).cloned();
                 let tentar_de_novo = || {
-                    botao_fantasma("faixa-tentar", Some(Lucide::RotateCw.into()), "Tentar de novo", TamanhoBotao::Barra, window, cx)
+                    botao_fantasma("faixa-tentar", Some(Lucide::RotateCw.into()), crate::tr!("Tentar de novo"), TamanhoBotao::Barra, window, cx)
                         .track_focus(&foco_faixa)
                         .on_click(tentar)
                         .into_any_element()
@@ -5049,11 +5067,11 @@ impl Janela {
                     // troca a conta do chat e repete o turno (eram 4 passos por painel).
                     (erros::TipoDeErro::Limite, Agente::Claude) => match (conta.as_ref(), motor.outra_conta_com_folga(chat)) {
                         (Some(atual), Some(outra)) => {
-                            let volta = erros::hora_de_volta(&cru).map(|h| format!(" · volta {h}")).unwrap_or_default();
-                            rotulo = format!("Limite da {}{volta}", atual.nome);
+                            let volta = erros::hora_de_volta(&cru).map(|h| crate::tr!(" · volta {hora}", hora = h).to_string()).unwrap_or_default();
+                            rotulo = crate::tr!("Limite da {conta}{volta}", conta = atual.nome, volta = volta).to_string();
                             let (motor_e, id, destino) = (self.motor.clone(), chat.id.clone(), outra.id.clone());
-                            let dica = format!("A conta deste chat passa a ser a {}; volta-se pelo seletor de modelo.", outra.nome);
-                            botao_fantasma("faixa-outra-conta", Some(Lucide::Shuffle.into()), format!("Continuar na {}", outra.nome), TamanhoBotao::Barra, window, cx)
+                            let dica = crate::tr!("A conta deste chat passa a ser a {conta}; volta-se pelo seletor de modelo.", conta = outra.nome);
+                            botao_fantasma("faixa-outra-conta", Some(Lucide::Shuffle.into()), crate::tr!("Continuar na {conta}", conta = outra.nome), TamanhoBotao::Barra, window, cx)
                                 .track_focus(&foco_faixa)
                                 .tooltip(dica)
                                 .on_click(move |_, _, cx| {
@@ -5069,9 +5087,9 @@ impl Janela {
                     (erros::TipoDeErro::Login, Agente::Claude) => {
                         let id_conta = conta_que_caiu(motor, chat);
                         if let Some(c) = id_conta.as_ref().and_then(|id| motor.contas.iter().find(|c| &c.id == id)) {
-                            (icone, cor, rotulo) = (Lucide::KeyRound, Some(Cores::espera()), format!("Login da {} caiu", c.nome));
+                            (icone, cor, rotulo) = (Lucide::KeyRound, Some(Cores::espera()), crate::tr!("Login da {conta} caiu", conta = c.nome).to_string());
                         }
-                        botao_fantasma("faixa-entrar", Some(Lucide::KeyRound.into()), "Entrar de novo", TamanhoBotao::Barra, window, cx)
+                        botao_fantasma("faixa-entrar", Some(Lucide::KeyRound.into()), crate::tr!("Entrar de novo"), TamanhoBotao::Barra, window, cx)
                             .track_focus(&foco_faixa)
                             .on_click(cx.listener(move |this, _, window, cx| this.entrar_de_novo_na_conta(id_conta.clone(), window, cx)))
                             .into_any_element()
@@ -5082,11 +5100,11 @@ impl Janela {
                 // ela, o botão "Às 14:20" vai ao lado da outra saída.
                 let acao = match (agendada, volta) {
                     (Some(quando), _) => {
-                        rotulo = format!("Continua sozinho às {}", crate::modelo::hora_local(quando));
+                        rotulo = crate::tr!("Continua sozinho às {hora}", hora = crate::modelo::hora_local(quando)).to_string();
                         let (motor_e, id) = (self.motor.clone(), chat.id.clone());
-                        botao_fantasma("faixa-cancelar-volta", Some(Lucide::X.into()), "Cancelar", TamanhoBotao::Barra, window, cx)
+                        botao_fantasma("faixa-cancelar-volta", Some(Lucide::X.into()), crate::tr!("Cancelar"), TamanhoBotao::Barra, window, cx)
                             .track_focus(&foco_faixa)
-                            .tooltip("Não continuar sozinho quando o limite voltar")
+                            .tooltip(crate::tr!("Não continuar sozinho quando o limite voltar"))
                             .on_click(move |_, _, cx| {
                                 if let Some(m) = &motor_e {
                                     m.update(cx, |m, cx| m.cancelar_retomada(&id, cx));
@@ -5101,8 +5119,8 @@ impl Janela {
                             .flex_none()
                             .gap(esp::E4)
                             .child(
-                                botao_fantasma("faixa-agendar-volta", Some(Lucide::Clock.into()), format!("Às {hora}"), TamanhoBotao::Barra, window, cx)
-                                    .tooltip(format!("Continuar este turno sozinho quando o limite voltar, às {hora}"))
+                                botao_fantasma("faixa-agendar-volta", Some(Lucide::Clock.into()), crate::tr!("Às {hora}", hora = hora), TamanhoBotao::Barra, window, cx)
+                                    .tooltip(crate::tr!("Continuar este turno sozinho quando o limite voltar, às {hora}", hora = hora))
                                     .on_click(move |_, _, cx| {
                                         if let Some(m) = &motor_e {
                                             m.update(cx, |m, cx| m.agendar_retomada(&id, quando, cx));
@@ -5141,7 +5159,7 @@ impl Janela {
                     .min_w_0()
                     .gap(r(8.))
                     .child(icone_de(Lucide::FolderX, 14.).text_color(Cores::vermelho()))
-                    .child(texto(format!("A pasta {} não foi encontrada", super::dialogos::com_til(&pasta))))
+                    .child(texto(crate::tr!("A pasta {pasta} não foi encontrada", pasta = super::dialogos::com_til(&pasta)).to_string()))
                     .into_any_element(),
                 None,
             ),
@@ -5151,15 +5169,15 @@ impl Janela {
                     .min_w_0()
                     .gap(r(8.))
                     .child(icone_de(Lucide::Clock, 14.).text_color(Cores::tenue()))
-                    .child(texto(format!(
-                        "Relê {} · parada há {}",
-                        composer::tokens(tokens),
-                        super::tempo_relativo(chat.atualizado_em)
-                    )))
+                    .child(texto(crate::tr!(
+                        "Relê {tokens} · parada há {tempo}",
+                        tokens = composer::tokens(tokens),
+                        tempo = super::tempo_relativo(chat.atualizado_em)
+                    ).to_string()))
                     .into_any_element(),
                 Some(
-                    botao_fantasma("faixa-compactar", Some(Lucide::Minimize.into()), "Compactar", TamanhoBotao::Barra, window, cx)
-                        .tooltip("A conversa ficou parada além da hora em que o contexto fica guardado com desconto: a próxima mensagem relê tudo por inteiro. Compactar resume agora, sem mexer no que está escrito na caixa, e os próximos turnos releem só o resumo. Para compactar com foco, escreva “/compact” e a instrução na caixa.")
+                    botao_fantasma("faixa-compactar", Some(Lucide::Minimize.into()), crate::tr!("Compactar"), TamanhoBotao::Barra, window, cx)
+                        .tooltip(crate::tr!("A conversa ficou parada além da hora em que o contexto fica guardado com desconto: a próxima mensagem relê tudo por inteiro. Compactar resume agora, sem mexer no que está escrito na caixa, e os próximos turnos releem só o resumo. Para compactar com foco, escreva “/compact” e a instrução na caixa."))
                         .on_click(cx.listener(move |this, _, _, cx| this.compactar_conversa(painel_id, cx)))
                         .into_any_element(),
                 ),
@@ -5172,12 +5190,12 @@ impl Janela {
                     .min_w_0()
                     .gap(r(8.))
                     .child(icone_de(Lucide::CirclePause, 14.).text_color(Cores::tenue()))
-                    .child(texto("Você parou".to_string()))
+                    .child(texto(crate::tr!("Você parou").to_string()))
                     .into_any_element(),
                 Some({
                     let (motor_e, id) = (self.motor.clone(), chat.id.clone());
-                    botao_fantasma("faixa-continuar", Some(Lucide::Play.into()), "Continuar", TamanhoBotao::Barra, window, cx)
-                        .tooltip("Pede ao agente para continuar de onde parou (o mesmo que o Enter com a caixa vazia)")
+                    botao_fantasma("faixa-continuar", Some(Lucide::Play.into()), crate::tr!("Continuar"), TamanhoBotao::Barra, window, cx)
+                        .tooltip(crate::tr!("Pede ao agente para continuar de onde parou (o mesmo que o Enter com a caixa vazia)"))
                         .on_click(move |_, _, cx| {
                             if let Some(m) = &motor_e {
                                 m.update(cx, |m, cx| m.continuar_depois_do_esc(&id, cx));
@@ -5197,7 +5215,7 @@ impl Janela {
                 // Com a fila aberta, o "Entregar agora" fica só no rodapé dela: eram dois iguais,
                 // a uns 60 px um do outro (teste de usabilidade, 16/11/2026).
                 (!fila_aberta).then(|| {
-                    botao_fantasma("faixa-entregar", None, "Entregar agora", TamanhoBotao::Barra, window, cx)
+                    botao_fantasma("faixa-entregar", None, crate::tr!("Entregar agora"), TamanhoBotao::Barra, window, cx)
                         .on_click(entregar)
                         .into_any_element()
                 }),
@@ -5321,7 +5339,7 @@ impl Janela {
                 s.max_h(r(400.)).child(
                     div()
                         .flex_none()
-                        .child(CabecalhoDeSecao::new("Pedidos").contagem(quantos).tingida(Cores::espera()).primeira(true)),
+                        .child(CabecalhoDeSecao::new(crate::tr!("Pedidos")).contagem(quantos).tingida(Cores::espera()).primeira(true)),
                 )
             })
             .children(pedidos.into_iter().enumerate().map(|(k, (id, ferramenta, entrada, motivo_do_hook))| {
@@ -5450,7 +5468,7 @@ impl Janela {
     /// Abre, embaixo do pedido, o campo para negar dizendo o que fazer em vez disso.
     fn abrir_explicacao(&mut self, pedido: String, window: &mut Window, cx: &mut Context<Self>) {
         let campo = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("O que ele deve fazer em vez disso?")
+            InputState::new(window, cx).placeholder(crate::tr!("O que ele deve fazer em vez disso?"))
         });
         let enter = cx.subscribe_in(&campo, window, |this, _, evento: &InputEvent, _, cx| {
             if matches!(evento, InputEvent::PressEnter { .. }) {
@@ -5576,13 +5594,13 @@ impl Janela {
                 v_flex()
                     .flex_1()
                     .min_w_0()
-                    .child(div().titulo_cartao().text_color(Cores::forte()).truncate().child("Plano para aprovar"))
+                    .child(div().titulo_cartao().text_color(Cores::forte()).truncate().child(crate::tr!("Plano para aprovar")))
                     .child(
                         h_flex()
                             .gap(r(4.))
                             .metadado()
                             .text_color(Cores::tenue())
-                            .child(div().flex_none().child("Depois de aprovar:"))
+                            .child(div().flex_none().child(crate::tr!("Depois de aprovar:")))
                             .child(icone_modo.size(r(12.)).flex_none().text_color(cor_modo))
                             .child(div().min_w_0().truncate().child(nome_modo)),
                     ),
@@ -5592,15 +5610,15 @@ impl Janela {
         if !corpo_aberto {
             // Recolhido (há outro pedido aberto): só o cabeçalho, com Aprovar.
             let aprovar =
-                botao_primario(id_aprovar, Some(Lucide::Check.into()), "Aprovar", TamanhoBotao::Barra, window, cx)
+                botao_primario(id_aprovar, Some(Lucide::Check.into()), crate::tr!("Aprovar"), TamanhoBotao::Barra, window, cx)
                     .on_click(aprovar);
             return moldura_dupla(EstadoDaMoldura::Recolhida)
                 .child(cartao.child(cabecalho.cursor_pointer().on_click(abrir).child(aprovar)))
                 .into_any_element();
         }
         let copiar_plano =
-            BotaoCopiar::new(id_copiar, plano).dica("Copiar o plano");
-        let rotulo_aprovar = if estreita { "Aprovar" } else { "Aprovar e executar" };
+            BotaoCopiar::new(id_copiar, plano).dica(crate::tr!("Copiar o plano"));
+        let rotulo_aprovar = if estreita { crate::tr!("Aprovar") } else { crate::tr!("Aprovar e executar") };
         let aprovar = botao_primario(id_aprovar, Some(Lucide::Check.into()), rotulo_aprovar, TamanhoBotao::Controle, window, cx)
             .on_click(aprovar);
         let menu = Button::new(id_mais)
@@ -5609,16 +5627,16 @@ impl Janela {
             .h(r(32.))
             .w(r(28.))
             .rounded(raio::de(32.))
-            .tooltip("Aprovar em outro modo")
+            .tooltip(crate::tr!("Aprovar em outro modo"))
             .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
                 let (editando, perguntando) = (aprovar_editando.clone(), aprovar_perguntando.clone());
                 menu.item(
-                    PopupMenuItem::new("Aprovar e aceitar edições")
+                    PopupMenuItem::new(crate::tr!("Aprovar e aceitar edições"))
                         .icon(icone_do_modo("acceptEdits").0)
                         .on_click(move |e, window, cx| editando(e, window, cx)),
                 )
                 .item(
-                    PopupMenuItem::new("Aprovar e perguntar antes")
+                    PopupMenuItem::new(crate::tr!("Aprovar e perguntar antes"))
                         .icon(icone_do_modo("manual").0)
                         .on_click(move |e, window, cx| perguntando(e, window, cx)),
                 )
@@ -5626,7 +5644,7 @@ impl Janela {
         let mudar = botao_fantasma(
             id_mudar,
             None,
-            if com_texto { "Enviar mudanças" } else { "Pedir mudanças" },
+            if com_texto { crate::tr!("Enviar mudanças") } else { crate::tr!("Pedir mudanças") },
             TamanhoBotao::Controle,
             window,
             cx,
@@ -5742,8 +5760,8 @@ fn pilula_do_fim(
         .hover(|s| s.bg(Cores::flutuante().blend(Cores::pressionado())))
         .child(icone_de(Lucide::ArrowDown, 14.))
         .when(novidade, |s| s.child(div().flex_none().size(r(6.)).rounded_full().bg(Cores::destaque())))
-        .when(com_rotulo, |s| s.child(div().rotulo().child("Novas mensagens")))
-        .dica_no_ponteiro(|window, cx| Tooltip::new("Ir para o fim").action(&IrAoFim, None).build(window, cx))
+        .when(com_rotulo, |s| s.child(div().rotulo().child(crate::tr!("Novas mensagens"))))
+        .dica_no_ponteiro(|window, cx| Tooltip::new(crate::tr!("Ir para o fim")).action(&IrAoFim, None).build(window, cx))
         .on_click(cx.listener(move |this, _, _, cx| this.ir_para_o_fim(painel_id, cx)));
     div()
         .absolute()
@@ -5799,64 +5817,64 @@ fn texto_atividade(itens: &[Item], escrevendo: bool, dirigidas: usize) -> String
             _ => None,
         });
     let Some((nome, resumo)) = atual else {
-        return if escrevendo { "Escrevendo…" } else { "Pensando…" }.to_string();
+        return if escrevendo { crate::tr!("Escrevendo…") } else { crate::tr!("Pensando…") }.to_string();
     };
     let detalhe = resumo
         .split_once(" · ")
         .map(|(_, d)| d.trim_end_matches('…').trim())
         .filter(|d| !d.is_empty());
-    let verbo = verbo_da_ferramenta(nome, true);
+    let verbo = verbo_na_tela(nome, true);
     // "Lendo motor.rs…", "Rodando: cargo test…"; sem detalhe, "Lendo um arquivo…".
-    let com = |dois_pontos: bool, sem: &str| match detalhe {
+    let com = |dois_pontos: bool, sem: SharedString| match detalhe {
         Some(d) if dois_pontos => format!("{verbo}: {d}…"),
         Some(d) => format!("{verbo} {d}…"),
         None => format!("{verbo} {sem}…"),
     };
     match nome_curto(nome) {
-        "Read" | "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => com(false, "um arquivo"),
-        "Bash" | "BashOutput" => com(true, "um comando"),
-        "Grep" => com(false, "nos arquivos"),
-        "Glob" => com(false, "os arquivos"),
-        "WebFetch" => com(false, "uma página"),
-        "WebSearch" => com(true, "na web"),
+        "Read" | "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => com(false, crate::tr!("um arquivo")),
+        "Bash" | "BashOutput" => com(true, crate::tr!("um comando")),
+        "Grep" => com(false, crate::tr!("nos arquivos")),
+        "Glob" => com(false, crate::tr!("os arquivos")),
+        "WebFetch" => com(false, crate::tr!("uma página")),
+        "WebSearch" => com(true, crate::tr!("na web")),
         "Task" | "Agent" => match detalhe {
-            Some(d) => format!("Subagente: {d}…"),
-            None => "Rodando um subagente…".into(),
+            Some(d) => crate::tr!("Subagente: {detalhe}…", detalhe = d).to_string(),
+            None => crate::tr!("Rodando um subagente…").to_string(),
         },
         "Workflow" => match detalhe {
-            Some(d) => format!("Fluxo de agentes: {d}…"),
-            None => "Montando o fluxo de agentes…".into(),
+            Some(d) => crate::tr!("Fluxo de agentes: {detalhe}…", detalhe = d).to_string(),
+            None => crate::tr!("Montando o fluxo de agentes…").to_string(),
         },
         "criar_tarefa" => match detalhe {
-            Some(d) => format!("Criando o ajudante “{d}”…"),
-            None => "Criando um ajudante…".into(),
+            Some(d) => crate::tr!("Criando o ajudante “{nome}”…", nome = d).to_string(),
+            None => crate::tr!("Criando um ajudante…").to_string(),
         },
         "ver_diff" => match detalhe {
-            Some(d) => format!("Olhando as mudanças do {d}…"),
-            None => "Olhando as mudanças…".into(),
+            Some(d) => crate::tr!("Olhando as mudanças do {chat}…", chat = d).to_string(),
+            None => crate::tr!("Olhando as mudanças…").to_string(),
         },
         "pedir_ajuste" => match detalhe {
-            Some(d) => format!("Pedindo ajuste ao {d}…"),
-            None => "Pedindo um ajuste…".into(),
+            Some(d) => crate::tr!("Pedindo ajuste ao {chat}…", chat = d).to_string(),
+            None => crate::tr!("Pedindo um ajuste…").to_string(),
         },
         "aprovar_tarefa" => match detalhe {
-            Some(d) => format!("Juntando o {d}…"),
-            None => "Juntando um chat…".into(),
+            Some(d) => crate::tr!("Juntando o {chat}…", chat = d).to_string(),
+            None => crate::tr!("Juntando um chat…").to_string(),
         },
         "cancelar_tarefa" => match detalhe {
-            Some(d) => format!("Cancelando o {d}…"),
-            None => "Cancelando um pedido…".into(),
+            Some(d) => crate::tr!("Cancelando o {chat}…", chat = d).to_string(),
+            None => crate::tr!("Cancelando um pedido…").to_string(),
         },
-        "perguntar_coordenador" => "Perguntando a quem pediu…".into(),
-        "AskUserQuestion" => "Esperando a sua resposta…".into(),
-        "ExitPlanMode" => "Esperando a sua aprovação…".into(),
-        "mensagem_para_chat" => "Mandando mensagem a outra conversa…".into(),
+        "perguntar_coordenador" => crate::tr!("Perguntando a quem pediu…").to_string(),
+        "AskUserQuestion" => crate::tr!("Esperando a sua resposta…").to_string(),
+        "ExitPlanMode" => crate::tr!("Esperando a sua aprovação…").to_string(),
+        "mensagem_para_chat" => crate::tr!("Mandando mensagem a outra conversa…").to_string(),
         "TodoWrite" | "TaskCreate" | "TaskUpdate" | "TaskList" | "TaskGet" | "listar_tarefas" | "listar_chats" | "anotar_decisao"
         | "informar_progresso" => {
             format!("{verbo}…")
         }
         outro => match outro.strip_prefix("mcp__") {
-            Some(resto) => format!("Usando {}…", resto.rsplit("__").next().unwrap_or(resto)),
+            Some(resto) => crate::tr!("Usando {ferramenta}…", ferramenta = resto.rsplit("__").next().unwrap_or(resto)).to_string(),
             None => format!("{}…", resumo.trim_end_matches('…')),
         },
     }
@@ -5998,11 +6016,11 @@ const MAX_MOTIVO_DO_HOOK: usize = 600;
 fn linha_do_hook(motivo: &str) -> String {
     let motivo = sem_marcacao(&motivo.split_whitespace().collect::<Vec<_>>().join(" "));
     if motivo.is_empty() {
-        return "Um hook pediu a sua confirmação.".into();
+        return crate::tr!("Um hook pediu a sua confirmação.").to_string();
     }
     let cortado: String = motivo.chars().take(MAX_MOTIVO_DO_HOOK).collect();
     let reticencias = if cortado.len() < motivo.len() { "…" } else { "" };
-    format!("Um hook pediu a sua confirmação: {cortado}{reticencias}")
+    crate::tr!("Um hook pediu a sua confirmação: {motivo}", motivo = format!("{cortado}{reticencias}")).to_string()
 }
 
 /// O comando tem um trecho que apaga, força ou roda algo difícil de desfazer.
@@ -6046,14 +6064,14 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
                 .child(div().flex_none().etiqueta().text_color(Cores::apagado()).child(etiqueta_da_ferramenta(&p.ferramenta))),
         )
         // Em qualquer largura: sem o aviso, um arquivo de fora da pasta parecia dela.
-        .when(fora, |s| s.child(Etiqueta::new("fora da pasta").tom(Cores::ambar())))
+        .when(fora, |s| s.child(Etiqueta::new(crate::tr!("fora da pasta")).tom(Cores::ambar())))
         .when_some(p.posicao, |s, (k, n)| {
-            s.child(div().flex_none().etiqueta().text_color(Cores::tenue()).child(format!("{k} de {n}")))
+            s.child(div().flex_none().etiqueta().text_color(Cores::tenue()).child(crate::tr!("{k} de {n}", k = k, n = n)))
         });
     let uma_vez = r_.uma_vez.clone();
     let segurar = |id: SharedString, t: TamanhoBotao| {
         let uma_vez = uma_vez.clone();
-        BotaoDeSegurar::new(id, "Segure para permitir").tamanho(t).ao_completar(move |cx| uma_vez(cx))
+        BotaoDeSegurar::new(id, crate::tr!("Segure para permitir")).tamanho(t).ao_completar(move |cx| uma_vez(cx))
     };
     let estado = if perigoso {
         EstadoDaMoldura::Perigo
@@ -6066,12 +6084,12 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
         // Recolhido (há outro pedido aberto): o cabeçalho numa linha, com Negar e Permitir (só
         // esta vez; no perigoso, segurando). O clique no resto abre o corpo.
         let negar = r_.negar.clone();
-        let negar = botao_fantasma(id_texto("negar"), None, "Negar", TamanhoBotao::Barra, window, cx)
+        let negar = botao_fantasma(id_texto("negar"), None, crate::tr!("Negar"), TamanhoBotao::Barra, window, cx)
             .on_click(move |e, window, cx| negar(e, window, cx));
         let permitir = if perigoso {
             segurar(id_texto("segurar"), TamanhoBotao::Barra).into_any_element()
         } else {
-            botao_claro(id_texto("permitir"), None, "Permitir", TamanhoBotao::Barra, window, cx)
+            botao_claro(id_texto("permitir"), None, crate::tr!("Permitir"), TamanhoBotao::Barra, window, cx)
                 .on_click(move |_, _, cx| {
                     cx.stop_propagation();
                     uma_vez(cx)
@@ -6099,11 +6117,11 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
             .gap(esp::E8)
             .child(div().flex_1().min_w_0().child(Input::new(&campo)))
             .child(
-                botao_fantasma(id_texto("cancelar-explicacao"), None, "Cancelar", TamanhoBotao::Controle, window, cx)
+                botao_fantasma(id_texto("cancelar-explicacao"), None, crate::tr!("Cancelar"), TamanhoBotao::Controle, window, cx)
                     .on_click(botao(&r_.cancelar_explicacao)),
             )
             .child(
-                botao_primario(id_texto("negar-explicando"), None, "Negar e enviar", TamanhoBotao::Controle, window, cx)
+                botao_primario(id_texto("negar-explicando"), None, crate::tr!("Negar e enviar"), TamanhoBotao::Controle, window, cx)
                     .on_click(botao(&r_.enviar_explicacao)),
             )
             .into_any_element(),
@@ -6111,19 +6129,19 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
             let explicar = botao_icone(
                 id_texto("explicar"),
                 Lucide::MessageSquareQuote,
-                "Negar e explicar…\nNega e diz ao Claude o que fazer em vez disso",
+                crate::tr!("Negar e explicar…\nNega e diz ao Claude o que fazer em vez disso"),
                 TamanhoBotao::Controle,
                 window,
                 cx,
             )
             .on_click(botao(&r_.explicar));
             let negar =
-                botao_fantasma(id_texto("negar"), None, "Negar", TamanhoBotao::Controle, window, cx).on_click(botao(&r_.negar));
+                botao_fantasma(id_texto("negar"), None, crate::tr!("Negar"), TamanhoBotao::Controle, window, cx).on_click(botao(&r_.negar));
             // A caixa "Não perguntar de novo: ..." só existe fora do perigoso e quando há regra.
             let caixa = regra.map(|(objeto, dica)| {
                 let marcar = r_.marcar.clone();
                 Checkbox::new(id_texto("sempre"))
-                    .label(format!("Não perguntar de novo: {objeto}"))
+                    .label(crate::tr!("Não perguntar de novo: {objeto}", objeto = objeto))
                     .checked(p.marcado)
                     .tooltip(dica)
                     .on_click(move |marcado, window, cx| marcar(marcado, window, cx))
@@ -6133,7 +6151,7 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
             let principal = if perigoso {
                 segurar(id_texto("segurar"), TamanhoBotao::Controle).map(|b| if minima { b.largo() } else { b }).into_any_element()
             } else {
-                botao_claro(id_texto("permitir"), None, "Permitir", TamanhoBotao::Controle, window, cx)
+                botao_claro(id_texto("permitir"), None, crate::tr!("Permitir"), TamanhoBotao::Controle, window, cx)
                     .when(minima, |b| b.w_full())
                     .on_click(botao(&r_.permitir))
                     .into_any_element()
@@ -6201,7 +6219,7 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
                                 div()
                                     .metadado()
                                     .text_color(Cores::texto())
-                                    .child("O trecho em vermelho apaga, força ou roda algo difícil de desfazer."),
+                                    .child(crate::tr!("O trecho em vermelho apaga, força ou roda algo difícil de desfazer.")),
                             ),
                     )
                 })
@@ -6234,34 +6252,34 @@ fn titulo_do_pedido(ferramenta: &str, entrada: &serde_json::Value, pasta: &Path)
     let arquivo = caminho
         .and_then(|c| Path::new(c).file_name())
         .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "o arquivo".into());
+        .unwrap_or_else(|| crate::tr!("o arquivo").to_string());
     let relativo = caminho.map(|c| caminho_no_chat(c, pasta).0);
     match ferramenta {
-        "Bash" => ("Rodar um comando".into(), campo("description").map(str::to_string)),
-        "Edit" => (format!("Editar {arquivo}"), relativo),
+        "Bash" => (crate::tr!("Rodar um comando").to_string(), campo("description").map(str::to_string)),
+        "Edit" => (crate::tr!("Editar {arquivo}", arquivo = arquivo).to_string(), relativo),
         "MultiEdit" => {
             let trechos = entrada["edits"].as_array().map_or(0, Vec::len);
-            let detalhe = contagem(trechos, "trecho", "trechos");
-            (format!("Editar {arquivo}"), Some(relativo.map_or(detalhe.clone(), |c| format!("{c} · {detalhe}"))))
+            let detalhe = contagem(trechos, &crate::tr!("trecho"), &crate::tr!("trechos"));
+            (crate::tr!("Editar {arquivo}", arquivo = arquivo).to_string(), Some(relativo.map_or(detalhe.clone(), |c| format!("{c} · {detalhe}"))))
         }
         "Write" => {
-            let linhas = contagem(campo("content").map_or(0, |c| c.lines().count()), "linha", "linhas");
-            (format!("Gravar {arquivo}"), Some(relativo.map_or(linhas.clone(), |c| format!("{c} · {linhas}"))))
+            let linhas = contagem(campo("content").map_or(0, |c| c.lines().count()), &crate::tr!("linha"), &crate::tr!("linhas"));
+            (crate::tr!("Gravar {arquivo}", arquivo = arquivo).to_string(), Some(relativo.map_or(linhas.clone(), |c| format!("{c} · {linhas}"))))
         }
-        "NotebookEdit" if campo("edit_mode") == Some("delete") => (format!("Apagar uma célula de {arquivo}"), relativo),
-        "NotebookEdit" => (format!("Editar uma célula de {arquivo}"), relativo),
+        "NotebookEdit" if campo("edit_mode") == Some("delete") => (crate::tr!("Apagar uma célula de {arquivo}", arquivo = arquivo).to_string(), relativo),
+        "NotebookEdit" => (crate::tr!("Editar uma célula de {arquivo}", arquivo = arquivo).to_string(), relativo),
         "WebFetch" => {
             let url = campo("url").unwrap_or_default();
             let dominio = url.split("://").last().unwrap_or(url).split('/').next().unwrap_or_default();
-            (format!("Abrir {dominio}"), Some(url.to_string()).filter(|u| !u.is_empty()))
+            (crate::tr!("Abrir {dominio}", dominio = dominio).to_string(), Some(url.to_string()).filter(|u| !u.is_empty()))
         }
-        "WebSearch" => ("Pesquisar na web".into(), campo("query").map(str::to_string)),
+        "WebSearch" => (crate::tr!("Pesquisar na web").to_string(), campo("query").map(str::to_string)),
         _ => {
             let resumo = Some(crate::claude::resumo_ferramenta(ferramenta, entrada));
             // O servidor do MCP vai na etiqueta da ferramenta, ao lado do título.
             match ferramenta.strip_prefix("mcp__").and_then(|n| n.split_once("__")) {
-                Some((_, nome)) => (format!("Usar {nome}"), resumo),
-                None => (format!("Usar {}", nome_curto(ferramenta)), resumo),
+                Some((_, nome)) => (crate::tr!("Usar {nome}", nome = nome).to_string(), resumo),
+                None => (crate::tr!("Usar {nome}", nome = nome_curto(ferramenta)).to_string(), resumo),
             }
         }
     }
@@ -6270,31 +6288,28 @@ fn titulo_do_pedido(ferramenta: &str, entrada: &serde_json::Value, pasta: &Path)
 /// O objeto da caixa "Não perguntar de novo: ..." ("edições nesta conversa", "este comando", o nome
 /// da ferramenta) e a dica dela: o que passa a valer sem perguntar.
 fn rotulo_da_regra(regra: &str, manual: bool) -> (String, String) {
-    const DESFAZER: &str = "Para desfazer, use o menu do modo, embaixo da caixa de mensagem.";
+    let desfazer = crate::tr!("Para desfazer, use o menu do modo, embaixo da caixa de mensagem.");
     if regra == "edicoes" {
         let modo = if manual {
-            " Nos próximos turnos, a conversa fica em Aceitar edições."
+            crate::tr!(" Nos próximos turnos, a conversa fica em Aceitar edições.")
         } else {
-            ""
+            SharedString::default()
         };
         return (
-            "edições nesta conversa".into(),
-            format!(
-                "As edições de arquivos passam sem perguntar nesta conversa, já neste turno.{modo} \
-                 {DESFAZER}"
-            ),
+            crate::tr!("edições nesta conversa").to_string(),
+            crate::tr!("As edições de arquivos passam sem perguntar nesta conversa, já neste turno.{modo} {desfazer}", modo = modo, desfazer = desfazer).to_string(),
         );
     }
     if regra.starts_with("bash:") {
         return (
-            "este comando".into(),
-            format!("Este comando, exatamente igual, passa sem perguntar nesta conversa. {DESFAZER}"),
+            crate::tr!("este comando").to_string(),
+            crate::tr!("Este comando, exatamente igual, passa sem perguntar nesta conversa. {desfazer}", desfazer = desfazer).to_string(),
         );
     }
     let nome = nome_curto(regra.strip_prefix("ferramenta:").unwrap_or(regra));
     (
         nome.to_string(),
-        format!("{nome} passa sem perguntar nesta conversa. {DESFAZER}"),
+        crate::tr!("{nome} passa sem perguntar nesta conversa. {desfazer}", nome = nome, desfazer = desfazer).to_string(),
     )
 }
 
@@ -6331,14 +6346,14 @@ fn corpo_permissao(id: &str, ferramenta: &str, entrada: &serde_json::Value) -> A
             v_flex()
                 .gap(r(6.))
                 .child(caixa)
-                .when(longo, |s| s.child(nota("Comando comprido: role a caixa para ler tudo antes de permitir.")))
+                .when(longo, |s| s.child(nota(&crate::tr!("Comando comprido: role a caixa para ler tudo antes de permitir."))))
                 .into_any_element()
         }
         "Edit" => v_flex()
             .gap(r(6.))
             .child(bloco_de_linhas(id, &linhas_do_pedido_de_edicao(entrada), 80))
             .when(entrada["replace_all"].as_bool() == Some(true), |s| {
-                s.child(nota("Troca todas as ocorrências no arquivo."))
+                s.child(nota(&crate::tr!("Troca todas as ocorrências no arquivo.")))
             })
             .into_any_element(),
         "MultiEdit" => {
@@ -6358,7 +6373,7 @@ fn corpo_permissao(id: &str, ferramenta: &str, entrada: &serde_json::Value) -> A
             let linhas: Vec<_> = campo("content").lines().map(|l| LinhaDoDiff::Entra(l.to_string(), Vec::new())).collect();
             bloco_de_linhas(id, &linhas, 20).into_any_element()
         }
-        "NotebookEdit" if campo("edit_mode") == "delete" => nota("Apaga a célula.").into_any_element(),
+        "NotebookEdit" if campo("edit_mode") == "delete" => nota(&crate::tr!("Apaga a célula.")).into_any_element(),
         "NotebookEdit" => {
             let linhas: Vec<_> = campo("new_source").lines().map(|l| LinhaDoDiff::Entra(l.to_string(), Vec::new())).collect();
             bloco_de_linhas(id, &linhas, 20).into_any_element()
@@ -6369,7 +6384,7 @@ fn corpo_permissao(id: &str, ferramenta: &str, entrada: &serde_json::Value) -> A
             if entrada.as_object().is_some_and(|o| !o.is_empty()) {
                 bloco_de_linhas(id, &linhas, 40).into_any_element()
             } else {
-                nota("Sem parâmetros.").into_any_element()
+                nota(&crate::tr!("Sem parâmetros.")).into_any_element()
             }
         }
     }
@@ -6400,7 +6415,7 @@ fn bloco_de_linhas(id: &str, linhas: &[LinhaDoDiff], limite: usize) -> impl Into
             let (sinal, cor, fundo, texto, trechos): (&str, Hsla, Option<Hsla>, &str, &[std::ops::Range<usize>]) = match linha {
                 LinhaDoDiff::Pulo(0) => return div().my(r(4.)).h(px(1.)).bg(Cores::traco()).into_any_element(),
                 LinhaDoDiff::Pulo(n) => {
-                    return div().px(r(4.)).text_color(Cores::apagado()).child(format!("… {}", contagem(*n, "linha igual", "linhas iguais"))).into_any_element();
+                    return div().px(r(4.)).text_color(Cores::apagado()).child(format!("… {}", contagem(*n, &crate::tr!("linha igual"), &crate::tr!("linhas iguais")))).into_any_element();
                 }
                 LinhaDoDiff::Nota(texto) => return div().px(r(4.)).text_color(Cores::apagado()).child(texto.clone()).into_any_element(),
                 LinhaDoDiff::Sai(texto, trechos) => ("−", Cores::vermelho(), Some(fundo_sai()), texto, trechos),
@@ -6423,9 +6438,9 @@ fn bloco_de_linhas(id: &str, linhas: &[LinhaDoDiff], limite: usize) -> impl Into
                 .child(div().flex_1().min_w_0().child(StyledText::new(mostrado).with_highlights(marcados)))
                 .into_any_element()
         }))
-        .when(linhas.is_empty(), |s| s.child(div().text_color(Cores::tenue()).child("(vazio)")))
+        .when(linhas.is_empty(), |s| s.child(div().text_color(Cores::tenue()).child(crate::tr!("(vazio)"))))
         .when(resto > 0, |s| {
-            s.child(div().pt(r(4.)).text_color(Cores::tenue()).child(format!("+{resto} linhas")))
+            s.child(div().pt(r(4.)).text_color(Cores::tenue()).child(crate::tr!("+{resto} linhas", resto = resto)))
         })
 }
 
