@@ -153,7 +153,7 @@ tabela! {
     "ctrl-k", super::Buscar, None, Grupo::Lista, "Buscar conversas", "";
     // Sem contexto, a tecla valeria como a do contexto mais fundo e ganharia do negrito da página
     // do .md; no da janela, a página (mais funda) fica com ela enquanto um bloco está em edição.
-    "ctrl-b", super::AlternarLista, Some("Vitral && !PaginaMd"), Grupo::Lista, "Mostrar ou recolher a lista", "";
+    "ctrl-b", super::AlternarLista, Some("Vitral && !PaginaMd"), Grupo::Lista, "Mostrar a lista", "";
     "ctrl-g", super::ProximaPendencia, None, Grupo::Lista, "Ir à próxima pendência (dá a volta)", "";
     "ctrl-shift-g", super::PendenciaAnterior, None, Grupo::Lista, "Ir à pendência anterior", "";
     "ctrl-i", super::AbrirQuadroDeIdeias, Some("Vitral && !PaginaMd"), Grupo::Lista, "Quadro de ideias", "";

@@ -57,6 +57,8 @@ const GRAO_DO_FOSCO: f32 = 0.12;
 /// andamento vale só enquanto outra coisa mantém o laço batendo (o ponteiro parado em cima do
 /// botão do menu, o menu aberto).
 const ANDAMENTO_EM_REPOUSO: f64 = 0.4;
+/// Quantas vezes por segundo o fundo vivo é refeito enquanto anda.
+const BATIDAS_DO_VIVO: f64 = 15.;
 /// A fase com que o metal aparece parado (movimento desligado, captura): neste instante há bolha
 /// no pé da conversa e debaixo da lista.
 pub const FASE_INICIAL_DO_METAL: f64 = 66.5;
@@ -451,10 +453,22 @@ pub fn fundo(
     canvas(
         |_, _, _| {},
         move |limites, _, window, cx| {
-            pintar_o_fundo(limites, raios, tempo, vivo, window, cx);
-            // O fundo vivo cobre a chapa; ela continua feita, porque as aberturas (a doca, a tecla
-            // de metal) leem dela.
+            // Com o fundo vivo por cima, a chapa (que ele cobre) fica parada: ela continua feita,
+            // porque as aberturas (a doca, a tecla de metal) leem dela, mas não é refeita a cada
+            // batida. Eram dois campos na CPU por batida, uns 9 ms cada no release, com um chat
+            // trabalhando: a thread da interface ficava cheia, e as animações, a rolagem e o
+            // arrasto travavam (dono, 26/11/2026).
+            let (tempo_da_chapa, chapa_viva) = if fundo_vivo.is_some() { (0., false) } else { (tempo, vivo) };
+            pintar_o_fundo(limites, raios, tempo_da_chapa, chapa_viva, window, cx);
             if let Some((receita, cores)) = fundo_vivo {
+                // A fumaça é larga e lenta: andando, ela é refeita 15 vezes por segundo (o compasso
+                // bate a 30 pelos spinners) e numa grade uma vez e meia mais grossa (a placa amplia).
+                let (tempo, receita) = if vivo {
+                    let degrau = (tempo * BATIDAS_DO_VIVO).floor() / BATIDAS_DO_VIVO;
+                    (degrau, Receita { px_por_texel: receita.px_por_texel * 1.5, ..receita })
+                } else {
+                    (tempo, receita)
+                };
                 pintar_o_vivo(limites, raios, tempo, receita, cores, window, cx);
             }
         },

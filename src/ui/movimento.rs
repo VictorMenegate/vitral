@@ -6,7 +6,7 @@
 //!
 //! A exceção é o `laco_a` (12/11/2026, o dono pediu "mais shader" e depois "tenta focar em vez de
 //! glass esse metal líquido"): o metal (a chapa atrás da janela, as aberturas e a malha do botão do
-//! menu) anda sem parar, devagar, e só com a janela em primeiro plano e o movimento ligado. Quem
+//! menu) anda sem parar, devagar, com o movimento ligado (também com a janela sem foco). Quem
 //! pede diz o ritmo: `QPS_DO_LACO` (30 por segundo) com um chat da tela trabalhando,
 //! `QPS_EM_REPOUSO` no resto do tempo (hoje 0: em repouso o metal fica parado e nada redesenha;
 //! o porquê está na constante). O ponteiro mexendo na janela não acorda o metal. Continua sendo a
@@ -73,7 +73,11 @@ impl Curva {
 /// já pousa no fim: a conta vai até um quadro antes de `d`, o que poupa um redesenho.
 pub fn animacao(d: Duration, c: Curva) -> Animation {
     let quadro = Duration::from_secs_f32(1. / QPS);
-    Animation::new(d.saturating_sub(quadro).max(quadro)).with_easing(move |t| c.aplicar(t)).with_max_fps(QPS)
+    // Sem `with_max_fps`: com ele o GPUI agendava o quadro seguinte por timer, 1/60 s depois do
+    // desenho, e o timer chegava logo depois do vsync. Numa tela de 60 Hz cada passo perdia um
+    // quadro, e a animação andava a ~30 por segundo, aos trancos (dono, 26/11/2026: "as animações
+    // tá bem travadas"). Sem ele, o quadro é pedido no vsync da tela.
+    Animation::new(d.saturating_sub(quadro).max(quadro)).with_easing(move |t| c.aplicar(t))
 }
 
 /// De onde vem o que entra.
@@ -132,7 +136,7 @@ pub fn entrar_depois<E: IntoElement + Styled + 'static>(el: E, id: impl Into<Ele
     let total = atraso + ENTRAR;
     let espera = atraso.as_secs_f32() / total.as_secs_f32();
     let quadro = Duration::from_secs_f32(1. / QPS);
-    el.with_animation(id, Animation::new(total.saturating_sub(quadro).max(quadro)).with_max_fps(QPS), move |el, t| {
+    el.with_animation(id, Animation::new(total.saturating_sub(quadro).max(quadro)), move |el, t| {
         let u = ((t - espera) / (1. - espera)).clamp(0., 1.);
         de.aplicar(el, Curva::Entrar.aplicar(u))
     })
@@ -175,7 +179,7 @@ fn deslocamento_do_tremor(t: f32) -> f32 {
 /// põe nele a contagem de falhas, para tremer de novo a cada tentativa errada. O `left` de um
 /// elemento relativo só o desloca, sem mexer no layout. Com o movimento reduzido, fica parado.
 pub fn tremer<E: IntoElement + Styled + 'static>(el: E, id: impl Into<ElementId>) -> AnimationElement<E> {
-    el.with_animation(id, Animation::new(TREMER).with_max_fps(QPS), |el, t| el.left(r(deslocamento_do_tremor(t))))
+    el.with_animation(id, Animation::new(TREMER), |el, t| el.left(r(deslocamento_do_tremor(t))))
 }
 
 /// Algo que precisa da janela e do `App` mutáveis para desenhar (o estado guardado do
@@ -538,20 +542,17 @@ fn pedir_quadro(animando: Rc<Cell<bool>>, window: &mut Window, cx: &mut App) {
     if !agendar {
         return;
     }
-    let intervalo = Duration::from_secs_f32(1. / QPS);
-    cx.spawn(async move |cx| {
-        cx.background_executor().timer(intervalo).await;
-        cx.update(|cx| {
-            let lista = cx.default_global::<Relogio>().pendentes.remove(&janela).unwrap_or_default();
-            let mut views: Vec<EntityId> = lista.into_iter().filter(|(_, a)| a.get()).map(|(v, _)| v).collect();
-            views.sort();
-            views.dedup();
-            for view in views {
-                cx.notify(view);
-            }
-        });
-    })
-    .detach();
+    // No vsync da tela, e não num timer de 1/60 s: o timer chegava logo depois do vsync e cada
+    // passo perdia um quadro (~30 por segundo numa tela de 60 Hz; dono, 26/11/2026).
+    window.on_next_frame(move |_, cx| {
+        let lista = cx.default_global::<Relogio>().pendentes.remove(&janela).unwrap_or_default();
+        let mut views: Vec<EntityId> = lista.into_iter().filter(|(_, a)| a.get()).map(|(v, _)| v).collect();
+        views.sort();
+        views.dedup();
+        for view in views {
+            cx.notify(view);
+        }
+    });
 }
 
 /// Quantas vezes por segundo um laço vivo pede para redesenhar a janela (um chat da tela
@@ -635,9 +636,11 @@ impl Lacos {
     }
 }
 
-/// Movimento ligado e janela em primeiro plano: só assim um laço anda.
-pub fn anima(window: &Window, cx: &App) -> bool {
-    !cx.reduce_motion() && window.is_window_active()
+/// Movimento ligado: só assim um laço anda. Também com a janela sem foco (dono, 26/11/2026: "quando
+/// vou mexer em outra janela fica tudo travado aqui e até dá uns bugs nas animações"): antes o metal
+/// e o anel paravam ao sair, e voltavam aos saltos.
+pub fn anima(_window: &Window, cx: &App) -> bool {
+    !cx.reduce_motion()
 }
 
 /// Há uma batida de laço marcada para esta janela.

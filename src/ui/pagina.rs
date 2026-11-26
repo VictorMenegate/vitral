@@ -94,8 +94,8 @@ impl Render for BarraDaSelecao {
             .p(crate::tema::linear::MOLDURA_FOLGA)
             .gap(crate::tema::linear::CONTROLES_VAO)
             .rounded(raio::cartao())
+            // Chapada, sem sombra (o `.barra-trecho` do protótipo).
             .bg(Cores::preto())
-            .shadow(crate::tema::sombra_flutuante())
             .occlude()
             .child(formato("fmt-negrito").font_weight(FontWeight::BOLD).child("B").on_mouse_down(MouseButton::Left, acao(|j, w, cx| j.marcar_na_pagina("**", w, cx))))
             .child(formato("fmt-italico").italic().child("I").on_mouse_down(MouseButton::Left, acao(|j, w, cx| j.marcar_na_pagina("*", w, cx))))
@@ -572,10 +572,8 @@ impl Janela {
                     .w(r(220.))
                     .p(esp::E4)
                     .rounded(raio::CARTAO)
+                    // Chapado, sem fio claro nem sombra (o `.menu-flutua` do protótipo).
                     .bg(Cores::preto())
-                    .border_1()
-                    .border_color(Cores::forte().opacity(0.06))
-                    .shadow(crate::tema::sombra_flutuante())
                     .child(div().px(esp::E6).py(esp::E4).text_size(r(11.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::tenue()).child("Blocos"))
                     .children(itens),
                 "entra-menu-da-barra",

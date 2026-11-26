@@ -74,16 +74,16 @@ lto = "thin"
 
 # Cópia do gpui-component com poucas mudanças, marcadas com "Vitral:": a borda da janela segue o
 # tema (a original desenha um contorno cinza fixo; ver vendor/gpui-component/src/window_border.rs),
-# os spinners giram num compasso só, a 12 quadros por segundo para todos juntos (src/spinner.rs), o
+# os spinners giram num compasso só, a 30 batidas por segundo no vsync, para todos juntos (src/spinner.rs), o
 # realce de sintaxe de um trecho solto é público (src/highlighter), o diff dá o texto de uma linha e
 # abre a dobra de uma linha sem rolar (src/diff/document.rs e src/diff/state.rs), o rádio marca com
 # uma bolinha (src/radio.rs) e o texto com brilho anda no mesmo compasso (src/shimmer.rs). Menus,
 # dicas, avisos, sombras e o Kbd seguem a linguagem visual do Vitral (src/menu, src/tooltip.rs,
 # src/notification.rs, src/styled.rs, src/dialog/dialog.rs, src/kbd.rs e src/diff/mod.rs). Do
-# polimento: popovers e menus entram com fade e 6 px do lado do gatilho, em 160 ms a no máximo 60
-# quadros por segundo (src/popover.rs, `entrada_flutuante`, e src/menu/context_menu.rs); os
-# flutuantes não têm a linha de luz de 1 px no topo (src/styled.rs); os avisos animam a no máximo 60
-# quadros por segundo (src/notification.rs); o compasso dos spinners diz se está batendo, para o
+# polimento: popovers e menus entram com fade e 6 px do lado do gatilho, em 160 ms, no vsync da
+# tela (src/popover.rs, `entrada_flutuante`, e src/menu/context_menu.rs); os flutuantes são
+# chapados, sem sombra, anel nem brilho (src/styled.rs); os avisos animam no vsync
+# (src/notification.rs); o compasso dos spinners diz se está batendo, para o
 # ponto de "rodando" respirar de carona (src/spinner.rs, `compasso_recente`); e a lista com busca
 # tem o rótulo de grupo de 24 com um símbolo antes e a linha sem margem vertical
 # (src/command/item.rs, `CommandGroup::label_prefix`, e src/command/state.rs). A barra de rolagem
@@ -107,7 +107,8 @@ lto = "thin"
 # Wayland, a janela com `Blurred` usa também o desfoque padrão, o ext-background-effect-v1 (o do
 # GNOME 51 em diante), e prefere ele ao do KDE quando o compositor anuncia o blur; os dois desfocam
 # só o quadro da janela, sem a margem da sombra (src/linux/wayland/window.rs, `aplicar_desfoque`, e
-# src/linux/wayland/client.rs, `efeito_de_fundo`).
+# src/linux/wayland/client.rs, `efeito_de_fundo`). A roda do mouse rola suave, como no navegador:
+# cada dente é entregue aos poucos, em uns 120 ms (src/linux/wayland/client.rs, `rolar_suave`).
 [patch.crates-io]
 gpui-component = { path = "vendor/gpui-component" }
 gpui-pre-linux = { path = "vendor/gpui-pre-linux" }

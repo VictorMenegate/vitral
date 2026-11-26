@@ -212,7 +212,9 @@ impl Janela {
             return false;
         };
         let (paineis, ativo) = guardado.reabrivel(existe);
-        self.lista = !guardado.lista_recolhida;
+        // A lista não recolhe mais (26/11/2026): um arranjo guardado recolhido (ou o app fechado no
+        // modo foco) abre com ela à vista.
+        self.lista = true;
         self.larguras = guardado.larguras();
         // O tamanho guardado continua valendo se a janela abrir maximizada.
         self.arranjo = Some(guardado);

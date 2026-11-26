@@ -106,7 +106,7 @@ impl Janela {
                 grupos.push(passos(motor.passos(&chat.id), window));
             }
             // O sumário da conversa: uma linha por mensagem sua, para ir até ela (`sumario.rs`).
-            grupos.extend(self.secao_do_sumario(chat, cx));
+            grupos.extend(self.secao_do_sumario(chat, window, cx));
             grupos.extend(mudancas(chat, window));
             grupos.extend(self.secao_git(chat, window, cx));
             grupos.push(self.grupo_revisao(motor, chat, window, cx));

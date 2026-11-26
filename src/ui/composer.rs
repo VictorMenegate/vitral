@@ -948,6 +948,29 @@ impl Janela {
         // são da caixa: o clique ali não leva o foco para a janela. O campo e os botões tratam o
         // deles antes.
         let tem_estado = linha_de_estado.is_some();
+        // O foco: `t` vai a 1 em 180 ms com a caixa focada e volta a 0 em 120. Com ele, o aro de
+        // 2 de metal em volta do miolo, por dentro da moldura preta (o `.aro` do protótipo, com
+        // `inset: -2px` na caixa): o miolo opaco por cima deixa só o aro à vista, e a moldura
+        // continua lisa por fora. Antes o aro ficava em volta da moldura inteira, um brilho por
+        // fora do preto (dono, 26/11/2026: "tira o shader de volta da parte preta").
+        let miolo = com_estado(move |window, cx| {
+            let t = movimento::valor(
+                ("aro-caixa", painel_id as usize),
+                if focada { 1f32 } else { 0. },
+                if focada { movimento::MOVER } else { movimento::COR },
+                Curva::Mover,
+                window,
+                cx,
+            );
+            div()
+                .relative()
+                .flex()
+                .flex_col()
+                .min_w_0()
+                .child(super::componentes::metal::aro_de_metal(raio_miolo, tam(window, 2.), t))
+                .child(miolo)
+                .into_any_element()
+        });
         let moldura = v_flex()
             .min_w_0()
             // O hover da caixa acende os controles que recuam nos painéis de fundo.
@@ -969,26 +992,7 @@ impl Janela {
             .children(tem_anexos.then(|| div().px(esp::E4).pt(esp::E2).child(pilulas)))
             .child(miolo)
             .children(linha_de_estado);
-        // O foco: `t` vai a 1 em 180 ms com a caixa focada e volta a 0 em 120. Sem halo, sem
-        // cantoneira e sem azul.
-        let caixa = com_estado(move |window, cx| {
-            let t = movimento::valor(
-                ("aro-caixa", painel_id as usize),
-                if focada { 1f32 } else { 0. },
-                if focada { movimento::MOVER } else { movimento::COR },
-                Curva::Mover,
-                window,
-                cx,
-            );
-            // Com o foco, o aro de 2 px de metal em volta da moldura ("é aqui"), o mesmo da busca:
-            // acende por `t`, e a moldura opaca por cima deixa só o aro à vista.
-            div()
-                .relative()
-                .min_w_0()
-                .child(super::componentes::metal::aro_de_metal(raio_caixa, px(2.), t))
-                .child(moldura)
-                .into_any_element()
-        });
+        let caixa = moldura;
 
         div()
             .map(|s| super::mensagens::coluna(s, estreita))
@@ -1227,11 +1231,14 @@ impl Janela {
         // aparecia (relatório de design, 16/11/2026).
         // Um medidor deitado, e não um anel: o anel com um pedaço azul lia como o "carregando"
         // (dono, 18/11/2026: "melhora o design dessa parte de usos e contexto").
-        let cor_arco = cor_da_faixa(fracao, Cores::destaque());
+        let cor_arco = cor_da_faixa(fracao, Cores::destaque_texto());
         // Linear (25/11/2026): de novo um anel, fino, com o número ao lado ("essa parte da
-        // porcentagem de contexto tá feia", sobre o medidor deitado de 18/11).
-        let barra = Anel::new(("anel-contexto", b.painel as usize), fracao).diametro(14.).espessura(2.).cor(cor_arco);
-        let cor_numero = if cor_arco == Cores::destaque() { Cores::tenue() } else { cor_arco };
+        // porcentagem de contexto tá feia", sobre o medidor deitado de 18/11). O anel inteiro e
+        // na cor do da barra de baixo: com a fenda ele lia como o "carregando" (dono, 26/11/2026:
+        // "trocar esse ícone do contexto pra igual o de baixo"). Âmbar e vermelho continuam
+        // avisando perto do fim.
+        let barra = Anel::new(("anel-contexto", b.painel as usize), fracao).diametro(14.).espessura(2.).inteiro().cor(cor_arco);
+        let cor_numero = if cor_arco == Cores::destaque_texto() { Cores::tenue() } else { cor_arco };
         // O Codex e o Gemini não dizem o custo: o popover mostra os tokens.
         let o_que_abre = if chat.agente == crate::modelo::Agente::Claude { "O custo, o modelo e o Compactar" } else { "Os tokens, o modelo e o Compactar" };
         let dica: SharedString = format!("Contexto: {} de {}\n{o_que_abre}", milhares(usados), tokens(janela)).into();

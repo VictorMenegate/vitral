@@ -1222,8 +1222,7 @@ impl Vitrine {
                 CartaoDeLista::new("c-outro", "Aberta em outro painel")
                     .simbolo(Simbolo::Papel(Papel::Avulso))
                     .subtitulo("vitral · ~/Projetos/vitral")
-                    .meta("seg.")
-                    .aberto_em_outro(true),
+                    .meta("seg."),
             )
             .child(CabecalhoDeSecao::new("Arquivos"))
             .child(

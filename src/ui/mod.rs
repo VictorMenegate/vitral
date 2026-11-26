@@ -149,17 +149,12 @@ const MIN_APERTADO: f32 = 200.;
 /// Largura que um painel novo precisa ter para valer a pena abrir.
 const MIN_NOVO_PAINEL: f32 = 240.;
 /// Até onde a lista e o painel da direita vão no arrasto.
-const FAIXA_LISTA: (f32, f32) = (200., 400.);
-/// Arrastando a divisória da lista para a esquerda, ela ainda encolhe um pouco além do mínimo;
-/// passando deste ponto, recolhe de vez, como a barra lateral do VS Code (dono, 13/11/2026:
-/// "quando arrastar bastante pra diminuir a parte da esquerda, ela minimizar").
-const LISTA_NO_ARRASTO: f32 = 130.;
-const RECOLHER_ABAIXO_DE: f32 = 160.;
-/// A menor largura que a lista guarda: a do ponto em que ela recolhe. Solta entre ela e o mínimo
-/// da faixa, a lista fica onde foi deixada; antes ela guardava os 200 e, no clique duplo da
-/// divisória das conversas ou na volta do Ctrl+B, crescia sozinha (dono, 17/11/2026: "deixei o
-/// painel lateral menor e quando clico pra deixar o tamanho dos chats igual ela cresce").
-const LISTA_MINIMA: f32 = RECOLHER_ABAIXO_DE;
+/// A lista não fica mais estreita que a do protótipo (250) nem recolhe no arrasto: ela só
+/// alarga (dono, 26/11/2026: "não é pra dar pra minimizar a lista mais"). Quem a esconde é o
+/// modo foco. Antes ela encolhia até 130 no arrasto e recolhia abaixo de 160.
+const FAIXA_LISTA: (f32, f32) = (LATERAL, 400.);
+/// A menor largura que a lista guarda: o mínimo da faixa.
+const LISTA_MINIMA: f32 = FAIXA_LISTA.0;
 const FAIXA_DIREITA: (f32, f32) = (200., 380.);
 /// A faixa da direita com um arquivo aberto (a do protótipo).
 const FAIXA_ARQUIVO: (f32, f32) = (380., 960.);
@@ -466,6 +461,8 @@ pub struct Janela {
     busca: Entity<InputState>,
     /// A busca da aba Arquivos da direita.
     busca_arquivos: Entity<InputState>,
+    /// A busca do "Nesta conversa", no Este chat.
+    busca_sumario: Entity<InputState>,
     /// Conversas abertas lado a lado e qual delas está ativa.
     paineis: Vec<paineis::Painel>,
     ativo: usize,
@@ -584,7 +581,12 @@ pub struct Janela {
     /// andou do lugar de sempre, em px, guardado no interface.json, e o arrasto em curso (onde o
     /// ponteiro desceu e o deslocamento de então).
     deslocamento_trilho: Point<Pixels>,
-    arrasto_trilho: Option<(Point<Pixels>, Point<Pixels>)>,
+    arrasto_trilho: Option<uso_plano::ArrastoTrilho>,
+    /// O detalhe de uso aberto no trilho (o popover é controlado daqui: ele abre no soltar sem
+    /// arrasto, e não no apertar) e o que fechou por último, com a hora, para o clique que o fecha
+    /// pelo lado de fora não o abrir de novo no soltar.
+    uso_aberto: Option<componentes::Marca>,
+    uso_fechado: Option<(componentes::Marca, std::time::Instant)>,
     /// Divisão da largura no último quadro (lista e direita podem estar em gaveta).
     orcamento: Orcamento,
     /// Larguras dadas no arrasto das divisórias, a 100%.
@@ -870,6 +872,13 @@ impl Janela {
                 cx.notify();
             }
         }));
+        // A busca do "Nesta conversa": filtra as mensagens enquanto se digita.
+        let busca_sumario = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar nas mensagens"));
+        assinaturas.push(cx.subscribe_in(&busca_sumario, window, |_, _, evento, _, cx| {
+            if matches!(evento, InputEvent::Change) {
+                cx.notify();
+            }
+        }));
         // A busca dentro do arquivo aberto à direita: o Enter anda pelos achados.
         let busca_no_arquivo = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar no arquivo"));
         assinaturas.push(cx.subscribe_in(&busca_no_arquivo, window, |this, _, evento, _, cx| match evento {
@@ -979,6 +988,7 @@ impl Janela {
             filtro: Filtro::Todos,
             busca,
             busca_arquivos,
+            busca_sumario,
             paineis: Vec::new(),
             ativo: 0,
             ativo_antes_do_clique: None,
@@ -1038,6 +1048,8 @@ impl Janela {
             antes_do_foco: None,
             deslocamento_trilho: Point::default(),
             arrasto_trilho: None,
+            uso_aberto: None,
+            uso_fechado: None,
             orcamento: orcamento_da_janela(window, 1, true, false),
             larguras: Larguras::default(),
             estado_partes: cx.new(|_| ResizableState::default()),
@@ -1233,13 +1245,17 @@ impl Janela {
         cx.notify();
     }
 
-    /// Ctrl+B e o botão da lista: recolhe ou mostra a lista. Sem lugar ao lado das conversas,
-    /// ela abre por cima, como gaveta.
+    /// Ctrl+B e o botão da lista: mostra a lista. Ela não recolhe mais (dono, 26/11/2026: "não é
+    /// pra dar pra minimizar a lista mais"); quem a esconde é o modo foco, e aqui ele sai. Sem
+    /// lugar ao lado das conversas, ela abre por cima, como gaveta, e o Ctrl+B a fecha de novo.
     pub(super) fn alternar_lista(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.gaveta == Some(Gaveta::Lista) {
             self.fechar_gaveta(window, cx);
+        } else if self.antes_do_foco.is_some() {
+            self.alternar_foco(window, cx);
+            return;
         } else if self.orcamento.lista {
-            self.lista = false;
+            // À vista: fica.
         } else {
             // Pedida também na gaveta: ao alargar a janela, ela fica ao lado e a gaveta fecha.
             self.lista = true;
@@ -2539,9 +2555,17 @@ impl Janela {
                             return;
                         }
                         let tela = window.viewport_size();
+                        let limiar = crate::tema::tam(window, 4.);
                         let _ = mover.update(cx, |this, cx| {
-                            let Some((ini, base)) = this.arrasto_trilho else { return };
-                            let novo = base + (ev.position - ini);
+                            let Some(arrasto) = this.arrasto_trilho.as_mut() else { return };
+                            let andou = ev.position - arrasto.ini;
+                            // Só vira arrasto depois de 4 px (o do protótipo): antes disso, o
+                            // soltar é um clique no agente.
+                            if !arrasto.moveu && andou.x.abs().max(andou.y.abs()) < limiar {
+                                return;
+                            }
+                            arrasto.moveu = true;
+                            let novo = arrasto.base + andou;
                             this.deslocamento_trilho = point(
                                 novo.x.clamp(-(tela.width - px(80.)), px(0.)),
                                 novo.y.clamp(px(-40.), tela.height - px(200.)),
@@ -2555,11 +2579,14 @@ impl Janela {
                             return;
                         }
                         let _ = soltar.update(cx, |this, cx| {
-                            if this.arrasto_trilho.take().is_some() {
+                            let Some(arrasto) = this.arrasto_trilho.take() else { return };
+                            if arrasto.moveu {
                                 let p = this.deslocamento_trilho;
                                 gravar_interface("trilho", serde_json::json!([p.x.as_f32(), p.y.as_f32()]), cx);
-                                cx.notify();
+                            } else if let Some(marca) = arrasto.agente {
+                                this.clique_no_agente(marca);
                             }
+                            cx.notify();
                         });
                     });
                 })
@@ -2649,16 +2676,7 @@ impl Janela {
             .with_state(&self.estado_partes)
             .on_resize(move |estado, _, cx| {
                 let tamanhos: Vec<f32> = estado.read(cx).sizes().iter().map(|t| t.as_f32()).collect();
-                let _ = janela.update(cx, |this, cx| {
-                    // A lista arrastada bem abaixo do mínimo recolhe; o Ctrl+B a traz de volta na
-                    // largura de antes do arrasto, que ainda é a guardada (dono, 16/11/2026: "quando
-                    // minimizo a parte do lado e abre de novo", ela voltava no mínimo).
-                    if lista && tamanhos.first().is_some_and(|l| l / o.escala < RECOLHER_ABAIXO_DE) {
-                        this.lista = false;
-                        this.chave_partes = None;
-                        cx.notify();
-                        return;
-                    }
+                let _ = janela.update(cx, |this, _| {
                     if espremidas.is_none() {
                         this.larguras.guardar(&tamanhos, &antes, o.escala, com_arquivo)
                     }
@@ -2668,7 +2686,7 @@ impl Janela {
             grupo = grupo.child(
                 resizable_panel()
                     .size(px(largura))
-                    .size_range(u(LISTA_NO_ARRASTO)..px(o.max_lista))
+                    .size_range(u(FAIXA_LISTA.0)..px(o.max_lista))
                     .fixed()
                     .child(div().size_full().child(AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full()))),
             );
@@ -3096,14 +3114,15 @@ mod testes_orcamento {
     }
 
     #[test]
-    fn a_lista_estreitada_abaixo_da_faixa_fica_onde_foi_deixada() {
-        // Solta em 180 (abaixo dos 200 da faixa, acima do ponto de recolher): guarda 180, e a
-        // montagem seguinte (clique duplo, Ctrl+B) devolve os mesmos 180.
+    fn a_lista_nao_fica_mais_estreita_que_a_do_prototipo() {
+        // A lista não encolhe abaixo dos 250 do protótipo (dono, 26/11/2026: "não é pra dar pra
+        // minimizar a lista mais"): solta em 180 ou em 120, guarda 250, e a montagem seguinte
+        // devolve os 250.
+        assert_eq!(super::LISTA_MINIMA, super::LATERAL);
         let mut l = Larguras::default();
         l.guardar(&[180., 820.], &mexeu_em_tudo(true, false), 1., false);
-        assert_eq!(l.lista, 180.);
-        assert_eq!(l.em_px(&orcamento(1000., 1., 1, true, false), 1).lista, Some(180.));
-        // Abaixo do ponto de recolher não fica (quem recolhe é o arrasto, antes de guardar).
+        assert_eq!(l.lista, super::LISTA_MINIMA);
+        assert_eq!(l.em_px(&orcamento(1000., 1., 1, true, false), 1).lista, Some(super::LISTA_MINIMA));
         l.guardar(&[120., 880.], &mexeu_em_tudo(true, false), 1., false);
         assert_eq!(l.lista, super::LISTA_MINIMA);
     }

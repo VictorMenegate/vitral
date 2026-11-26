@@ -22,18 +22,12 @@ struct Compasso {
     pendentes: HashMap<WindowId, Vec<EntityId>>,
     /// Vitral: quando algum spinner ou brilho pediu o compasso pela última vez.
     ultimo_pedido: Option<Instant>,
-    /// Vitral: a fase da última batida, que fica parada com a janela sem foco.
-    ultima_fase: Duration,
-    /// Vitral: o compasso parou numa janela sem foco; na volta, segue da fase parada.
-    congelado: bool,
 }
 
 impl Global for Compasso {}
 
 /// Vitral: inscreve a view que está desenhando na próxima batida da janela (agendando a batida se
-/// ainda não houver) e devolve o tempo do compasso, para todos ficarem na mesma fase. Com a janela
-/// sem foco, não agenda nada e devolve a fase parada: quem está ao lado do editor não redesenha
-/// 12 vezes por segundo o turno inteiro.
+/// ainda não houver) e devolve o tempo do compasso, para todos ficarem na mesma fase.
 pub fn compasso(window: &mut Window, cx: &mut App) -> Duration {
     let agora = cx.background_executor().now();
     if !cx.has_global::<Compasso>() {
@@ -41,25 +35,15 @@ pub fn compasso(window: &mut Window, cx: &mut App) -> Duration {
             inicio: agora,
             pendentes: HashMap::new(),
             ultimo_pedido: None,
-            ultima_fase: Duration::ZERO,
-            congelado: false,
         });
     }
     let janela = window.window_handle().window_id();
     let view = window.current_view();
-    let ativa = window.is_window_active();
+    // Vitral (26/11/2026): o compasso bate também com a janela sem foco; parado, o anel girando
+    // congelava enquanto o dono mexia em outra janela.
     let estado = cx.global_mut::<Compasso>();
-    if !ativa {
-        estado.congelado = true;
-        return estado.ultima_fase;
-    }
-    if estado.congelado {
-        estado.congelado = false;
-        estado.inicio = agora.checked_sub(estado.ultima_fase).unwrap_or(agora);
-    }
     estado.ultimo_pedido = Some(agora);
     let decorrido = agora.saturating_duration_since(estado.inicio);
-    estado.ultima_fase = decorrido;
     let agendar = match estado.pendentes.entry(janela) {
         Entry::Occupied(mut views) => {
             if !views.get().contains(&view) {
@@ -77,23 +61,35 @@ pub fn compasso(window: &mut Window, cx: &mut App) -> Duration {
         // Na grade do compasso: janelas diferentes batem juntas.
         let resto = decorrido.as_nanos() % intervalo.as_nanos();
         let espera = intervalo - Duration::from_nanos(resto as u64);
-        cx.spawn(async move |cx| {
-            cx.background_executor().timer(espera).await;
-            cx.update(|cx| {
-                let views = cx
-                    .global_mut::<Compasso>()
-                    .pendentes
-                    .remove(&janela)
-                    .unwrap_or_default();
-                for view in views {
-                    cx.notify(view);
-                }
-            });
-        })
-        .detach();
+        esperar_batida(window, janela, agora + espera);
     }
     decorrido
 }
+
+/// Vitral (26/11/2026): a batida cai num vsync da tela, o primeiro a menos de meio quadro dela.
+/// Antes era um timer até a batida, e o desenho saía no vsync seguinte: numa tela de 60 Hz os
+/// 30 por segundo viravam um passo de 16 e outro de 50 ms quando o timer caía perto do vsync, e o
+/// anel girando tropeçava. Agora, com 60 Hz, é um quadro sim e outro não, sempre.
+fn esperar_batida(window: &mut Window, janela: WindowId, batida: Instant) {
+    window.on_next_frame(move |window, cx| {
+        let agora = cx.background_executor().now();
+        if agora + MEIO_QUADRO < batida {
+            esperar_batida(window, janela, batida);
+            return;
+        }
+        let views = cx
+            .global_mut::<Compasso>()
+            .pendentes
+            .remove(&janela)
+            .unwrap_or_default();
+        for view in views {
+            cx.notify(view);
+        }
+    });
+}
+
+/// Vitral: meio quadro de uma tela de 60 Hz, a folga com que um vsync já vale pela batida.
+const MEIO_QUADRO: Duration = Duration::from_millis(8);
 
 /// Vitral: o tempo do compasso, só enquanto ele bate (um spinner ou brilho pediu a batida nos
 /// últimos 150 ms). Não agenda nada: é para o que anda de carona, como o ponto de "rodando" que

@@ -409,6 +409,8 @@ pub(crate) struct WaylandClientState {
     vertical_modifier: f32,
     horizontal_modifier: f32,
     scroll_event_received: bool,
+    /// Vitral: a rolagem da roda que ainda falta andar, em linhas (ver `rolar_suave`).
+    rolagem_suave: Option<RolagemSuave>,
     enter_token: Option<()>,
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<WaylandWindowStatePtr>,
@@ -1124,6 +1126,7 @@ impl WaylandConnection {
             },
             capslock: Capslock { on: false },
             scroll_event_received: false,
+            rolagem_suave: None,
             axis_source: AxisSource::Wheel,
             mouse_location: None,
             continuous_scroll_delta: None,
@@ -2756,6 +2759,14 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             window.handle_input(input);
                         }
                     } else if let Some(discrete) = discrete
+                        && state.mouse_focused_window.is_some()
+                        && !state.modifiers.control
+                        && !state.modifiers.alt
+                        && !state.modifiers.platform
+                    {
+                        // Vitral: a roda anda suave, como no navegador.
+                        rolar_suave(this, &mut state, discrete);
+                    } else if let Some(discrete) = discrete
                         && let Some(window) = state.mouse_focused_window.clone()
                     {
                         let input = PlatformInput::Scroll(ScrollEvent {
@@ -2773,6 +2784,79 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
             _ => {}
         }
     }
+}
+
+/// Vitral (26/11/2026, "a rolagem das coisas tem que ser uma rolagem fluida igual é em navegador"):
+/// um dente da roda não pula as 3 linhas de uma vez. Ele entra no que falta andar, e um timer de
+/// `PASSO_SUAVE` entrega a cada batida a fração `1 - e^(-passo/τ)` do que falta, com τ de 40 ms:
+/// 95% em uns 120 ms, desacelerando no fim, como o smooth scrolling dos navegadores. Dentes
+/// seguidos somam (girar rápido anda mais rápido); o sentido trocado zera o que faltava. Com
+/// Ctrl, Alt ou Super (o zoom e os atalhos da roda), o dente vai inteiro, como antes. O touchpad
+/// (rolagem contínua, em pixels) não passa por aqui.
+#[derive(Clone, Copy, Debug)]
+struct RolagemSuave {
+    falta: Point<f32>,
+    modifiers: Modifiers,
+}
+
+/// A batida da rolagem suave.
+const PASSO_SUAVE: Duration = Duration::from_millis(8);
+/// A constante de tempo da desaceleração.
+const TAU_SUAVE: f32 = 0.040;
+/// Abaixo disto (em linhas), o que falta vai de uma vez e a rolagem acaba.
+const RESTO_SUAVE: f32 = 0.02;
+
+fn rolar_suave(this: &WaylandClientStatePtr, state: &mut WaylandClientState, dente: Point<f32>) {
+    let andando = state.rolagem_suave.is_some();
+    let modifiers = state.modifiers;
+    let rolagem = state.rolagem_suave.get_or_insert(RolagemSuave { falta: point(0., 0.), modifiers });
+    rolagem.modifiers = modifiers;
+    if rolagem.falta.y * dente.y < 0. {
+        rolagem.falta.y = 0.;
+    }
+    if rolagem.falta.x * dente.x < 0. {
+        rolagem.falta.x = 0.;
+    }
+    rolagem.falta.y += dente.y;
+    rolagem.falta.x += dente.x;
+    if andando {
+        return;
+    }
+    let fator = 1. - (-PASSO_SUAVE.as_secs_f32() / TAU_SUAVE).exp();
+    let this = this.clone();
+    let _ = state.loop_handle.insert_source(Timer::from_duration(Duration::ZERO), move |quando, _, _| {
+        let Some(client) = this.0.upgrade() else {
+            return TimeoutAction::Drop;
+        };
+        let mut state = client.borrow_mut();
+        let (Some(window), Some(position)) = (state.mouse_focused_window.clone(), state.mouse_location) else {
+            state.rolagem_suave = None;
+            return TimeoutAction::Drop;
+        };
+        let Some(rolagem) = state.rolagem_suave.as_mut() else {
+            return TimeoutAction::Drop;
+        };
+        let mut passo = point(rolagem.falta.x * fator, rolagem.falta.y * fator);
+        let acabou = (rolagem.falta.x - passo.x).abs() < RESTO_SUAVE && (rolagem.falta.y - passo.y).abs() < RESTO_SUAVE;
+        if acabou {
+            passo = rolagem.falta;
+        }
+        rolagem.falta.x -= passo.x;
+        rolagem.falta.y -= passo.y;
+        let modifiers = rolagem.modifiers;
+        if acabou {
+            state.rolagem_suave = None;
+        }
+        drop(state);
+        window.handle_input(PlatformInput::Scroll(ScrollEvent {
+            position,
+            delta: ScrollDelta::Lines(passo),
+            modifiers,
+            touch_phase: TouchPhase::Moved,
+            source: ScrollSource::Pointer,
+        }));
+        if acabou { TimeoutAction::Drop } else { TimeoutAction::ToInstant(quando + PASSO_SUAVE) }
+    });
 }
 
 impl Dispatch<zwp_pointer_gestures_v1::ZwpPointerGesturesV1, ()> for WaylandClientStatePtr {

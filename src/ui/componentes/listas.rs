@@ -268,7 +268,6 @@ pub struct CartaoDeLista {
     acoes: Vec<AnyElement>,
     acao_fixa: Option<AnyElement>,
     selecionado: bool,
-    aberto_em_outro: bool,
     nao_lido: bool,
     realce: bool,
     nivel: u8,
@@ -293,7 +292,6 @@ impl CartaoDeLista {
             acoes: Vec::new(),
             acao_fixa: None,
             selecionado: false,
-            aberto_em_outro: false,
             nao_lido: false,
             realce: false,
             nivel: 0,
@@ -366,11 +364,6 @@ impl CartaoDeLista {
     }
 
     /// Aberto em outro painel: a barra a 40%.
-    pub fn aberto_em_outro(mut self, s: bool) -> Self {
-        self.aberto_em_outro = s;
-        self
-    }
-
     pub fn nao_lido(mut self, n: bool) -> Self {
         self.nao_lido = n;
         self
@@ -522,16 +515,15 @@ impl RenderOnce for CartaoDeLista {
                     )
                 })
         });
-        // O escolhido é o fundo da seleção, e o aberto noutro painel, o do hover. A barrinha azul na
-        // ponta da esquerda saiu: uma barra num lado da caixa redonda é o atalho que a revisão de
-        // design pede para trocar pelo fundo (dono, 23/11/2026: "pode fazer todas").
-        let (fundo, hover) = match (self.selecionado, self.aberto_em_outro) {
+        // Só o escolhido tem fundo. O aberto noutro painel fica só com o número dele, como no
+        // protótipo: com o fundo do hover, dois seguidos (um escolhido, outro aberto) emendavam
+        // um no outro (dono, 26/11/2026).
+        let (fundo, hover) = match self.selecionado {
             // Na lista (a linha de uma linha só), o escolhido é o da lista: as cores dela podem ser
             // outras (Configurações › Aparência › Cores da lista).
-            (true, _) if folgada => (Cores::selecao_da_lista(), Cores::selecao_da_lista()),
-            (true, _) => (Cores::selecao(), Cores::selecao()),
-            (false, true) => (Cores::hover(), Cores::hover()),
-            (false, false) => (transparent_black(), Cores::hover()),
+            true if folgada => (Cores::selecao_da_lista(), Cores::selecao_da_lista()),
+            true => (Cores::selecao(), Cores::selecao()),
+            false => (transparent_black(), Cores::hover()),
         };
         div()
             .id(self.id)

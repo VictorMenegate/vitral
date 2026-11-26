@@ -511,9 +511,9 @@ impl Render for Notification {
                 } else {
                     NOTIFICATION_TRANSITION_DURATION
                 })
-                .with_easing(cubic_bezier(0.25, 0.1, 0.25, 1.))
-                // Vitral: no máximo 60 quadros por segundo, como as outras animações do Vitral.
-                .with_max_fps(crate::popover::ENTRADA_QPS),
+                // Vitral (26/11/2026): no vsync, como as outras animações do Vitral (o teto por
+                // timer perdia um quadro a cada passo).
+                .with_easing(cubic_bezier(0.25, 0.1, 0.25, 1.)),
                 move |this, delta| {
                     if closing {
                         let opacity = 1. - delta;

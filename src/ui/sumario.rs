@@ -57,6 +57,16 @@ pub(super) struct LinhaDoSumario {
     pub fez: String,
 }
 
+/// A linha casa com o `termo` (já normalizado): no texto inteiro da mensagem, e não só no começo
+/// que a linha mostra; a de só anexos, no "N anexos".
+fn linha_tem(chat: &Chat, linha: &LinhaDoSumario, termo: &str) -> bool {
+    let texto = match chat.itens.get(linha.item) {
+        Some(Item::Usuario { texto, .. }) if !texto.trim().is_empty() => texto.as_str(),
+        _ => linha.texto.as_str(),
+    };
+    super::acentos::normalizar(texto).contains(termo)
+}
+
 /// O começo de uma mensagem numa linha: as primeiras linhas com texto, juntas, em até 160 letras.
 fn comeco(texto: &str) -> String {
     let junto = texto.lines().map(str::trim).filter(|l| !l.is_empty()).take(3).collect::<Vec<_>>().join(" ");
@@ -265,7 +275,7 @@ impl Janela {
 
     /// A seção "Nesta conversa" do Este chat. Nada com menos de duas mensagens suas: não há para
     /// onde ir.
-    pub(super) fn secao_do_sumario(&mut self, chat: &Chat, cx: &Context<Self>) -> Option<AnyElement> {
+    pub(super) fn secao_do_sumario(&mut self, chat: &Chat, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
         let linhas = match &self.sumario.linhas {
             Some((de, itens, linhas)) if *de == chat.id && *itens == chat.itens.len() => linhas.clone(),
             _ => {
@@ -279,6 +289,11 @@ impl Janela {
         }
         self.sumario.desenhado = true;
         let a_vista = self.a_vista_no_painel(chat);
+        // A busca da lupa (dono, 26/11/2026): fica só o que tem o termo no texto inteiro da
+        // mensagem, sem caixa e sem acento.
+        let termo = super::acentos::normalizar(&self.busca_sumario.read(cx).value());
+        let total = linhas.len();
+        let linhas: Vec<&LinhaDoSumario> = linhas.iter().filter(|l| termo.is_empty() || linha_tem(chat, l, &termo)).collect();
         // O dia entra como um título pequeno onde ele muda, quando a conversa não é só de hoje.
         let horas: Vec<u64> = linhas.iter().map(|l| l.em).collect();
         let dias = super::mensagens::separadores_de_data(&horas, crate::modelo::agora());
@@ -345,20 +360,52 @@ impl Janela {
             }
             self.sumario.a_vista = marcada;
         }
-        let n = linhas.len();
-        let lista = div().relative().child(
+        let contagem = if termo.is_empty() { total.to_string() } else { format!("{} de {total}", linhas.len()) };
+        let vazio = linhas.is_empty().then(|| {
             div()
-                .id("lista-do-sumario")
-                .max_h(r(ALTURA_DA_LISTA))
-                .overflow_y_scroll()
-                .track_scroll(&self.sumario.rolagem)
-                .flex()
-                .flex_col()
-                .gap(linear::GRUPO_LINHAS)
-                .children(filhos)
-                .vertical_scrollbar(&self.sumario.rolagem),
-        );
-        Some(super::este_chat::grupo_da_direita("Nesta conversa", Some(n.to_string()), None, vec![lista.into_any_element()]))
+                .px(esp::E8)
+                .py(esp::E4)
+                .text_size(r(12.5))
+                .text_color(Cores::tenue())
+                .child(format!("Nenhuma mensagem com “{}”", self.busca_sumario.read(cx).value().trim()))
+        });
+        // A lista rola por dentro e a rolagem fica nela: no GPUI a roda vai a todo rolável embaixo
+        // do ponteiro, e o painel do Este chat rolava junto com ela (dono, 26/11/2026: "melhora a
+        // rolagem disso").
+        let lista = div()
+            .id("lista-do-sumario-contida")
+            .relative()
+            .on_scroll(|_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .id("lista-do-sumario")
+                    .max_h(r(ALTURA_DA_LISTA))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.sumario.rolagem)
+                    .flex()
+                    .flex_col()
+                    .gap(linear::GRUPO_LINHAS)
+                    .children(filhos)
+                    .children(vazio)
+                    .vertical_scrollbar(&self.sumario.rolagem),
+            );
+        let busca = div()
+            .flex_none()
+            .mb(esp::E4)
+            .on_action(cx.listener(|this, _: &gpui_kit::component::input::Escape, window, cx| {
+                if this.busca_sumario.read(cx).value().is_empty() {
+                    this.focar_composer(window, cx);
+                } else {
+                    this.busca_sumario.update(cx, |b, cx| b.set_value("", window, cx));
+                }
+            }))
+            .child(super::componentes::campo_de_busca_pequeno("busca-do-sumario", &self.busca_sumario, window, cx));
+        Some(super::este_chat::grupo_da_direita(
+            "Nesta conversa",
+            Some(contagem),
+            None,
+            vec![busca.into_any_element(), lista.into_any_element()],
+        ))
     }
 }
 
