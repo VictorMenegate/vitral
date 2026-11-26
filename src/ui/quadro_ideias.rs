@@ -1351,7 +1351,7 @@ impl Render for QuadroDeIdeias {
             )
             .into_any_element();
         // Trocar de vista sobe de leve (o `subir` do protótipo).
-        self.com_esc(super::movimento::entrar(div().size_full().child(quadro), "quadro-entra", super::movimento::De::Baixo).into_any_element(), cx)
+        self.com_esc(super::movimento::subir(div().size_full().child(quadro), "quadro-entra", super::movimento::De::Baixo).into_any_element(), cx)
     }
 }
 

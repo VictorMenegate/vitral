@@ -811,9 +811,9 @@ impl Janela {
                         cx,
                     );
                     // A luz de baixo é a marca do painel SELECIONADO (pedido do dono, 12/11/2026):
-                    // só o painel ativo a tem; nos outros o pé fica escuro. Acende em 180 ms e
-                    // apaga em 120.
-                    let (alvo, duracao) = if ativo { (1f32, movimento::MOVER) } else { (0f32, movimento::COR) };
+                    // só o painel ativo a tem; nos outros o pé fica escuro. Troca em 420 ms, como
+                    // no protótipo (26/11/2026).
+                    let (alvo, duracao) = if ativo { (1f32, movimento::LUZ) } else { (0f32, movimento::LUZ) };
                     let luz = movimento::valor(("doca-ativa", painel_id as usize), alvo, duracao, Curva::Mover, window, cx);
                     div()
                         .relative()

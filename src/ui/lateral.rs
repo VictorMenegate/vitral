@@ -1122,7 +1122,7 @@ impl Janela {
                 .font_weight(FontWeight::MEDIUM)
                 .cursor_pointer()
                 .text_color(Cores::texto())
-                .when(escolhido, |d| d.bg(Cores::selecao_da_lista()))
+                // O fundo do escolhido é o marcador, que desliza atrás dos itens (abaixo).
                 .when(!escolhido, |d| d.hover(|s| s.bg(Cores::hover())))
                 .child(div().flex_none().text_color(if escolhido { Cores::texto() } else { Cores::tenue_da_lista() }).child(icone(simbolo, 16., window)))
                 .child(div().flex_1().min_w_0().truncate().child(nome))
@@ -1141,11 +1141,16 @@ impl Janela {
         let ponto = ((!conversas || no_quadro) && pendentes > 0).then(|| div().flex_none().size(r(7.)).rounded_full().bg(Cores::espera()));
         let atalho = (!ctx.aperto.estreita).then(|| div().flex_none().text_size(r(11.)).text_color(Cores::tenue_da_lista()).child("Ctrl I"));
         let _ = cx;
+        // O marcador do escolhido desliza entre Conversas e Tarefas (o `.marcador` do protótipo):
+        // itens de 32 com 2 de vão.
+        let escolhido = if no_quadro { Some(2) } else if conversas { Some(0) } else { None };
         v_flex()
+            .relative()
             .flex_none()
             .mt(linear::ANTES_DA_SECAO)
             .gap(esp::E2)
             .mb(esp::E4)
+            .child(super::movimento::marcador("marcador-da-lista", escolhido, 0., 34., 32., Cores::selecao_da_lista(), raio::controle()))
             .child(linha("lista-conversas", Lucide::MessagesSquare, "Conversas", conversas && !no_quadro).children(ponto).on_click({
                 let trocar = trocar(AbaLateral::Conversas);
                 let janela = ctx.janela.clone();

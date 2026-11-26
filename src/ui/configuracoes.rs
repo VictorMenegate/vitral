@@ -1933,19 +1933,35 @@ impl Render for Configuracoes {
                 .text_size(r(12.5))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(if escolhida { Cores::texto() } else { Cores::texto_da_lista() })
-                .when(escolhida, |s| s.bg(Cores::selecao()))
+                // O fundo do escolhido é o marcador da coluna, que desliza (abaixo).
                 .when(!escolhida, |s| s.hover(|s| s.bg(Cores::hover()).text_color(Cores::texto())))
                 .child(div().flex_none().text_color(if escolhida { Cores::texto() } else { Cores::tenue_da_lista() }).child(parte.simbolo().desenhar(14., window)))
                 .when(!estreito, |s| s.child(parte.nome()))
                 .when(estreito, |s| s.dica_no_ponteiro(move |window, cx| Tooltip::new(parte.nome()).build(window, cx)))
                 .on_click(cx.listener(move |this, _, _, cx| this.ir_para(parte, cx)))
         });
+        // O marcador da parte escolhida desliza pela coluna (o `.cfg-nav` do protótipo): partes de
+        // 26, embaixo do título (também de 26) quando ele aparece.
+        let escolhida = Parte::TODAS.iter().position(|p| *p == atual.na_coluna());
+        let topo_das_partes = 8. + if estreito { 0. } else { 26. };
         let coluna = v_flex()
+            .relative()
             .flex_none()
             .w(if estreito { r(40.) } else { r(168.) })
             .h_full()
             .py(esp::E8)
             .px(linear::CAIXA_BAIXO)
+            .child(
+                div().absolute().top_0().left(linear::CAIXA_BAIXO).right(linear::CAIXA_BAIXO).bottom_0().child(movimento::marcador(
+                    "marcador-das-configuracoes",
+                    escolhida,
+                    topo_das_partes,
+                    26.,
+                    26.,
+                    Cores::selecao(),
+                    raio::controle(),
+                )),
+            )
             .when(!estreito, |s| {
                 s.child(
                     div()

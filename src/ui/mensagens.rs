@@ -318,12 +318,12 @@ fn entrada_do_cabecalho(indices: &[usize], base: usize, vistos: usize) -> Option
     }
 }
 
-/// O chevron de abrir e recolher: para a direita fechado, para baixo aberto, e gira 90° em 120 ms
+/// O chevron de abrir e recolher: para a direita fechado, para baixo aberto, e gira 90° em 240 ms
 /// quando o clique troca (montado, já está no lugar; parado, é o ícone de sempre, sem giro).
 pub(super) fn chevron(chave: &str, aberto: bool) -> movimento::ComEstado {
     let id = SharedString::from(format!("gira-{chave}"));
     movimento::com_estado(move |window, cx| {
-        let quarto = movimento::valor(id, if aberto { 1f32 } else { 0. }, movimento::COR, movimento::Curva::Mover, window, cx);
+        let quarto = movimento::valor(id, if aberto { 1f32 } else { 0. }, movimento::GIRAR, movimento::Curva::Mover, window, cx);
         if quarto >= 1. {
             icone_de(Lucide::ChevronDown, 12.).into_any_element()
         } else if quarto <= 0. {
@@ -897,7 +897,7 @@ impl Janela {
                         && chat.itens.get(i).is_some_and(|item| !fica_fora_do_recolhido(item) && plano_na_conversa(item).is_none())
                 });
             lista = match (indice, entrada) {
-                (Some(i), Some(nova)) => lista.child(movimento::entrada(("entra", i), nova, De::Baixo, caixa)),
+                (Some(i), Some(nova)) => lista.child(movimento::entrada_subindo(("entra", i), nova, De::Baixo, caixa)),
                 (Some(i), None) if abre => lista.child(movimento::entrada(("abre", i), true, De::Cima, caixa)),
                 _ => lista.child(caixa),
             };
@@ -4841,7 +4841,8 @@ impl Janela {
                                 // passos menores.
                                 ShimmerText::new(atividade)
                                     .id(("atividade", painel_id as usize))
-                                    .duration(Duration::from_secs(3))
+                                    // 2,4 s, o `brilho` do protótipo.
+                                    .duration(Duration::from_millis(2400))
                                     .highlight_color(Cores::forte())
                                     .font_family(fonte.clone())
                                     .metadado()
@@ -5305,7 +5306,7 @@ impl Janela {
         let vistos = self.paineis.iter().find(|p| p.chat.as_deref() == Some(chat.id.as_str())).map(|p| &p.ja_vistos);
         let entra = move |id: &str, cartao: AnyElement| -> AnyElement {
             let nova = vistos.is_some_and(|v| v.borrow_mut().novo(format!("pedido:{id}")));
-            movimento::entrada(SharedString::from(format!("entra-pedido-{id}")), nova, De::Baixo, div().child(cartao)).into_any_element()
+            movimento::entrada_subindo(SharedString::from(format!("entra-pedido-{id}")), nova, De::Baixo, div().child(cartao)).into_any_element()
         };
         // Os pedidos encolhem e rolam quando falta altura, para a caixa e as mensagens não saírem
         // da tela; vários de uma vez (chamadas em paralelo) nunca passam de 400 px.
