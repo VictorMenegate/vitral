@@ -1061,7 +1061,9 @@ impl Janela {
             .filter(|_| !self.paineis[ix].busca.aberta)
             .map(|(texto, alto, i)| {
                 let janela = cx.entity().downgrade();
-                let raio = crate::tema::raio_da_peca();
+                // O mesmo canto do balão na conversa (dono, 26/11/2026: "o border radius dos dois
+                // tá diferente"; era o da peça, 20).
+                let raio = linear::RAIO_DO_BALAO;
                 // A faixa do topo até a mensagem não tem fundo: a conversa é que não é desenhada
                 // embaixo dela (`recortada_no_alto`, na lista abaixo). Com as camadas do cartão
                 // repetidas por cima, ela tapava o texto mas ficava mais escura que o painel com a

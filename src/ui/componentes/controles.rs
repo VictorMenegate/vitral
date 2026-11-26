@@ -282,7 +282,9 @@ impl Chip {
             .border_color(transparent_black())
             .map(|b| match (self.so_icone, da_caixa) {
                 (true, _) => b.w(r(altura)).px_0(),
-                (false, true) => b.px(linear::CONTROLE_LADO).gap(esp::E6),
+                // A marca e o nome mais juntos (dono, 26/11/2026: "diminui o espaço entre o logo e
+                // o Opus"; eram os 6 do protótipo).
+                (false, true) => b.px(linear::CONTROLE_LADO).gap(esp::E4),
                 (false, false) => b.px(r(8.)),
             })
             // A marca no chip é o glifo solto, sem o disco cheio: o disco coral a 24 px do escudo

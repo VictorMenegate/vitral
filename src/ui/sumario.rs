@@ -143,6 +143,11 @@ pub(super) struct Sumario {
     /// A mensagem para a qual o clique levou, realçada até a hora guardada.
     realce: Option<(String, usize, Instant)>,
     rolagem: ScrollHandle,
+    /// O chat que a lista mostrou por último e quantos desenhos ela ainda desce até a última linha:
+    /// ao trocar de chat ela abre no fim, nas mensagens mais novas (dono, 26/11/2026: "tá focando
+    /// em cima e não sempre no último"). Alguns desenhos seguidos, porque no primeiro as linhas
+    /// ainda não foram medidas.
+    descer: (Option<String>, u8),
     /// As linhas do último desenho, com o chat e o número de itens dele: a conversa que não
     /// cresceu não refaz a conta a cada quadro.
     linhas: Option<(String, usize, Rc<Vec<LinhaDoSumario>>)>,
@@ -158,6 +163,13 @@ impl Janela {
     /// A mensagem do chat que está sendo lida no painel dele, pelas posições do último desenho.
     fn a_vista_no_painel(&self, chat: &Chat) -> Option<usize> {
         let p = &self.paineis[self.painel_do_sumario(&chat.id)?];
+        // Com a conversa no fim (acompanhando o que chega), a marca é a sua última mensagem, e a
+        // lista desce até ela. Pela posição, a marcada era a última que começa no alto da vista,
+        // quase sempre uma de antes (dono, 26/11/2026: "tá focando em cima e não sempre no último").
+        let no_fim = p.seguindo || -p.rolagem.offset().y >= p.rolagem.max_offset().y - px(2.);
+        if no_fim {
+            return chat.itens.iter().rposition(|i| matches!(i, Item::Usuario { .. }));
+        }
         let topo = -p.rolagem.offset().y;
         mensagem_a_vista(&p.posicoes.borrow(), |i| matches!(chat.itens.get(i), Some(Item::Usuario { .. })), topo)
     }
@@ -351,6 +363,13 @@ impl Janela {
                 )
                 .on_click(cx.listener(move |this, _, _, cx| this.ir_a_mensagem_do_sumario(&chat_id, item, cx)));
             filhos.push(filho.into_any_element());
+        }
+        if self.sumario.descer.0.as_deref() != Some(chat.id.as_str()) {
+            self.sumario.descer = (Some(chat.id.clone()), 3);
+        }
+        if self.sumario.descer.1 > 0 && !filhos.is_empty() {
+            self.sumario.descer.1 -= 1;
+            self.sumario.rolagem.scroll_to_item(filhos.len() - 1);
         }
         let marcada = a_vista.map(|item| (chat.id.clone(), item));
         if self.sumario.a_vista != marcada {

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use gpui_kit::{AppContext as _, Context};
 
-use super::Motor;
+use super::{AlvoDaDupla, Motor, alvo_da_dupla};
 use crate::{
     cli_agentes::{self, CliFora},
     modelo::Agente,
@@ -28,13 +28,26 @@ impl Motor {
         }
     }
 
-    /// Quantos chats um `update` do programa deste agente pegaria no meio: os que falam por ele
-    /// (como agente ou como parceiro da dupla) e estão trabalhando ou têm mensagem na fila.
+    /// Quantos chats um `update` do programa deste agente pegaria no meio: os que ele está
+    /// trabalhando ou com mensagem na fila para ele. Num chat em que ele é o parceiro da dupla,
+    /// só quando está revisando o turno do outro ou tem mensagem com o @ dele na fila: antes contava
+    /// o chat em que o OUTRO trabalhava, e as Configurações do Codex diziam "1 chat está
+    /// trabalhando" sem nenhum chat do Codex rodando (dono, 26/11/2026).
     pub fn turnos_a_caminho_de(&self, agente: Agente) -> usize {
         self.chats
             .iter()
-            .filter(|c| c.agente == agente || c.parceiro.as_ref().is_some_and(|p| p.agente == agente))
-            .filter(|c| self.execucao_real(&c.id).rodando() || self.na_fila(&c.id) > 0)
+            .filter(|c| {
+                if c.agente == agente {
+                    self.execucao_real(&c.id).rodando() || self.na_fila(&c.id) > 0
+                } else if c.parceiro.as_ref().is_some_and(|p| p.agente == agente) {
+                    self.revisando_o_par(&c.id).is_some()
+                        || self.filas.get(&c.id).is_some_and(|fila| {
+                            fila.iter().any(|e| matches!(alvo_da_dupla(&e.texto), AlvoDaDupla::So(chamado) if chamado == agente))
+                        })
+                } else {
+                    false
+                }
+            })
             .count()
     }
 
