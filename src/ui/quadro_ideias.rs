@@ -686,7 +686,21 @@ impl QuadroDeIdeias {
 
     /// Uma raia: o cabeçalho (o ícone do estado, o nome e quantos há) e o corpo que rola, no preto
     /// das peças flutuantes, com os cartões no cinza da caixa (o protótipo).
-    fn raia(&self, raia: Raia, cartoes: Vec<AnyElement>, n: usize, extra: Option<AnyElement>, m: &Motor, window: &Window, cx: &Context<Self>) -> AnyElement {
+    #[allow(clippy::too_many_arguments)]
+    fn raia(&self, raia: Raia, cartoes: Vec<(SharedString, AnyElement)>, n: usize, extra: Option<AnyElement>, m: &Motor, window: &Window, cx: &Context<Self>) -> AnyElement {
+        // Os cartões entram em cascata ao abrir o quadro (o `.card` do protótipo: subindo, 60 ms
+        // por raia e 35 por cartão); um cartão que aparece depois entra sozinho, ao montar. Só os
+        // primeiros escalonam, para a raia comprida não demorar.
+        let cartoes: Vec<AnyElement> = cartoes
+            .into_iter()
+            .enumerate()
+            .map(|(i, (chave, cartao))| {
+                let atraso = std::time::Duration::from_millis(raia as u64 * 60 + i.min(10) as u64 * 35);
+                // A chave é a do chat ou da ideia, com a raia: o cartão que muda de lugar na raia não toca
+                // de novo, e o que muda de raia entra nela.
+                super::movimento::entrar_depois(div().child(cartao), chave, super::movimento::De::Baixo, atraso).into_any_element()
+            })
+            .collect();
         let mais = (raia == Raia::Ideias).then(|| {
             let foco = self.nova.read(cx).focus_handle(cx);
             botao_icone("nova-ideia", Lucide::Plus, "Nova ideia", TamanhoBotao::Linha, window, cx).on_click(move |_, window, cx| window.focus(&foco, cx))
@@ -1252,11 +1266,11 @@ impl Render for QuadroDeIdeias {
             return self.com_esc(tela(self.tela_da_edicao(edicao, m, window, cx)), cx);
         }
         let termo = self.termo(cx);
-        let mut por_raia: HashMap<usize, Vec<AnyElement>> = HashMap::new();
+        let mut por_raia: HashMap<usize, Vec<(SharedString, AnyElement)>> = HashMap::new();
         let mut contagem: HashMap<usize, usize> = HashMap::new();
-        let mut por = |raia: Raia, cartao: AnyElement| {
+        let mut por = |raia: Raia, chave: String, cartao: AnyElement| {
             *contagem.entry(raia as usize).or_default() += 1;
-            por_raia.entry(raia as usize).or_default().push(cartao);
+            por_raia.entry(raia as usize).or_default().push((format!("entra-{chave}-{}", raia as usize).into(), cartao));
         };
 
         // As ideias: as próximas primeiro, depois as outras, na ordem do quadro. A que virou chat
@@ -1273,7 +1287,7 @@ impl Render for QuadroDeIdeias {
                 *ideias_do_chat.entry(c.id.clone()).or_default() += 1;
                 continue;
             }
-            por(Raia::da_coluna(ideia.coluna), self.cartao(ideia, m, window, cx));
+            por(Raia::da_coluna(ideia.coluna), format!("ideia-{}", ideia.id), self.cartao(ideia, m, window, cx));
         }
 
         // Os chats, cada um na raia do estado dele, o mexido por último primeiro.
@@ -1299,7 +1313,7 @@ impl Render for QuadroDeIdeias {
                 feitas_a_vista += 1;
             }
             let ideias = ideias_do_chat.get(&c.id).copied().unwrap_or(0);
-            por(*raia, self.cartao_do_chat(c, *raia, ideias, pendencia_de(&c.id), m, window, cx));
+            por(*raia, format!("chat-{}", c.id), self.cartao_do_chat(c, *raia, ideias, pendencia_de(&c.id), m, window, cx));
         }
         let escondidas = feitas_total.saturating_sub(feitas_a_vista);
         let mostrar_todas = (escondidas > 0 && !self.feitas_todas).then(|| {
@@ -1336,7 +1350,8 @@ impl Render for QuadroDeIdeias {
                     .child(h_flex().h_full().w_full().min_w(r(minimo)).items_start().gap(r(VAO_DAS_RAIAS)).children(raias)),
             )
             .into_any_element();
-        self.com_esc(quadro, cx)
+        // Trocar de vista sobe de leve (o `subir` do protótipo).
+        self.com_esc(super::movimento::entrar(div().size_full().child(quadro), "quadro-entra", super::movimento::De::Baixo).into_any_element(), cx)
     }
 }
 
