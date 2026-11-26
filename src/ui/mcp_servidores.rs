@@ -86,9 +86,9 @@ fn origem_do_servidor(escopo: &str) -> &'static str {
 /// "8 ferramentas", "1 ferramenta", "sem ferramentas".
 fn contagem_de_ferramentas(n: usize) -> String {
     match n {
-        0 => "sem ferramentas".to_string(),
-        1 => "1 ferramenta".to_string(),
-        n => format!("{n} ferramentas"),
+        0 => tr!("sem ferramentas").to_string(),
+        1 => tr!("1 ferramenta").to_string(),
+        n => tr!("{n} ferramentas", n = n).to_string(),
     }
 }
 
@@ -107,20 +107,20 @@ fn por_origem(servidores: &[ServidorMcp]) -> Vec<(&'static str, Vec<&ServidorMcp
 /// A linha de baixo de um servidor: o erro, o que ele oferece ou o que falta.
 fn detalhe_do_servidor(servidor: &ServidorMcp, reconectando: bool, recusado: bool) -> String {
     if reconectando {
-        return "Reconectando…".to_string();
+        return tr!("Reconectando…").to_string();
     }
     let ferramentas = contagem_de_ferramentas(servidor.ferramentas.len());
     match (&servidor.erro, servidor.estado.as_str()) {
         (Some(erro), _) => erro.lines().next().unwrap_or_default().to_string(),
         (None, "connected") => match &servidor.versao {
-            Some(versao) => format!("{ferramentas} · versão {versao}"),
+            Some(versao) => tr!("{ferramentas} · versão {versao}", ferramentas = ferramentas, versao = versao).to_string(),
             None => ferramentas,
         },
-        (None, "needs-auth") => "Entre nele pelo /mcp do Claude Code no terminal".to_string(),
-        (None, "pending") => "Ainda ligando".to_string(),
-        (None, "disabled") => "Desligado no Claude Code".to_string(),
-        (None, _) if recusado => "Não ligou de novo".to_string(),
-        _ => "Não ligou".to_string(),
+        (None, "needs-auth") => tr!("Entre nele pelo /mcp do Claude Code no terminal").to_string(),
+        (None, "pending") => tr!("Ainda ligando").to_string(),
+        (None, "disabled") => tr!("Desligado no Claude Code").to_string(),
+        (None, _) if recusado => tr!("Não ligou de novo").to_string(),
+        _ => tr!("Não ligou").to_string(),
     }
 }
 
@@ -171,13 +171,13 @@ fn cartao(servidor: &ServidorMcp, consulta: &Entity<Consulta>, window: &Window, 
                         .child(detalhe),
                 ),
         )
-        .child(Selo::neutro(if reconectando { "reconectando" } else { estado }))
+        .child(Selo::neutro(SharedString::from(crate::i18n::traduzir(if reconectando { "reconectando" } else { estado }))))
         .when(reconecta, |d| {
             d.child(
                 botao_icone(
                     SharedString::from(format!("mcp-reconectar-{}", servidor.nome)),
                     Lucide::RefreshCw,
-                    "Reconectar\nLiga o servidor de novo e mostra se ele voltou",
+                    tr!("Reconectar\nLiga o servidor de novo e mostra se ele voltou"),
                     TamanhoBotao::Linha,
                     window,
                     cx,
@@ -286,10 +286,10 @@ pub fn abrir(pasta: PathBuf, pasta_conta: Option<PathBuf>, mcp_da_equipe: Option
         };
         let aviso = |texto: &str| div().py(esp::E24).corpo_ui().text_color(Cores::tenue()).child(texto.to_string()).into_any_element();
         let (subtitulo, corpo) = match &resultado {
-            None => ("Perguntando ao Claude Code…".to_string(), aviso("Os servidores levam alguns segundos para ligar.")),
-            Some(None) => ("Sem resposta".to_string(), aviso("O Claude Code não respondeu. Feche e abra de novo para tentar outra vez.")),
+            None => (tr!("Perguntando ao Claude Code…").to_string(), aviso(&tr!("Os servidores levam alguns segundos para ligar."))),
+            Some(None) => (tr!("Sem resposta").to_string(), aviso(&tr!("O Claude Code não respondeu. Feche e abra de novo para tentar outra vez."))),
             Some(Some(lista)) if lista.is_empty() => {
-                ("Nenhum servidor".to_string(), aviso("Não há servidor MCP configurado no seu Claude Code para esta pasta."))
+                (tr!("Nenhum servidor").to_string(), aviso(&tr!("Não há servidor MCP configurado no seu Claude Code para esta pasta.")))
             }
             Some(Some(lista)) => {
                 let ligados = lista.iter().filter(|s| s.estado == "connected").count();
@@ -307,7 +307,7 @@ pub fn abrir(pasta: PathBuf, pasta_conta: Option<PathBuf>, mcp_da_equipe: Option
                                 .text_size(r(12.))
                                 .font_semibold()
                                 .text_color(Cores::tenue())
-                                .child(titulo)
+                                .child(SharedString::from(crate::i18n::traduzir(titulo)))
                                 .child(div().font_weight(FontWeight::NORMAL).text_color(Cores::apagado()).child(quantos.to_string())),
                         )
                         .children(membros.into_iter().map(|s| cartao(s, &consulta, window, cx)))
@@ -318,19 +318,19 @@ pub fn abrir(pasta: PathBuf, pasta_conta: Option<PathBuf>, mcp_da_equipe: Option
                     .overflow_y_scroll()
                     .child(v_flex().w_full().children(grupos))
                     .into_any_element();
-                (format!("{ligados} de {} ligados · {}", lista.len(), contagem_de_ferramentas(ferramentas)), corpo)
+                (tr!("{ligados} de {total} ligados · {ferramentas}", ligados = ligados, total = lista.len(), ferramentas = contagem_de_ferramentas(ferramentas)).to_string(), corpo)
             }
         };
         let atualizar = consulta.clone();
         super::dialogos::moldura(dialogo, largura::M, window)
             .title(super::dialogos::topo(
-                CabecalhoDialogo::new("Servidores MCP").subtitulo(div().font_weight(FontWeight::NORMAL).child(subtitulo)),
+                CabecalhoDialogo::new(tr!("Servidores MCP")).subtitulo(div().font_weight(FontWeight::NORMAL).child(subtitulo)),
             ))
             .child(corpo)
             .footer(
                 RodapeDialogo::new()
                     .esquerda(
-                        botao_fantasma("mcp-atualizar", Some(Lucide::RefreshCw.into()), "Atualizar", TamanhoBotao::Controle, window, cx)
+                        botao_fantasma("mcp-atualizar", Some(Lucide::RefreshCw.into()), tr!("Atualizar"), TamanhoBotao::Controle, window, cx)
                             .disabled(ocupado)
                             .on_click(move |_, _, cx| {
                                 atualizar.update(cx, |c, cx| {
@@ -341,7 +341,7 @@ pub fn abrir(pasta: PathBuf, pasta_conta: Option<PathBuf>, mcp_da_equipe: Option
                             }),
                     )
                     .principal(
-                        botao_primario("mcp-fechar", None, "Fechar", TamanhoBotao::Controle, window, cx)
+                        botao_primario("mcp-fechar", None, tr!("Fechar"), TamanhoBotao::Controle, window, cx)
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     ),
             )

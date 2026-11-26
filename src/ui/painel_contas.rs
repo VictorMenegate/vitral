@@ -57,7 +57,7 @@ pub struct PainelContas {
 
 impl PainelContas {
     pub fn new(motor: Entity<Motor>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let codigo = cx.new(|cx| InputState::new(window, cx).placeholder("Código da página de login"));
+        let codigo = cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Código da página de login")));
         let assinaturas = vec![
             cx.observe(&motor, |_, _, cx| cx.notify()),
             cx.subscribe_in(&codigo, window, |this, _, evento, window, cx| match evento {
@@ -171,14 +171,18 @@ impl PainelContas {
                 (Ok((email, plano)), Some(conta)) => {
                     // Voltou com outro e-mail: a conta não troca de dona; avisa e fica sem login.
                     if !conta.email.is_empty() && !email.is_empty() && !email.eq_ignore_ascii_case(&conta.email) {
-                        self.erro = Some(format!(
-                            "O login voltou com {email}, e esta conta é {}. Nada foi trocado: entre de novo com {}.",
-                            conta.email, conta.email
-                        ));
+                        self.erro = Some(
+                            tr!(
+                                "O login voltou com {email}, e esta conta é {conta}. Nada foi trocado: entre de novo com {conta}.",
+                                email = email,
+                                conta = conta.email
+                            )
+                            .to_string(),
+                        );
                     } else {
                         self.refazendo = None;
                         self.motor.update(cx, |m, cx| m.login_refeito(&id, plano, cx));
-                        window.push_notification(aviso(Tom::Pronto, format!("Login da {} refeito", conta.nome)), cx);
+                        window.push_notification(aviso(Tom::Pronto, tr!("Login da {conta} refeito", conta = conta.nome)), cx);
                     }
                 }
                 // A pasta de uma conta que já existe nunca é apagada aqui.
@@ -199,7 +203,7 @@ impl PainelContas {
                 let conta = Conta { id, nome, email: email.clone(), plano };
                 self.motor.update(cx, |m, cx| m.adicionar_conta(conta, cx));
                 self.lista_recolhida = false;
-                window.push_notification(aviso(Tom::Pronto, format!("Conta {email} conectada")), cx);
+                window.push_notification(aviso(Tom::Pronto, tr!("Conta {email} conectada", email = email)), cx);
             }
             Err(erro) => {
                 contas::apagar_pasta(&id);
@@ -284,9 +288,9 @@ impl PainelContas {
             .plano_da_conta(&conta.id)
             .and_then(|p| p.nome.clone())
             .or_else(|| (!conta.plano.is_empty()).then(|| conta.plano.clone()));
-        let login = if principal || conta.email.is_empty() { "login do Claude Code".to_string() } else { conta.email.clone() };
+        let login = if principal || conta.email.is_empty() { tr!("login do Claude Code").to_string() } else { conta.email.clone() };
         let subtitulo = match plano {
-            Some(p) => format!("{login} · plano {p}"),
+            Some(p) => tr!("{login} · plano {plano}", login = login, plano = p).to_string(),
             None => login,
         };
         let (cinco_h, semana) = (uso.cinco_horas.map(|f| f as f32), uso.semana.map(|f| f as f32));
@@ -297,15 +301,15 @@ impl PainelContas {
         let sem_login = m.conta_desconectada(&conta.id);
         let meta = if sem_login {
             // Sem login, o uso não diz nada: a pílula no lugar dele, e o "Entrar de novo" à vista.
-            PilulaDeEstado::new(Estado::ParadoAtencao).rotulo("desconectada").into_any_element()
+            PilulaDeEstado::new(Estado::ParadoAtencao).rotulo(tr!("desconectada")).into_any_element()
         } else if uso.bloqueado {
-            let mut pilula = PilulaDeEstado::new(Estado::Erro).rotulo("no limite");
+            let mut pilula = PilulaDeEstado::new(Estado::Erro).rotulo(tr!("no limite"));
             if let Some(fim) = m.limite_vence(&conta.id) {
-                pilula = pilula.detalhe(format!("volta {}", quando_local(fim)));
+                pilula = pilula.detalhe(tr!("volta {quando}", quando = quando_local(fim)));
             }
             pilula.into_any_element()
         } else {
-            let renova = |t: Option<i64>| t.map(|t| format!("renova {}", quando_local(t.max(0) as u64)));
+            let renova = |t: Option<i64>| t.map(|t| tr!("renova {quando}", quando = quando_local(t.max(0) as u64)).to_string());
             let (renova_5h, renova_semana) = (renova(uso.renova_5h), renova(uso.renova_semana));
             let dica: SharedString =
                 dica_uso(Marca::Claude.nome(), cinco_h, renova_5h.as_deref(), semana, renova_semana.as_deref()).into();
@@ -320,7 +324,7 @@ impl PainelContas {
         let entrar = (sem_login || self.entrar_em_todas).then(|| {
             let id = conta.id.clone();
             let refazendo = self.refazendo.as_deref() == Some(conta.id.as_str()) && !matches!(self.estado, EstadoLogin::Parado);
-            botao_fantasma(("conta-entrar", ix), Some(Lucide::KeyRound.into()), "Entrar de novo", TamanhoBotao::Linha, window, cx)
+            botao_fantasma(("conta-entrar", ix), Some(Lucide::KeyRound.into()), tr!("Entrar de novo"), TamanhoBotao::Linha, window, cx)
                 .disabled(refazendo)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
@@ -341,28 +345,28 @@ impl PainelContas {
         let (motor, id, email) = (self.motor.clone(), conta.id.clone(), conta.email.clone());
         let painel = cx.entity().downgrade();
         let extra = conta.id != contas::PRINCIPAL;
-        botao_icone(("conta-menu", ix), Lucide::Ellipsis, "Opções da conta", TamanhoBotao::Linha, window, cx)
+        botao_icone(("conta-menu", ix), Lucide::Ellipsis, tr!("Opções da conta"), TamanhoBotao::Linha, window, cx)
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                 let (padrao, sair) = ((motor.clone(), id.clone()), (motor.clone(), id.clone()));
                 let (copiar, de_novo, painel) = (email.clone(), id.clone(), painel.clone());
                 menu.item(
-                    PopupMenuItem::new("Usar como padrão")
+                    PopupMenuItem::new(tr!("Usar como padrão"))
                         .checked(escolhida)
                         .on_click(move |_, _, cx| escolher_conta(&padrao.0, &padrao.1, cx)),
                 )
                 // Refaz o login a qualquer hora, sem esperar o erro de um turno.
-                .item(PopupMenuItem::new("Entrar de novo").icon(Lucide::KeyRound).on_click(move |_, window, cx| {
+                .item(PopupMenuItem::new(tr!("Entrar de novo")).icon(Lucide::KeyRound).on_click(move |_, window, cx| {
                     let _ = painel.update(cx, |p, cx| p.entrar_de_novo(de_novo.clone(), window, cx));
                 }))
                 .when(!email.is_empty(), |menu| {
-                    menu.item(PopupMenuItem::new("Copiar o e-mail").icon(Lucide::Copy).on_click(move |_, window, cx| {
+                    menu.item(PopupMenuItem::new(tr!("Copiar o e-mail")).icon(Lucide::Copy).on_click(move |_, window, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(copiar.clone()));
-                        window.push_notification(aviso(Tom::Pronto, "E-mail copiado").chave("copiar"), cx);
+                        window.push_notification(aviso(Tom::Pronto, tr!("E-mail copiado")).chave("copiar"), cx);
                     }))
                 })
                 .when(extra, |menu| {
                     menu.separator().item(
-                        PopupMenuItem::new("Desconectar…")
+                        PopupMenuItem::new(tr!("Desconectar…"))
                             .icon(Lucide::Unplug)
                             .danger(true)
                             .on_click(move |_, window, cx| confirmar_desconectar(sair.0.clone(), sair.1.clone(), window, cx)),
@@ -383,11 +387,11 @@ impl PainelContas {
             EstadoLogin::EsperandoCodigo { endereco, .. } => {
                 let (abrir, copiar) = (endereco.clone(), endereco.clone());
                 let (icone_copiar, rotulo_copiar) =
-                    if self.copiado { (Lucide::Check, "Copiado") } else { (Lucide::Copy, "Copiar endereço") };
+                    if self.copiado { (Lucide::Check, tr!("Copiado")) } else { (Lucide::Copy, tr!("Copiar endereço")) };
                 let abrir_botao = if estreito {
-                    botao_icone("login-abrir", Lucide::ExternalLink, "Abrir de novo", TamanhoBotao::Linha, window, cx)
+                    botao_icone("login-abrir", Lucide::ExternalLink, tr!("Abrir de novo"), TamanhoBotao::Linha, window, cx)
                 } else {
-                    botao_fantasma("login-abrir", Some(Lucide::ExternalLink.into()), "Abrir de novo", TamanhoBotao::Linha, window, cx)
+                    botao_fantasma("login-abrir", Some(Lucide::ExternalLink.into()), tr!("Abrir de novo"), TamanhoBotao::Linha, window, cx)
                 };
                 let copiar_botao = if estreito {
                     botao_icone("login-copiar", icone_copiar, rotulo_copiar, TamanhoBotao::Linha, window, cx)
@@ -409,13 +413,13 @@ impl PainelContas {
         let entrar = botao_primario(
             "login-entrar",
             None,
-            if concluindo { "Entrando…" } else { "Entrar" },
+            if concluindo { tr!("Entrando…") } else { tr!("Entrar") },
             TamanhoBotao::Controle,
             window,
             cx,
         )
         .loading(concluindo)
-        .when(vazio && !concluindo, |b| b.disabled(true).opacity(0.45).tooltip("Cole o código da página"))
+        .when(vazio && !concluindo, |b| b.disabled(true).opacity(0.45).tooltip(tr!("Cole o código da página")))
         .on_click(cx.listener(|this, _, window, cx| this.concluir(window, cx)));
         let campo = div()
             .flex()
@@ -423,24 +427,24 @@ impl PainelContas {
             .gap(r(8.))
             .child(div().flex_1().min_w_0().child(Input::new(&self.codigo).font_family(FONTE_MONO)))
             .child(entrar);
-        GrupoDeOpcoes::new(Some("Entrar com outra conta".into()))
+        GrupoDeOpcoes::new(Some(tr!("Entrar com outra conta").into()))
             .linha(passo(
                 1,
                 primeiro,
                 if primeiro == EstadoPasso::Rodando {
-                    "Abrindo o login no navegador…"
+                    tr!("Abrindo o login no navegador…")
                 } else {
-                    "Entre com a outra conta no navegador"
+                    tr!("Entre com a outra conta no navegador")
                 },
-                "A página de login abriu. Se o navegador já estiver na conta principal, use uma janela anônima.",
+                tr!("A página de login abriu. Se o navegador já estiver na conta principal, use uma janela anônima."),
                 botoes_do_navegador.map(IntoElement::into_any_element),
                 window,
             ))
             .linha(passo(
                 2,
                 segundo,
-                "Autorize na página",
-                "Ao clicar em Autorizar, a conta entra aqui sozinha. Se a página mostrar um código, cole aqui.",
+                tr!("Autorize na página"),
+                tr!("Ao clicar em Autorizar, a conta entra aqui sozinha. Se a página mostrar um código, cole aqui."),
                 (segundo != EstadoPasso::Esperando).then(|| campo.into_any_element()),
                 window,
             ))
@@ -462,8 +466,8 @@ enum EstadoPasso {
 fn passo(
     numero: u8,
     estado: EstadoPasso,
-    titulo: &'static str,
-    texto: &'static str,
+    titulo: SharedString,
+    texto: SharedString,
     extra: Option<AnyElement>,
     window: &Window,
 ) -> impl IntoElement + use<> {
@@ -542,9 +546,9 @@ impl Render for PainelContas {
                 .gap(r(8.))
                 .metadado()
                 .text_color(Cores::tenue())
-                .child(super::componentes::contagem(contas.len(), "conta conectada", "contas conectadas"))
+                .child(super::componentes::contagem(contas.len(), &tr!("conta conectada"), &tr!("contas conectadas")))
                 .child(
-                    botao_fantasma("contas-ver", None, "Ver", TamanhoBotao::Linha, window, cx)
+                    botao_fantasma("contas-ver", None, tr!("Ver"), TamanhoBotao::Linha, window, cx)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.lista_recolhida = false;
                             cx.notify();
@@ -554,7 +558,7 @@ impl Render for PainelContas {
         } else {
             let automatica = marcada.as_deref() == Some(contas::AUTOMATICA);
             let escolher = self.motor.clone();
-            let linha_automatica = CartaoDeLista::new("conta-automatica", "Automática")
+            let linha_automatica = CartaoDeLista::new("conta-automatica", tr!("Automática"))
                 .simbolo(Simbolo::Elemento(
                     div()
                         .size(r(36.))
@@ -567,10 +571,10 @@ impl Render for PainelContas {
                         .child(icone(Lucide::Shuffle, 18., window))
                         .into_any_element(),
                 ))
-                .subtitulo("A de menor uso; troca sozinha se uma chegar ao limite")
+                .subtitulo(tr!("A de menor uso; troca sozinha se uma chegar ao limite"))
                 .acao_fixa(acoes_da_linha(None, automatica))
                 .on_click(move |_, _, cx| escolher_conta(&escolher, contas::AUTOMATICA, cx));
-            let mut grupo = GrupoDeOpcoes::new(Some("Conta padrão".into())).linha(linha_automatica);
+            let mut grupo = GrupoDeOpcoes::new(Some(tr!("Conta padrão").into())).linha(linha_automatica);
             for (ix, conta) in contas.iter().enumerate() {
                 let escolhida = marcada.as_deref() == Some(conta.id.as_str());
                 grupo = grupo.linha(self.linha_conta(ix, conta, escolhida, window, cx));
@@ -585,7 +589,7 @@ impl Render for PainelContas {
                         .px(r(4.))
                         .metadado()
                         .text_color(Cores::tenue())
-                        .child("A padrão vale para os chats que não escolheram outra."),
+                        .child(tr!("A padrão vale para os chats que não escolheram outra.")),
                 )
                 .into_any_element()
         };
@@ -593,7 +597,7 @@ impl Render for PainelContas {
             EstadoLogin::Parado => div()
                 .flex()
                 .child(
-                    botao_fantasma("contas-entrar", Some(Lucide::Plus.into()), "Entrar com outra conta…", TamanhoBotao::Barra, window, cx)
+                    botao_fantasma("contas-entrar", Some(Lucide::Plus.into()), tr!("Entrar com outra conta…"), TamanhoBotao::Barra, window, cx)
                         .on_click(cx.listener(|this, _, window, cx| this.adicionar(window, cx))),
                 )
                 .into_any_element(),
@@ -604,15 +608,15 @@ impl Render for PainelContas {
                 .child(self.passos_do_login(estreito, window, cx))
                 .child(
                     div().flex().justify_end().child(
-                        botao_fantasma("login-cancelar", None, "Cancelar", TamanhoBotao::Controle, window, cx)
+                        botao_fantasma("login-cancelar", None, tr!("Cancelar"), TamanhoBotao::Controle, window, cx)
                             .on_click(cx.listener(|this, _, _, cx| this.cancelar(cx))),
                     ),
                 )
                 .into_any_element(),
         };
         let erro = self.erro.clone().map(|erro| {
-            Alerta::new(Tom::Erro, erro).titulo("Não deu para entrar").acao(
-                botao_fantasma("login-de-novo", Some(Lucide::RotateCw.into()), "Tentar de novo", TamanhoBotao::Barra, window, cx)
+            Alerta::new(Tom::Erro, erro).titulo(tr!("Não deu para entrar")).acao(
+                botao_fantasma("login-de-novo", Some(Lucide::RotateCw.into()), tr!("Tentar de novo"), TamanhoBotao::Barra, window, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.de_novo(window, cx))),
             )
         });
@@ -630,8 +634,8 @@ fn linha_marcada(config: &str, ids: &[&str]) -> Option<String> {
 /// "limite atingido, volta às 15:42": a hora em que a conta no limite volta, quando se sabe.
 pub(super) fn limite_atingido(volta: Option<u64>) -> String {
     match volta {
-        Some(fim) => format!("limite atingido, volta {}", quando_local(fim)),
-        None => "limite atingido".to_string(),
+        Some(fim) => tr!("limite atingido, volta {quando}", quando = quando_local(fim)).to_string(),
+        None => tr!("limite atingido").to_string(),
     }
 }
 
@@ -662,11 +666,11 @@ pub(super) fn confirmar_desconectar(motor: Entity<Motor>, id: String, window: &m
         Confirmacao {
             tom: TomConfirmacao::Perigo,
             icone: Lucide::Unplug.into(),
-            titulo: format!("Desconectar “{nome}”?").into(),
-            texto: "O Vitral apaga o login dela neste computador.".into(),
-            detalhes: vec![(Lucide::MessagesSquare.into(), "As conversas dela passam para a conta padrão".into(), false)],
-            ok: "Desconectar".into(),
-            cancelar: "Cancelar".into(),
+            titulo: tr!("Desconectar “{nome}”?", nome = nome).into(),
+            texto: tr!("O Vitral apaga o login dela neste computador.").into(),
+            detalhes: vec![(Lucide::MessagesSquare.into(), tr!("As conversas dela passam para a conta padrão").into(), false)],
+            ok: tr!("Desconectar").into(),
+            cancelar: tr!("Cancelar").into(),
             ok_perigo: true,
         },
         move |_, cx| motor.update(cx, |m, cx| m.remover_conta(&id, cx)),

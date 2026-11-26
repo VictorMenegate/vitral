@@ -53,11 +53,11 @@ pub(super) fn linha_da_versao(
     resposta: Option<&Atualizacao>,
 ) -> LinhaDoAgente {
     let texto = match (instalado, andando, versao) {
-        (false, ..) => "Não está instalado neste computador".to_string(),
-        (true, true, _) => format!("Rodando o {programa} update…"),
-        (true, false, None) => "Lendo a versão…".to_string(),
+        (false, ..) => tr!("Não está instalado neste computador").to_string(),
+        (true, true, _) => tr!("Rodando o {programa} update…", programa = programa).to_string(),
+        (true, false, None) => tr!("Lendo a versão…").to_string(),
         // Sem a versão o Atualizar continua valendo: ele abre o mesmo programa dos turnos.
-        (true, false, Some(None)) => "Não deu para ler a versão instalada".to_string(),
+        (true, false, Some(None)) => tr!("Não deu para ler a versão instalada").to_string(),
         (true, false, Some(Some(v))) => versoes_agentes::texto(v),
     };
     let resposta_do_comando = resposta.filter(|_| instalado);
@@ -79,11 +79,11 @@ pub(super) fn linha_da_versao(
 
 /// O que a linha da conta do Gemini diz. O Vitral só sabe que há login quando o `agy` devolve a
 /// cota (`agente_gemini::ler_uso`), então é isso que vale como "conectada".
-pub(super) fn conta_do_gemini(lido: bool, conectado: bool) -> &'static str {
+pub(super) fn conta_do_gemini(lido: bool, conectado: bool) -> String {
     match (lido, conectado) {
-        (false, _) => "Lendo a conta…",
-        (true, true) => "Conta Google conectada",
-        (true, false) => "Sem login, ou o agy não respondeu",
+        (false, _) => tr!("Lendo a conta…").to_string(),
+        (true, true) => tr!("Conta Google conectada").to_string(),
+        (true, false) => tr!("Sem login, ou o agy não respondeu").to_string(),
     }
 }
 
@@ -115,11 +115,11 @@ fn confirmar_sair(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
         Confirmacao {
             tom: TomConfirmacao::Perigo,
             icone: Lucide::Unplug.into(),
-            titulo: "Sair da conta do Codex?".into(),
-            texto: "O Vitral roda codex logout e apaga o login do Codex neste computador.".into(),
-            detalhes: vec![(Lucide::MessagesSquare.into(), "Os chats do Codex não respondem até você entrar de novo".into(), false)],
-            ok: "Sair".into(),
-            cancelar: "Cancelar".into(),
+            titulo: tr!("Sair da conta do Codex?").into(),
+            texto: tr!("O Vitral roda codex logout e apaga o login do Codex neste computador.").into(),
+            detalhes: vec![(Lucide::MessagesSquare.into(), tr!("Os chats do Codex não respondem até você entrar de novo").into(), false)],
+            ok: tr!("Sair").into(),
+            cancelar: tr!("Cancelar").into(),
             ok_perigo: true,
         },
         move |_, cx| motor.update(cx, |m, cx| m.sair_do_codex(cx)),
@@ -154,10 +154,10 @@ fn abrir_servidores(agente: Agente, window: &mut Window, cx: &mut App) {
         let resultado = lista.read(cx).resultado.clone();
         let aviso = |texto: &str| div().py(esp::E24).corpo_ui().text_color(Cores::tenue()).child(texto.to_string()).into_any_element();
         let (subtitulo, corpo) = match &resultado {
-            None => ("Perguntando…".to_string(), aviso("Isto leva um instante.")),
-            Some(None) => ("Sem resposta".to_string(), aviso(&format!("O {} não respondeu. Feche e abra de novo para tentar outra vez.", agente.nome()))),
+            None => (tr!("Perguntando…").to_string(), aviso(&tr!("Isto leva um instante."))),
+            Some(None) => (tr!("Sem resposta").to_string(), aviso(&tr!("O {agente} não respondeu. Feche e abra de novo para tentar outra vez.", agente = agente.nome()))),
             Some(Some(servidores)) if servidores.is_empty() => {
-                ("Nenhum servidor".to_string(), aviso(&format!("Não há servidor MCP configurado no {}.", agente.nome())))
+                (tr!("Nenhum servidor").to_string(), aviso(&tr!("Não há servidor MCP configurado no {agente}.", agente = agente.nome())))
             }
             Some(Some(servidores)) => {
                 let ligados = servidores.iter().filter(|s| s.ligado).count();
@@ -183,7 +183,7 @@ fn abrir_servidores(agente: Agente, window: &mut Window, cx: &mut App) {
                                     d.child(div().truncate().font_family(FONTE_MONO).metadado().text_color(Cores::tenue()).child(s.detalhe.clone()))
                                 }),
                         )
-                        .child(div().flex_none().metadado().text_color(Cores::tenue()).child(if s.ligado { "ligado" } else { "desligado" }))
+                        .child(div().flex_none().metadado().text_color(Cores::tenue()).child(if s.ligado { tr!("ligado") } else { tr!("desligado") }))
                 });
                 let corpo = div()
                     .id("mcp-fora-lista")
@@ -191,16 +191,16 @@ fn abrir_servidores(agente: Agente, window: &mut Window, cx: &mut App) {
                     .overflow_y_scroll()
                     .child(v_flex().w_full().children(cartoes))
                     .into_any_element();
-                (format!("{ligados} de {} ligados", servidores.len()), corpo)
+                (tr!("{ligados} de {total} ligados", ligados = ligados, total = servidores.len()).to_string(), corpo)
             }
         };
         dialogos::moldura(dialogo, largura::M, window)
             .title(dialogos::topo(
-                CabecalhoDialogo::new(format!("Servidores MCP do {}", agente.nome())).subtitulo(div().font_weight(FontWeight::NORMAL).child(subtitulo)),
+                CabecalhoDialogo::new(tr!("Servidores MCP do {agente}", agente = agente.nome())).subtitulo(div().font_weight(FontWeight::NORMAL).child(subtitulo)),
             ))
             .child(corpo)
             .footer(RodapeDialogo::new().principal(
-                botao_primario("mcp-fora-fechar", None, "Fechar", TamanhoBotao::Controle, window, cx)
+                botao_primario("mcp-fora-fechar", None, tr!("Fechar"), TamanhoBotao::Controle, window, cx)
                     .on_click(|_, window, cx| window.close_dialog(cx)),
             ))
     });
@@ -236,14 +236,14 @@ impl Configuracoes {
         let com = |opcao: LinhaDeOpcao, controle: AnyElement| if estreito { opcao.campo(controle) } else { opcao.controle(controle) };
         let motor_e = self.motor.clone();
         let botao = if instalado {
-            botao_fantasma(format!("{id}-atualizar"), Some(Lucide::RefreshCw.into()), "Atualizar", TamanhoBotao::Barra, window, cx)
+            botao_fantasma(format!("{id}-atualizar"), Some(Lucide::RefreshCw.into()), tr!("Atualizar"), TamanhoBotao::Barra, window, cx)
                 // Na caixa escura dos outros controles: solto, parecia texto.
                 .bg(Cores::recuo())
                 .when_some(linha.espera.clone(), |b, motivo| b.disabled(true).opacity(0.45).tooltip(motivo))
                 .on_click(move |_, _, cx| motor_e.update(cx, |m, cx| m.atualizar_cli(agente, cx)))
         } else {
             // O instalador oficial e o login, no terminal (`uso_plano::instalar_*`).
-            botao_fantasma(format!("{id}-instalar"), Some(Lucide::Download.into()), "Instalar…", TamanhoBotao::Barra, window, cx)
+            botao_fantasma(format!("{id}-instalar"), Some(Lucide::Download.into()), tr!("Instalar…"), TamanhoBotao::Barra, window, cx)
                 .bg(Cores::recuo())
                 .on_click(move |_, _, _| match agente {
                     Agente::Gemini => uso_plano::instalar_gemini(),
@@ -252,18 +252,18 @@ impl Configuracoes {
         };
         let info = match agente {
             Agente::Gemini => {
-                "O Gemini roda pelo Antigravity CLI (agy), do Google. O Vitral abre o agy que encontra no PATH ou em \
+                tr!("O Gemini roda pelo Antigravity CLI (agy), do Google. O Vitral abre o agy que encontra no PATH ou em \
                  ~/.local/bin. O Atualizar roda `agy update` fora de qualquer turno e mostra o que ele responder; a \
                  versão nova vale no turno seguinte. Sem consulta de versão nova: o agy não publica uma que o Vitral \
-                 leia sem instalar."
+                 leia sem instalar.")
             }
             _ => {
-                "O agente de código da OpenAI. O Vitral abre o codex que encontra no PATH ou em ~/.local/bin. O Atualizar \
+                tr!("O agente de código da OpenAI. O Vitral abre o codex que encontra no PATH ou em ~/.local/bin. O Atualizar \
                  roda `codex update` fora de qualquer turno e mostra o que ele responder; a versão nova vale no turno \
-                 seguinte, sem reiniciar o Vitral."
+                 seguinte, sem reiniciar o Vitral.")
             }
         };
-        let opcao = LinhaDeOpcao::new(id, "Versão instalada").info(info).descricao(descricao);
+        let opcao = LinhaDeOpcao::new(id, tr!("Versão instalada")).info(info).descricao(descricao);
         // O motivo de o botão esperar também fica à vista, em âmbar, sem precisar da dica.
         let opcao = match linha.espera.filter(|_| !linha.andando) {
             Some(motivo) => opcao.aviso(motivo),
@@ -278,15 +278,15 @@ impl Configuracoes {
         let (frase, entrou) = match agente {
             Agente::Gemini => (conta_do_gemini(motor.gemini_lido, motor.gemini.is_some()).to_string(), motor.gemini.is_some()),
             _ => match &cli.conta {
-                None => ("Lendo a conta…".to_string(), false),
+                None => (tr!("Lendo a conta…").to_string(), false),
                 Some(conta) => (conta.frase(), conta.entrou()),
             },
         };
         let motor_c = self.motor.clone();
         let (rotulo, icone) = match (agente, entrou) {
-            (Agente::Codex, true) => ("Sair", Lucide::Unplug),
-            (Agente::Gemini, true) => ("Entrar de novo…", Lucide::KeyRound),
-            _ => ("Entrar…", Lucide::KeyRound),
+            (Agente::Codex, true) => (tr!("Sair"), Lucide::Unplug),
+            (Agente::Gemini, true) => (tr!("Entrar de novo…"), Lucide::KeyRound),
+            _ => (tr!("Entrar…"), Lucide::KeyRound),
         };
         let sair = agente == Agente::Codex && entrou;
         let botao = botao_fantasma(format!("{id}-conta"), Some(icone.into()), rotulo, TamanhoBotao::Controle, window, cx)
@@ -299,29 +299,29 @@ impl Configuracoes {
                 }
             });
         let info = match agente {
-            Agente::Gemini => "O login é o do agy, com a conta Google, e vale para os chats do Gemini. “Entrar” abre o terminal com `agy acp --login`.",
-            _ => "O login é o do próprio Codex, com a conta do ChatGPT ou uma chave de API. “Entrar” abre o terminal com `codex login`; “Sair” roda `codex logout`.",
+            Agente::Gemini => tr!("O login é o do agy, com a conta Google, e vale para os chats do Gemini. “Entrar” abre o terminal com `agy acp --login`."),
+            _ => tr!("O login é o do próprio Codex, com a conta do ChatGPT ou uma chave de API. “Entrar” abre o terminal com `codex login`; “Sair” roda `codex logout`."),
         };
-        grupo = grupo.linha(com(LinhaDeOpcao::new(format!("{id}-conta"), "Conta").info(info).descricao(frase), botao.into_any_element()));
+        grupo = grupo.linha(com(LinhaDeOpcao::new(format!("{id}-conta"), tr!("Conta")).info(info).descricao(frase), botao.into_any_element()));
 
         // Os servidores MCP.
-        let botao = botao_fantasma(format!("{id}-mcp-ver"), Some(Lucide::Container.into()), "Ver…", TamanhoBotao::Controle, window, cx)
+        let botao = botao_fantasma(format!("{id}-mcp-ver"), Some(Lucide::Container.into()), tr!("Ver…"), TamanhoBotao::Controle, window, cx)
             .bg(Cores::recuo())
             .on_click(move |_, window, cx| abrir_servidores(agente, window, cx));
         grupo = grupo.linha(com(
-            LinhaDeOpcao::new(format!("{id}-mcp"), "Lista dos servidores MCP")
-                .descricao(format!("Os servidores do {}, e se estão ligados. Só leitura.", agente.nome())),
+            LinhaDeOpcao::new(format!("{id}-mcp"), tr!("Lista dos servidores MCP"))
+                .descricao(tr!("Os servidores do {agente}, e se estão ligados. Só leitura.", agente = agente.nome())),
             botao.into_any_element(),
         ));
 
         // O arquivo de configuração, quando existe.
         if let Some(arquivo) = cli_agentes::arquivo_de_configuracao(agente) {
             let descricao = dialogos::com_til(&arquivo);
-            let botao = botao_fantasma(format!("{id}-config-abrir"), Some(Lucide::FilePen.into()), "Abrir", TamanhoBotao::Controle, window, cx)
+            let botao = botao_fantasma(format!("{id}-config-abrir"), Some(Lucide::FilePen.into()), tr!("Abrir"), TamanhoBotao::Controle, window, cx)
                 .bg(Cores::recuo())
                 .on_click(move |_, _, cx| crate::sistema::abrir_fora(&arquivo, cx));
             grupo = grupo.linha(com(
-                LinhaDeOpcao::new(format!("{id}-config"), format!("Configuração do {}", agente.nome())).descricao(descricao),
+                LinhaDeOpcao::new(format!("{id}-config"), tr!("Configuração do {agente}", agente = agente.nome())).descricao(descricao),
                 botao.into_any_element(),
             ));
         }
