@@ -1301,6 +1301,24 @@ impl Motor {
         mensagem: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        // Codex e Gemini só recebem a decisão no protocolo de aprovação. A explicação do
+        // cartão precisa ir como mensagem, com a mesma confirmação/fila do envio comum.
+        let encaminhar = self.permissoes.iter().find(|p| p.id == id).and_then(|p| {
+            let agente = self.chat_gravado(&p.chat)?.agente;
+            (!permitir && agente != Agente::Claude)
+                .then(|| mensagem.as_ref().filter(|m| !m.trim().is_empty()).map(|m| (p.chat.clone(), m.clone())))
+                .flatten()
+        });
+        self.responder_permissao_ao_agente(id, permitir, mensagem, cx);
+        if let Some((chat, texto)) = encaminhar {
+            let entrada = entrada_do_usuario(texto, Vec::new(), Reforco::default());
+            if matches!(self.dirigir_turno(&chat, &entrada, cx), Dirigido::NaFila(_)) {
+                self.entregar_entrada(&chat, entrada, cx);
+            }
+        }
+    }
+
+    fn responder_permissao_ao_agente(&mut self, id: &str, permitir: bool, mensagem: Option<String>, cx: &mut Context<Self>) {
         let Some(posicao) = self.permissoes.iter().position(|p| p.id == id) else {
             return;
         };
@@ -1836,7 +1854,8 @@ impl Motor {
         if !self.enviar_responde_pedido(chat_id) {
             return false;
         }
-        let resposta = resposta_ao_pedido(entrada);
+        let Some(agente) = self.chat_gravado(chat_id).map(|c| c.agente) else { return false };
+        let resposta = resposta_ao_pedido_para(agente, entrada);
         if resposta == RespostaAoPedido::Fila {
             return false;
         }
@@ -1844,7 +1863,7 @@ impl Motor {
             self.permissoes.iter().filter(|p| p.chat == chat_id).map(|p| (p.id.clone(), p.ferramenta.clone())).collect();
         let RespostaAoPedido::Explicacao(texto) = resposta else {
             for (id, _) in pedidos {
-                self.responder_permissao(&id, false, Some(RESPONDEU_ESCREVENDO.to_string()), cx);
+                self.responder_permissao_ao_agente(&id, false, Some(RESPONDEU_ESCREVENDO.to_string()), cx);
             }
             return false;
         };
@@ -1865,7 +1884,7 @@ impl Motor {
                 .filter(|respostas| !respostas.is_empty());
             match escritas {
                 Some(respostas) => self.responder_pergunta(&id, &respostas, cx),
-                None => self.responder_permissao(&id, false, Some(recusa_explicada(&ferramenta, &texto)), cx),
+                None => self.responder_permissao_ao_agente(&id, false, Some(recusa_explicada(&ferramenta, &texto)), cx),
             }
         }
         if let Some(c) = self.chat(chat_id) {
@@ -1946,6 +1965,9 @@ impl Motor {
         }
         if !matches!(self.execucao_real(chat_id), Execucao::Rodando { .. }) {
             return Dirigido::NaFila(None);
+        }
+        if self.chat_gravado(chat_id).is_some_and(|c| mensagem_para_outro(c.agente, entrada)) {
+            return Dirigido::NaFila(Some("Esta mensagem chama o outro agente; ela espera o turno atual terminar."));
         }
         // O que vale para o turno inteiro não cabe no meio dele: o esforço do Ultrathink e do
         // Ultracode são argumentos do processo. Um comando de barra no meio do turno mexeria na
@@ -2368,6 +2390,7 @@ impl Motor {
         // Sem conseguir gravar, nada novo começa: a mensagem espera na fila até voltar.
         if self.falha_gravacao.is_some() {
             self.esperar_na_fila(chat_id, mensagens, "Não estou conseguindo gravar; a mensagem entra quando voltar a gravar.");
+            self.salvar();
             cx.notify();
             return;
         }
@@ -2379,14 +2402,10 @@ impl Motor {
         }
         // A pasta sumiu (disco desmontado, pasta movida ou apagada): o Claude Code nem abriria.
         if !chat.cwd.is_dir() {
-            self.avisar(
-                chat_id,
-                &format!(
-                    "A pasta deste chat não existe mais ({}); a mensagem não foi enviada.",
-                    conversas::com_til(&chat.cwd)
-                ),
-                true,
-            );
+            self.esperar_na_fila(chat_id, mensagens, &format!(
+                "A pasta deste chat não existe mais ({}); a mensagem ficou na fila. Restaure a pasta e use Entregar agora.",
+                conversas::com_til(&chat.cwd)
+            ));
             self.salvar();
             cx.notify();
             return;
@@ -2400,6 +2419,17 @@ impl Motor {
         // dupla nasce aqui, sem precisar ligar nada (dono, 17/11/2026: "automático quando chamo
         // com o @"), e o chamado recebe a conversa inteira.
         let alvo = mensagens.iter().find(|e| e.do_usuario() && !e.registrada).map(|e| alvo_da_dupla(&e.texto));
+        if let Some(AlvoDaDupla::So(chamado)) = alvo
+            && chamado != chat.agente
+            && !chamado.instalado()
+        {
+            self.esperar_na_fila(chat_id, mensagens, &format!(
+                "O {} não está instalado neste computador; a mensagem ficou na fila. Instale-o e use Entregar agora.", chamado.nome()
+            ));
+            self.salvar();
+            cx.notify();
+            return;
+        }
         if let Some(AlvoDaDupla::So(chamado)) = alvo
             && chamado != chat.agente
             && chat.parceiro.is_none()
@@ -2453,10 +2483,10 @@ impl Motor {
         let claude = chat.agente == Agente::Claude;
         if !chat.agente.instalado() {
             let aviso = format!(
-                "O {} não está instalado neste computador (ou não está no PATH); a mensagem não foi enviada.",
+                "O {} não está instalado neste computador (ou não está no PATH); a mensagem ficou na fila. Instale-o e use Entregar agora.",
                 chat.agente.nome()
             );
-            self.avisar(chat_id, &aviso, true);
+            self.esperar_na_fila(chat_id, mensagens, &aviso);
             self.salvar();
             cx.notify();
             return;
@@ -3623,6 +3653,11 @@ impl Motor {
                     // O processo que tinha sido parado voltou a trabalhar: derrubado.
                 } else {
                     self.ultimo_sinal.insert(chat.clone(), std::time::Instant::now());
+                    // O relógio já acompanha o silêncio. Um heartbeat sem mudança visível não
+                    // invalida a lista e as conversas de todos os painéis.
+                    if matches!(evento, Evento::Vivo) {
+                        return false;
+                    }
                     // Só uma anotação para a estatística do turno: nada na tela muda.
                     if let Evento::PrimeiraPalavra(milis) = evento {
                         self.gastos.anotar_espera(&chat, milis);
@@ -5737,8 +5772,16 @@ fn alvo_da_dupla(texto: &str) -> AlvoDaDupla {
     let comeco = texto.trim_start().to_lowercase();
     Agente::TODOS
         .into_iter()
-        .find(|a| comeco.starts_with(&format!("@{}", a.nome().to_lowercase())))
+        .find(|a| {
+            comeco.strip_prefix(&format!("@{}", a.nome().to_lowercase()))
+                .is_some_and(|resto| resto.chars().next().is_none_or(|c| !c.is_alphanumeric() && c != '_' && c != '-'))
+        })
         .map_or(AlvoDaDupla::OsDois, AlvoDaDupla::So)
+}
+
+/// O @ do começo escolhe quem recebe, inclusive com um turno ou pedido de permissão aberto.
+fn mensagem_para_outro(atual: Agente, entrada: &Entrada) -> bool {
+    entrada.do_usuario() && matches!(alvo_da_dupla(&entrada.texto), AlvoDaDupla::So(chamado) if chamado != atual)
 }
 
 /// O que `este` agente da dupla ainda não viu: o que o usuário mandou e o que o outro fez desde a
@@ -5939,6 +5982,18 @@ fn resposta_ao_pedido(entrada: &Entrada) -> RespostaAoPedido {
     match texto_do_turno(std::slice::from_ref(entrada)) {
         (texto, imagens) if imagens.is_empty() => RespostaAoPedido::Explicacao(texto),
         _ => RespostaAoPedido::Mensagem,
+    }
+}
+
+fn resposta_ao_pedido_para(agente: Agente, entrada: &Entrada) -> RespostaAoPedido {
+    if mensagem_para_outro(agente, entrada) {
+        return RespostaAoPedido::Fila;
+    }
+    match resposta_ao_pedido(entrada) {
+        // Os protocolos deles levam só a decisão, sem a explicação. O texto segue pela
+        // entrada normal e só conta como entregue quando o agente o confirma.
+        RespostaAoPedido::Explicacao(_) if agente != Agente::Claude => RespostaAoPedido::Mensagem,
+        resposta => resposta,
     }
 }
 
@@ -7276,6 +7331,26 @@ mod testes_do_turno_que_roda {
 
     fn entrada(texto: &str, anexos: &[&str], reforco: Reforco) -> Entrada {
         entrada_do_usuario(texto.into(), anexos.iter().map(PathBuf::from).collect(), reforco)
+    }
+
+    #[test]
+    fn chamar_o_outro_agente_espera_sem_responder_ao_pedido_do_atual() {
+        let para_codex = entrada("@codex revisa isso", &[], Reforco::default());
+        assert!(mensagem_para_outro(Agente::Claude, &para_codex));
+        assert!(!mensagem_para_outro(Agente::Codex, &para_codex));
+        assert_eq!(resposta_ao_pedido_para(Agente::Claude, &para_codex), RespostaAoPedido::Fila);
+        assert!(!mensagem_para_outro(Agente::Claude, &entrada("pede ao @codex para revisar", &[], Reforco::default())));
+        assert!(!mensagem_para_outro(Agente::Claude, &entrada("@codex_extra é um nome", &[], Reforco::default())));
+    }
+
+    #[test]
+    fn orientacao_ao_codex_e_ao_gemini_vai_como_mensagem() {
+        let texto = entrada("use pnpm", &[], Reforco::default());
+        for agente in [Agente::Codex, Agente::Gemini] {
+            assert_eq!(resposta_ao_pedido_para(agente, &texto), RespostaAoPedido::Mensagem);
+            assert_eq!(resposta_ao_pedido_para(agente, &entrada("/compact", &[], Reforco::default())), RespostaAoPedido::Fila);
+        }
+        assert_eq!(resposta_ao_pedido_para(Agente::Claude, &texto), RespostaAoPedido::Explicacao("use pnpm".into()));
     }
 
     /// O critério do pedido: com o pedido aberto, o Enter entrega o texto ao modelo como a
