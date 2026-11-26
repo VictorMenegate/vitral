@@ -120,9 +120,11 @@ enum Parte {
 }
 
 impl Parte {
-    /// As partes do protótipo Linear (25/11/2026); os Perfis saíram, e as Contas moram no Claude
-    /// Code, porque são só contas do Claude (dono, 26/11/2026).
-    const TODAS: [Parte; 11] = [
+    /// As partes da coluna (protótipo Linear, 25/11/2026; os Perfis saíram). O Claude Code, o Codex
+    /// e o Gemini saíram da coluna para dentro de Agentes, que junta todas as IAs, com a versão, o
+    /// Instalar e o Atualizar de cada uma (dono, 26/11/2026: "melhora nas configurações pra ter uma
+    /// aba que junte todas"); a parte de cada uma abre por lá.
+    const TODAS: [Parte; 8] = [
         Parte::Chats,
         Parte::Agentes,
         Parte::Revisao,
@@ -130,11 +132,25 @@ impl Parte {
         Parte::Memoria,
         Parte::Aparencia,
         Parte::Atalhos,
-        Parte::ClaudeCode,
-        Parte::Codex,
-        Parte::Gemini,
         Parte::Atualizacoes,
     ];
+
+    /// A parte da coluna que fica acesa: a de cada IA mora dentro de Agentes.
+    fn na_coluna(self) -> Parte {
+        match self {
+            Parte::ClaudeCode | Parte::Codex | Parte::Gemini => Parte::Agentes,
+            outra => outra,
+        }
+    }
+
+    /// A parte de uma IA, aberta pela lista de Agentes.
+    fn da_ia(agente: Agente) -> Parte {
+        match agente {
+            Agente::Claude => Parte::ClaudeCode,
+            Agente::Codex => Parte::Codex,
+            Agente::Gemini => Parte::Gemini,
+        }
+    }
 
     fn nome(self) -> &'static str {
         match self {
@@ -539,9 +555,69 @@ impl Configuracoes {
         grupos
     }
 
+    /// A lista das IAs, no alto de Agentes: cada uma com a marca, a versão instalada (ou "Não
+    /// instalada"), o Instalar quando falta e a seta que abre a parte dela (a conta, o Atualizar,
+    /// os servidores MCP). As próximas IAs entram aqui como mais uma linha.
+    fn grupo_das_ias(&self, estreito: bool, window: &Window, cx: &Context<Self>) -> GrupoDeOpcoes {
+        let motor = self.motor.read(cx);
+        let mut grupo = GrupoDeOpcoes::new(Some("IAs".into()));
+        for agente in Agente::TODOS {
+            let (instalada, texto) = match agente {
+                Agente::Claude => {
+                    let instalada = motor.versao_claude.is_some() || crate::claude::binario_claude().is_file();
+                    let texto = match motor.versao_claude {
+                        Some((a, b, c)) => format!("Versão {a}.{b}.{c}"),
+                        None if instalada => "Instalado".to_string(),
+                        None => "Não instalado".to_string(),
+                    };
+                    (instalada, texto)
+                }
+                _ => {
+                    let instalada = agente.instalado();
+                    let texto = match motor.cli(agente).versao {
+                        Some(Some((a, b, c))) => format!("Versão {a}.{b}.{c}"),
+                        _ if instalada => "Instalado".to_string(),
+                        _ => "Não instalado".to_string(),
+                    };
+                    (instalada, texto)
+                }
+            };
+            let id = agente.nome().to_lowercase();
+            let instalar = (!instalada).then(|| {
+                botao_fantasma(SharedString::from(format!("cfg-ia-instalar-{id}")), Some(Lucide::Download.into()), "Instalar…", TamanhoBotao::Barra, window, cx)
+                    .bg(Cores::recuo())
+                    .on_click(move |_, _, _| match agente {
+                        Agente::Claude => super::uso_plano::instalar_claude(),
+                        Agente::Codex => super::uso_plano::instalar_codex(),
+                        Agente::Gemini => super::uso_plano::instalar_gemini(),
+                    })
+            });
+            let abrir = botao_icone(
+                SharedString::from(format!("cfg-ia-abrir-{id}")),
+                Lucide::ChevronRight,
+                format!("Abrir o {}: conta, versão e servidores MCP", agente.nome()),
+                TamanhoBotao::Barra,
+                window,
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.ir_para(Parte::da_ia(agente), cx)));
+            let controle = h_flex().gap(esp::E4).children(instalar).child(abrir).into_any_element();
+            let linha = LinhaDeOpcao::new(SharedString::from(format!("cfg-ia-{id}")), Parte::da_ia(agente).nome())
+                .marca(Marca::do_agente(agente))
+                .descricao(div().text_color(if instalada { Cores::tenue() } else { Cores::apagado() }).child(texto));
+            grupo = grupo.linha(if estreito { linha.campo(controle) } else { linha.controle(controle) });
+        }
+        grupo
+    }
+
     fn ir_para(&mut self, parte: Parte, cx: &mut Context<Self>) {
         if parte != self.parte {
-            let posicao = |p: Parte| Parte::TODAS.iter().position(|q| *q == p).unwrap_or(0);
+            // A parte de uma IA fica logo depois de Agentes: entrar nela vem da direita, voltar,
+            // da esquerda.
+            let posicao = |p: Parte| {
+                let na_coluna = Parte::TODAS.iter().position(|q| *q == p.na_coluna()).unwrap_or(0) * 2;
+                if p.na_coluna() == p { na_coluna } else { na_coluna + 1 }
+            };
             self.entra_de = Some(movimento::lado_da_navegacao(posicao(self.parte), posicao(parte)));
         }
         self.parte = parte;
@@ -550,6 +626,12 @@ impl Configuracoes {
             self.ler_os_instalados(false, cx);
         }
         match parte {
+            // A lista das IAs mostra a versão de cada uma.
+            Parte::Agentes => self.motor.update(cx, |m, cx| {
+                m.reler_versao_claude(cx);
+                m.reler_cli(Agente::Codex, cx);
+                m.reler_cli(Agente::Gemini, cx);
+            }),
             Parte::Codex => self.motor.update(cx, |m, cx| m.reler_cli(Agente::Codex, cx)),
             Parte::Gemini => self.motor.update(cx, |m, cx| {
                 m.reler_cli(Agente::Gemini, cx);
@@ -1673,6 +1755,7 @@ impl Render for Configuracoes {
                 arquivos_grupo.into_any_element(),
             ],
             Parte::Agentes => vec![
+                self.grupo_das_ias(estreito, window, cx).into_any_element(),
                 agentes.into_any_element(),
                 instrucoes_grupo.into_any_element(),
                 versoes_grupo.into_any_element(),
@@ -1698,7 +1781,7 @@ impl Render for Configuracoes {
         let atual = self.parte;
         let entra_de = self.entra_de.take();
         let partes = Parte::TODAS.into_iter().map(|parte| {
-            let escolhida = parte == atual;
+            let escolhida = parte == atual.na_coluna();
             div()
                 .id(SharedString::from(format!("cfg-parte-{}", parte.nome())))
                 .flex()
@@ -1741,10 +1824,17 @@ impl Render for Configuracoes {
             })
             .children(partes);
         let fechar = botao_icone("cfg-fechar", Lucide::X, "Fechar (Esc)", TamanhoBotao::Caixa, window, cx).on_click(|_, window, cx| window.close_dialog(cx));
+        // Na parte de uma IA, a seta volta à lista das IAs, em Agentes.
+        let voltar = (atual.na_coluna() != atual).then(|| {
+            botao_icone("cfg-voltar", Lucide::ArrowLeft, "Voltar a Agentes", TamanhoBotao::Caixa, window, cx)
+                .on_click(cx.listener(|this, _, _, cx| this.ir_para(Parte::Agentes, cx)))
+        });
         let cabeca = h_flex()
             .flex_none()
             .h(r(26.))
             .pl(esp::E4)
+            .gap(esp::E4)
+            .children(voltar)
             .child(div().flex_1().text_size(r(14.)).font_weight(FontWeight::BOLD).text_color(Cores::texto()).child(atual.nome()))
             .child(fechar);
         div()
@@ -1808,10 +1898,8 @@ mod testes {
         // Protótipo Linear (25/11/2026): entram Revisão, Notificações e Atalhos; os Perfis saem. As
         // Contas ficam dentro do Claude Code (são só do Claude).
         let nomes: Vec<&str> = Parte::TODAS.into_iter().map(Parte::nome).collect();
-        assert_eq!(
-            nomes,
-            ["Chats", "Agentes", "Revisão", "Notificações", "Memória", "Aparência", "Atalhos", "Claude Code", "Codex", "Gemini", "Atualizações"]
-        );
+        // As IAs (Claude Code, Codex, Gemini) moram dentro de Agentes desde 26/11/2026.
+        assert_eq!(nomes, ["Chats", "Agentes", "Revisão", "Notificações", "Memória", "Aparência", "Atalhos", "Atualizações"]);
     }
 
     #[test]

@@ -2284,8 +2284,12 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
 - **Configurações** (Ctrl+,), gravando na hora, valem para todos os chats (o caminho do
   `config.json` fica na dica do subtítulo). Desde 23/11/2026 são um diálogo largo
   (`LARGURA_DAS_CONFIGURACOES`) com uma coluna à esquerda das partes (`Parte`: Chats, Agentes,
-  Revisão, Notificações, Memória, Aparência, Atalhos, Claude Code, Codex, Gemini e Atualizações; as
-  contas do Claude ficam em Claude Code; no diálogo estreito, só os ícones) e, à
+  Revisão, Notificações, Memória, Aparência, Atalhos e Atualizações; no diálogo estreito, só os
+  ícones). Desde 26/11/2026, **Agentes** junta todas as IAs no alto, na lista **IAs** (dono: "uma
+  aba que junte todas"): cada uma com a marca, a versão instalada ou "Não instalado", o
+  **Instalar…** quando falta (o instalador oficial no terminal; o do Claude Code entrou junto) e a
+  seta que abre a parte dela (Claude Code, com as contas do Claude; Codex; Gemini), com a seta de
+  voltar no cabeçalho. Os "Instalar…" saíram do menu do logo. À
   direita, as opções da parte escolhida, que rolam sozinhas numa altura que nunca passa da da
   janela (`altura_do_corpo`: 520 a 100%, ou a janela menos a folga do cabeçalho; a navegação e o
   cabeçalho ficam parados e só a coluna rola). O que mora em cada

@@ -26,7 +26,6 @@ use super::{
         contagem, malha_viva,
     },
     movimento::{self, Curva},
-    uso_plano,
 };
 use crate::{
     atualizacao,
@@ -172,8 +171,6 @@ enum ItemDoMenu {
     NovoChatEmOutraPasta,
     Importar,
     Resumo,
-    InstalarCodex,
-    InstalarGemini,
     Configuracoes,
 }
 
@@ -186,17 +183,16 @@ enum ItemDoMenu {
 /// Enxuto no jeito do Linear (25/11/2026: "pode tirar esses arranjos, quadro de ideias, novo chat,
 /// o contas do Claude e o atalhos de teclado e paleta de comandos", e o "Recolher a lista" porque o
 /// modo foco já faz isso): chat em outra pasta, importar, o resumo de hoje e as Configurações. Os
-/// "Instalar…" só aparecem enquanto faltar o agente (são o único caminho até eles).
-fn grupos_do_menu(compacto: bool, instalar_codex: bool, instalar_gemini: bool) -> Vec<Vec<ItemDoMenu>> {
+/// "Instalar…" saíram (dono, 26/11/2026: "tinha do menu do logo o instalar pra como vai ter muitas
+/// não poluir"): instalar e atualizar cada IA mora em Configurações › Agentes.
+fn grupos_do_menu(compacto: bool) -> Vec<Vec<ItemDoMenu>> {
     use ItemDoMenu::*;
     let mut grupos = Vec::new();
     if compacto {
         grupos.push(vec![MostrarLista, PrecisaDeVoce]);
     }
     grupos.push(vec![NovoChatEmOutraPasta, Importar, Resumo]);
-    let mut ajustes: Vec<ItemDoMenu> = [instalar_codex.then_some(InstalarCodex), instalar_gemini.then_some(InstalarGemini)].into_iter().flatten().collect();
-    ajustes.push(Configuracoes);
-    grupos.push(ajustes);
+    grupos.push(vec![Configuracoes]);
     grupos
 }
 
@@ -528,10 +524,8 @@ impl Janela {
     fn itens_menu(&self, motor: &Motor, compacto: bool, precisa: PrecisaDeVoce, cx: &Context<Self>) -> ConstruirMenu {
         let janela = cx.entity().downgrade();
         let raiz = motor.dados.pasta.clone();
-        let sem_codex = motor.codex_lido && motor.codex.is_none();
         let chats = motor.chats.iter().filter(|c| !c.arquivado).count();
-        // O instalador oficial do Codex e o do Antigravity CLI são scripts do sh: no Windows, nada.
-        let grupos = grupos_do_menu(compacto, sem_codex, !crate::agente_gemini::instalado());
+        let grupos = grupos_do_menu(compacto);
         Rc::new(move |menu, window, cx| {
             // Relida na hora de abrir: outra abertura pode ter instalado uma mais nova depois.
             let pronta = cx.try_global::<atualizacao::Atualizacoes>().and_then(atualizacao::Atualizacoes::versao_pronta);
@@ -621,9 +615,6 @@ fn item_do_menu(
             }
         })),
         Resumo => menu.item(item("Resumo de hoje", Lucide::CalendarClock, janela, |this, window, cx| this.abrir_resumo_do_dia(window, cx))),
-        InstalarCodex => menu.item(PopupMenuItem::new("Instalar o Codex…").icon(Lucide::Download).on_click(|_, _, _| uso_plano::instalar_codex())),
-        // O Gemini, pelo instalador oficial do Antigravity CLI, que também faz o login.
-        InstalarGemini => menu.item(PopupMenuItem::new("Instalar o Gemini…").icon(Lucide::Download).on_click(|_, _, _| uso_plano::instalar_gemini())),
         Configuracoes => menu.item(item("Configurações", Lucide::Settings, janela, |this, window, cx| this.abrir_configuracoes(window, cx)).action(Box::new(AbrirConfiguracoes))),
     }
 }
@@ -681,14 +672,13 @@ mod testes {
     fn o_menu_do_vitral_e_o_enxuto_do_linear() {
         use super::{ItemDoMenu::*, grupos_do_menu};
         // Linear (25/11/2026): chat em outra pasta, importar, o resumo de hoje e as Configurações.
-        let normal = grupos_do_menu(false, false, false);
+        let normal = grupos_do_menu(false);
         assert_eq!(normal, [vec![NovoChatEmOutraPasta, Importar, Resumo], vec![Configuracoes]]);
-        // No recolhido, a lista e o sino só se alcançam por aqui.
-        let recolhido = grupos_do_menu(true, false, false);
+        // No recolhido, a lista e o sino só se alcançam por aqui. Os "Instalar…" saíram para as
+        // Configurações (26/11/2026).
+        let recolhido = grupos_do_menu(true);
         assert_eq!(recolhido[0], [MostrarLista, PrecisaDeVoce]);
-        // Os instaladores entram só quando falta o agente, antes das Configurações.
-        assert_eq!(grupos_do_menu(false, true, true)[1], [InstalarCodex, InstalarGemini, Configuracoes]);
-        for grupos in [normal, recolhido, grupos_do_menu(true, true, true)] {
+        for grupos in [normal, recolhido] {
             assert!(grupos.len() <= 3, "no máximo 2 divisórias");
             assert!(grupos.iter().all(|g| !g.is_empty()));
             assert!(grupos.iter().map(Vec::len).sum::<usize>() <= 8);

@@ -645,6 +645,8 @@ pub struct LinhaDeOpcao {
     titulo: SharedString,
     arco_iris: bool,
     simbolo: Option<(Lucide, Hsla)>,
+    /// O glifo colorido de uma IA antes do título (a lista das IAs nas Configurações).
+    marca: Option<super::base::Marca>,
     descricao: Option<AnyElement>,
     aviso: Option<SharedString>,
     info: Option<SharedString>,
@@ -671,6 +673,7 @@ impl LinhaDeOpcao {
             titulo: titulo.into(),
             arco_iris: false,
             simbolo: None,
+            marca: None,
             descricao: None,
             aviso: None,
             info: None,
@@ -736,6 +739,12 @@ impl LinhaDeOpcao {
         self
     }
 
+    /// O glifo colorido de uma IA antes do título.
+    pub fn marca(mut self, marca: super::base::Marca) -> Self {
+        self.marca = Some(marca);
+        self
+    }
+
 
     /// Uma linha em âmbar embaixo da descrição (custo, carga); some com a linha desabilitada.
     pub fn aviso(mut self, a: impl Into<SharedString>) -> Self {
@@ -771,6 +780,7 @@ impl RenderOnce for LinhaDeOpcao {
                 (None, _) => Cores::texto(),
             })
             .when_some(self.simbolo, |d, (icone, _)| d.child(Icon::new(icone).with_size(tam(window, 14.))))
+            .when_some(self.marca, |d, marca| d.child(marca.glifo(14.)))
             .map(|d| {
                 if self.arco_iris {
                     d.child(texto_arco_iris(&self.titulo))

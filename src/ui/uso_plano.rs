@@ -72,7 +72,37 @@ const INSTALAR_GEMINI_WINDOWS: &str = "$agy = (Get-Command agy -ErrorAction Sile
     try { irm https://antigravity.google/cli/install.ps1 | iex } catch { Write-Host \"Não deu para instalar o Antigravity CLI: $_\" } }; \
     if (Test-Path $agy) { Write-Host 'Entre com a sua conta Google:'; & $agy acp --login } else { Write-Host 'O agy não foi encontrado depois da instalação.' }";
 
+/// O Claude Code pelo instalador oficial da Anthropic (põe o `claude` em `~/.local/bin`), só se
+/// ainda não houver um. A conta se escolhe depois, nas Contas do Claude do Vitral.
+const INSTALAR_CLAUDE: &str = "set -o pipefail; export PATH=\"$HOME/.local/bin:$PATH\"; \
+    if command -v claude >/dev/null; then echo 'O Claude Code já está instalado.'; else \
+    echo 'Instalando o Claude Code pelo instalador oficial da Anthropic...'; \
+    curl -fsSL https://claude.ai/install.sh | bash \
+    || echo 'Não deu para instalar o Claude Code (veja o erro acima).'; fi; \
+    if command -v claude >/dev/null; then echo 'Pronto. Entre com a sua conta em Configurações, Agentes, Claude Code, no Vitral.'; \
+    else echo 'O claude não foi encontrado no PATH depois da instalação.'; fi";
+
+/// O mesmo no Windows: o `install.ps1` oficial (põe o `claude.exe` em `~\.local\bin`).
+const INSTALAR_CLAUDE_WINDOWS: &str = "$claude = (Get-Command claude -ErrorAction SilentlyContinue).Source; \
+    if (-not $claude) { $claude = Join-Path $env:USERPROFILE '.local\\bin\\claude.exe' }; \
+    if (Test-Path $claude) { Write-Host 'O Claude Code já está instalado.' } else { \
+    Write-Host 'Instalando o Claude Code pelo instalador oficial da Anthropic...'; \
+    try { irm https://claude.ai/install.ps1 | iex } catch { Write-Host \"Não deu para instalar o Claude Code: $_\" } }; \
+    if (Test-Path $claude) { Write-Host 'Pronto. Entre com a sua conta em Configurações, Agentes, Claude Code, no Vitral.' } \
+    else { Write-Host 'O Claude Code não foi encontrado depois da instalação.' }";
+
 const DIAS: [&str; 7] = ["dom.", "seg.", "ter.", "qua.", "qui.", "sex.", "sáb."];
+
+/// Abre o terminal do usuário com a instalação do Claude Code (se faltar).
+pub(super) fn instalar_claude() {
+    if let Some(casa) = dirs::home_dir() {
+        if cfg!(windows) {
+            sistema::abrir_powershell(&casa, INSTALAR_CLAUDE_WINDOWS);
+        } else {
+            sistema::abrir_terminal(&casa, Some(INSTALAR_CLAUDE));
+        }
+    }
+}
 
 /// Abre o terminal do usuário com a instalação do Gemini (se faltar) e o login da conta Google.
 pub(super) fn instalar_gemini() {
