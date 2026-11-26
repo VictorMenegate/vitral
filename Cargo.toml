@@ -109,6 +109,10 @@ lto = "thin"
 # só o quadro da janela, sem a margem da sombra (src/linux/wayland/window.rs, `aplicar_desfoque`, e
 # src/linux/wayland/client.rs, `efeito_de_fundo`). A roda do mouse rola suave, como no navegador:
 # cada dente é entregue aos poucos, em uns 120 ms (src/linux/wayland/client.rs, `rolar_suave`).
+# Cópia do gpui-base (a base dos componentes do kit), com as mudanças marcadas com "Vitral:": a
+# seleção de texto conta a primeira letra de uma linha quebrada na linha dela, e não no fim da de
+# cima (src/text_selection.rs, `selection_range_for_run`).
 [patch.crates-io]
+gpui-base = { path = "vendor/gpui-base" }
 gpui-component = { path = "vendor/gpui-component" }
 gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
