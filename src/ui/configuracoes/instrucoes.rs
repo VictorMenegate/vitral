@@ -71,13 +71,14 @@ fn abrir_alvo(motor: Entity<Motor>, alvo: Alvo, window: &mut Window, cx: &mut Ap
     let campo = cx.new(|cx| {
         TextareaState::new(window, cx)
             .auto_grow(8, 16)
-            .placeholder(alvo.exemplo)
+            .placeholder(SharedString::from(crate::i18n::traduzir(alvo.exemplo)))
             .default_value(atual)
     });
     // A contagem embaixo do campo acompanha o que se digita.
     cx.observe(&campo, |_, cx| cx.refresh_windows()).detach();
     let foco = campo.read(cx).focus_handle(cx);
     window.open_dialog(cx, move |dialogo, window, cx| {
+        let t = |s: &'static str| SharedString::from(crate::i18n::traduzir(s));
         let total = campo.read(cx).value().trim().chars().count();
         let passou = total > LIMITE_DAS_INSTRUCOES;
         let gravar = |texto: Option<Entity<TextareaState>>| {
@@ -90,33 +91,33 @@ fn abrir_alvo(motor: Entity<Motor>, alvo: Alvo, window: &mut Window, cx: &mut Ap
         };
         dialogos::moldura(dialogo, largura::M, window)
             .title(dialogos::topo(
-                CabecalhoDialogo::new(alvo.titulo).subtitulo(div().font_weight(FontWeight::NORMAL).child(alvo.subtitulo)),
+                CabecalhoDialogo::new(t(alvo.titulo)).subtitulo(div().font_weight(FontWeight::NORMAL).child(t(alvo.subtitulo))),
             ))
             .child(
                 v_flex()
                     .gap(esp::E12)
-                    .child(div().corpo_ui().text_color(Cores::tenue()).child(alvo.explicacao))
+                    .child(div().corpo_ui().text_color(Cores::tenue()).child(t(alvo.explicacao)))
                     .child(Textarea::new(&campo))
                     .child(
                         div()
                             .metadado()
                             .text_color(if passou { Cores::vermelho() } else { Cores::tenue() })
-                            .child(format!("{total} de {LIMITE_DAS_INSTRUCOES} caracteres")),
+                            .child(tr!("{total} de {limite} caracteres", total = total, limite = LIMITE_DAS_INSTRUCOES)),
                     ),
             )
             .footer(
                 RodapeDialogo::new()
                     .when(tinha, |rodape| {
                         rodape.esquerda(
-                            botao_fantasma("instrucoes-apagar", None, "Apagar", TamanhoBotao::Controle, window, cx).on_click(gravar(None)),
+                            botao_fantasma("instrucoes-apagar", None, tr!("Apagar"), TamanhoBotao::Controle, window, cx).on_click(gravar(None)),
                         )
                     })
                     .cancelar(
-                        botao_fantasma("instrucoes-cancelar", None, "Cancelar", TamanhoBotao::Controle, window, cx)
+                        botao_fantasma("instrucoes-cancelar", None, tr!("Cancelar"), TamanhoBotao::Controle, window, cx)
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
                     .principal(
-                        botao_primario("instrucoes-salvar", None, "Salvar", TamanhoBotao::Controle, window, cx)
+                        botao_primario("instrucoes-salvar", None, tr!("Salvar"), TamanhoBotao::Controle, window, cx)
                             .disabled(passou)
                             .on_click(gravar(Some(campo.clone()))),
                     ),

@@ -470,8 +470,8 @@ impl Leitura {
     fn curto(&self) -> String {
         if self.bloqueado {
             return match self.volta {
-                Some(v) => format!("até {}", crate::modelo::no_fuso_local(v as i64).format("%H:%M")),
-                None => "no limite".to_string(),
+                Some(v) => tr!("até {hora}", hora = crate::modelo::no_fuso_local(v as i64).format("%H:%M")).to_string(),
+                None => tr!("no limite").to_string(),
             };
         }
         match self.fora.or(self.dentro) {
@@ -501,8 +501,8 @@ fn aneis_a_mostrar(claude_conectado: bool, codex_logado: bool, codex: &Leitura) 
 fn leitura_claude(uso: &Uso, conta: Option<&Conta>, automatica: bool, volta: Option<u64>, estoura: Option<i64>) -> Leitura {
     let estoura = estoura.filter(|_| !uso.bloqueado);
     let nome = match conta {
-        Some(c) if automatica => format!("{} · conta {} (automática)", Marca::Claude.nome(), c.nome),
-        Some(c) => format!("{} · conta {}", Marca::Claude.nome(), c.nome),
+        Some(c) if automatica => tr!("{marca} · conta {conta} (automática)", marca = Marca::Claude.nome(), conta = c.nome).to_string(),
+        Some(c) => tr!("{marca} · conta {conta}", marca = Marca::Claude.nome(), conta = c.nome).to_string(),
         None => Marca::Claude.nome().to_string(),
     };
     Leitura {
@@ -512,7 +512,7 @@ fn leitura_claude(uso: &Uso, conta: Option<&Conta>, automatica: bool, volta: Opt
             format!("{nome} · {}", limite_atingido(volta))
         } else if let Some(hora) = estoura {
             let agora = agora() as i64;
-            format!("{} · no ritmo de agora, 100% {}", dica_janelas(&nome, uso), quando(local(hora), local(agora).0))
+            tr!("{dica} · no ritmo de agora, 100% {quando}", dica = dica_janelas(&nome, uso), quando = quando(local(hora), local(agora).0)).to_string()
         } else {
             dica_janelas(&nome, uso)
         },
@@ -540,7 +540,7 @@ fn leitura_codex(codex: Option<&Codex>, lido: bool) -> Leitura {
     };
     let Some(codex) = codex else {
         return so_dica(
-            if lido { format!("{nome} · não instalado") } else { format!("{nome} · lendo o uso…") },
+            if lido { tr!("{nome} · não instalado", nome = nome).to_string() } else { tr!("{nome} · lendo o uso…", nome = nome).to_string() },
             true,
         );
     };
@@ -559,7 +559,7 @@ fn leitura_codex(codex: Option<&Codex>, lido: bool) -> Leitura {
             };
         }
         if codex.sem_limites {
-            return so_dica(format!("{nome} · sem limites do plano"), false);
+            return so_dica(tr!("{nome} · sem limites do plano", nome = nome).to_string(), false);
         }
     }
     Leitura {
@@ -579,7 +579,7 @@ fn leitura_codex(codex: Option<&Codex>, lido: bool) -> Leitura {
 fn leitura_gemini(uso: Option<&UsoGemini>) -> Leitura {
     let nome = Marca::Gemini.nome();
     let Some(uso) = uso else {
-        return Leitura { fora: None, dentro: None, dica: format!("{nome} · sem leitura da cota"), selo: None, bloqueado: false, apagado: true, atencao: false, volta: None };
+        return Leitura { fora: None, dentro: None, dica: tr!("{nome} · sem leitura da cota", nome = nome).to_string(), selo: None, bloqueado: false, apagado: true, atencao: false, volta: None };
     };
     let (gemini, outros) = (uso.do_gemini(), uso.dos_outros());
     let parte = |g: &GrupoDoGemini| g.fracao.map(|f| format!("{} {}%", g.nome, porcentagem(f)));
@@ -587,7 +587,7 @@ fn leitura_gemini(uso: Option<&UsoGemini>) -> Leitura {
     Leitura {
         fora: gemini.and_then(|g| g.fracao),
         dentro: outros.and_then(|g| g.fracao),
-        dica: if partes.is_empty() { format!("{nome} · sem leitura da cota") } else { format!("{nome} · semana: {}", partes.join(" · ")) },
+        dica: if partes.is_empty() { tr!("{nome} · sem leitura da cota", nome = nome).to_string() } else { tr!("{nome} · semana: {partes}", nome = nome, partes = partes.join(" · ")).to_string() },
         selo: None,
         bloqueado: uso.bloqueado(),
         apagado: false,
@@ -600,13 +600,9 @@ fn leitura_gemini(uso: Option<&UsoGemini>) -> Leitura {
 fn dica_janelas(nome: &str, uso: &Uso) -> String {
     let numero = |f: Option<f64>| f.map_or("–".to_string(), |f| format!("{}%", porcentagem(f)));
     match (uso.cinco_horas, uso.semana) {
-        (None, None) => format!("{nome} · sem leitura do uso"),
-        (None, Some(_)) => format!("{nome} · semana {}", numero(uso.semana)),
-        _ => format!(
-            "{nome} · 5 h {} · semana {}",
-            numero(uso.cinco_horas),
-            numero(uso.semana)
-        ),
+        (None, None) => tr!("{nome} · sem leitura do uso", nome = nome).to_string(),
+        (None, Some(_)) => tr!("{nome} · semana {semana}", nome = nome, semana = numero(uso.semana)).to_string(),
+        _ => tr!("{nome} · 5 h {cinco} · semana {semana}", nome = nome, cinco = numero(uso.cinco_horas), semana = numero(uso.semana)).to_string(),
     }
 }
 
@@ -656,9 +652,9 @@ fn detalhes_claude(
     let plano = motor.plano_da_conta(&conta.id).cloned().unwrap_or_default();
     let plano_em_uso = nome_do_plano(Some(&plano), &conta);
     let contexto = if motor.config.conta == contas::AUTOMATICA {
-        format!("Conta {} · automática", conta.nome)
+        tr!("Conta {nome} · automática", nome = conta.nome).to_string()
     } else {
-        format!("Conta {}", conta.nome)
+        tr!("Conta {nome}", nome = conta.nome).to_string()
     };
     let ids: Vec<&str> = motor.contas.iter().map(|c| c.id.as_str()).collect();
     let marcada = linha_marcada(&motor.config.conta, &ids);
@@ -684,12 +680,12 @@ fn detalhes_claude(
             selo: plano_em_uso.map(Selo::neutro),
         })
         .when(uso.bloqueado, |s| s.child(Alerta::new(Tom::Erro, maiuscula(&limite_atingido(volta)))))
-        .child(linha_janela("Sessão de 5 h".into(), uso.cinco_horas, uso.renova_5h, previsoes.cinco_horas, base, agora))
-        .child(linha_janela("Semana".into(), uso.semana, uso.renova_semana, previsoes.semana, base, agora))
+        .child(linha_janela(tr!("Sessão de 5 h").into(), uso.cinco_horas, uso.renova_5h, previsoes.cinco_horas, base, agora))
+        .child(linha_janela(tr!("Semana").into(), uso.semana, uso.renova_semana, previsoes.semana, base, agora))
         .children(plano.por_modelo.into_iter().map(move |(modelo, fracao, renova)| {
             // A mesma regra do `Uso::juntar`: o limite que já renovou volta a zero.
             let fracao = if renova.is_some_and(|r| r <= agora) { 0.0 } else { fracao };
-            linha_janela(format!("Semana · {modelo}").into(), Some(fracao), renova, Previsao::SemDado, base, agora)
+            linha_janela(tr!("Semana · {modelo}", modelo = modelo), Some(fracao), renova, Previsao::SemDado, base, agora)
         }))
         .when_some(plano.creditos, |s, creditos| s.child(linha_creditos(&creditos)))
         .child(separador())
@@ -708,7 +704,7 @@ fn detalhes_codex(
 ) -> CorpoPopover {
     let motor = entidade.read(cx);
     let base = Marca::Codex.cor();
-    let cabecalho = |plano: Option<String>, contexto: &'static str| CabecalhoPopover::Objeto {
+    let cabecalho = |plano: Option<String>, contexto: SharedString| CabecalhoPopover::Objeto {
         simbolo: Simbolo::Marca(Marca::Codex),
         nome: Marca::Codex.nome().into(),
         detalhe: Some(contexto.into()),
@@ -719,36 +715,36 @@ fn detalhes_codex(
     let corpo = CorpoPopover::new(LarguraPopover::P360).rodape(pe);
     let Some(codex) = motor.codex.clone() else {
         if !motor.codex_lido {
-            return corpo.cabecalho(cabecalho(None, "Lendo o uso neste computador…"));
+            return corpo.cabecalho(cabecalho(None, tr!("Lendo o uso neste computador…")));
         }
-        let vazio = EstadoVazio::new(Lucide::Download, "Codex não instalado").texto(
-            "Instale o Codex da OpenAI e entre com a conta do ChatGPT. O uso do plano \
-             aparece aqui depois da primeira resposta.",
+        let vazio = EstadoVazio::new(Lucide::Download, tr!("Codex não instalado")).texto(
+            tr!("Instale o Codex da OpenAI e entre com a conta do ChatGPT. O uso do plano \
+             aparece aqui depois da primeira resposta."),
         );
         // O instalador oficial: o script do sh no Linux e no Mac, o install.ps1 no Windows (`instalar_codex`).
-        let vazio = vazio.acao(botao_instalar("Instalar e entrar", popover, window, cx));
-        return corpo.cabecalho(cabecalho(None, "Não instalado neste computador")).child(vazio);
+        let vazio = vazio.acao(botao_instalar(tr!("Instalar e entrar"), popover, window, cx));
+        return corpo.cabecalho(cabecalho(None, tr!("Não instalado neste computador"))).child(vazio);
     };
     let sem_dado = codex.uso.cinco_horas.is_none() && codex.uso.semana.is_none() && codex.outras.is_empty();
     let uso = codex.uso;
     corpo
-        .cabecalho(cabecalho(codex.plano.clone(), "Último uso neste computador"))
-        .when(codex.sem_limites, |s| s.child(texto("Login com chave de API: sem limites do plano.")))
+        .cabecalho(cabecalho(codex.plano.clone(), tr!("Último uso neste computador")))
+        .when(codex.sem_limites, |s| s.child(texto(tr!("Login com chave de API: sem limites do plano."))))
         .when(sem_dado && !codex.sem_limites, |s| {
             s.child(texto(
-                "Ainda sem leitura. O uso aparece depois da próxima resposta do Codex neste \
-                 computador; se ainda não entrou, entre com a conta do ChatGPT.",
+                tr!("Ainda sem leitura. O uso aparece depois da próxima resposta do Codex neste \
+                 computador; se ainda não entrou, entre com a conta do ChatGPT."),
             ))
             .when(!codex.logado, |s| {
-                s.child(h_flex().justify_end().child(botao_instalar("Entrar", popover.clone(), window, cx)))
+                s.child(h_flex().justify_end().child(botao_instalar(tr!("Entrar"), popover.clone(), window, cx)))
             })
         })
-        .when(uso.bloqueado, |s| s.child(Alerta::new(Tom::Erro, "Limite atingido")))
+        .when(uso.bloqueado, |s| s.child(Alerta::new(Tom::Erro, tr!("Limite atingido"))))
         .when_some(uso.cinco_horas, |s, fracao| {
-            s.child(linha_janela("Sessão de 5 h".into(), Some(fracao), uso.renova_5h, Previsao::SemDado, base, agora))
+            s.child(linha_janela(tr!("Sessão de 5 h").into(), Some(fracao), uso.renova_5h, Previsao::SemDado, base, agora))
         })
         .when_some(uso.semana, |s, fracao| {
-            s.child(linha_janela("Semana".into(), Some(fracao), uso.renova_semana, Previsao::SemDado, base, agora))
+            s.child(linha_janela(tr!("Semana").into(), Some(fracao), uso.renova_semana, Previsao::SemDado, base, agora))
         })
         .children(
             codex
@@ -758,8 +754,8 @@ fn detalhes_codex(
         )
         .when(!sem_dado, |s| {
             s.child(texto(
-                "Uso feito em outro computador ou no Codex na web só aparece aqui depois da \
-                 próxima resposta neste computador.",
+                tr!("Uso feito em outro computador ou no Codex na web só aparece aqui depois da \
+                 próxima resposta neste computador."),
             ))
         })
 }
@@ -785,14 +781,14 @@ fn detalhes_gemini(
             detalhe: Some("Antigravity".into()),
             selo: None,
         })
-        .when(uso.bloqueado(), |s| s.child(Alerta::new(Tom::Erro, "Limite do Gemini atingido")))
+        .when(uso.bloqueado(), |s| s.child(Alerta::new(Tom::Erro, tr!("Limite do Gemini atingido"))))
         .children(uso.grupos.into_iter().map(move |g| {
-            let rotulo = if g.janela.eq_ignore_ascii_case("weekly") { format!("Semana · {}", g.nome) } else { g.nome.clone() };
-            linha_janela(rotulo.into(), g.fracao, g.renova, Previsao::SemDado, base, agora)
+            let rotulo: SharedString = if g.janela.eq_ignore_ascii_case("weekly") { tr!("Semana · {modelo}", modelo = g.nome) } else { g.nome.clone().into() };
+            linha_janela(rotulo, g.fracao, g.renova, Previsao::SemDado, base, agora)
         }))
         .child(texto(
-            "Cada grupo de modelos tem a sua cota da semana no Antigravity, e ela gasta na proporção \
-             do custo dos tokens.",
+            tr!("Cada grupo de modelos tem a sua cota da semana no Antigravity, e ela gasta na proporção \
+             do custo dos tokens."),
         ))
 }
 
@@ -845,7 +841,7 @@ fn linha_janela(
                 .min_w_0()
                 .gap(esp::E2)
                 .child(div().rotulo().text_color(Cores::texto()).child(rotulo))
-                .when(fracao.is_none(), |s| s.child(div().metadado().text_color(Cores::apagado()).child("sem dado")))
+                .when(fracao.is_none(), |s| s.child(div().metadado().text_color(Cores::apagado()).child(tr!("sem dado"))))
                 .when_some(texto_renovacao(renova, agora), |s, t| {
                     s.child(div().metadado().text_color(Cores::tenue()).child(t))
                 })
@@ -868,7 +864,7 @@ fn linha_creditos(creditos: &Creditos) -> impl IntoElement + use<> {
                 .justify_between()
                 .items_baseline()
                 .gap(r(8.))
-                .child(div().rotulo().text_color(Cores::texto()).child("Créditos extras"))
+                .child(div().rotulo().text_color(Cores::texto()).child(tr!("Créditos extras")))
                 .child(
                     div()
                         .text_size(r(13.))
@@ -895,17 +891,17 @@ fn legenda_creditos(creditos: &Creditos) -> (Option<f64>, String, bool) {
     let limite = creditos.limite.filter(|l| *l > 0);
     match (creditos.parada, limite) {
         (Some(Parada::LimiteDoMes), Some(l)) => {
-            (Some(1.0), format!("limite do mês de {} atingido", valor(l)), true)
+            (Some(1.0), tr!("limite do mês de {valor} atingido", valor = valor(l)).to_string(), true)
         }
-        (Some(Parada::LimiteDoMes), None) => (Some(1.0), "limite do mês atingido".into(), true),
-        (Some(Parada::SemCreditos), _) => (Some(1.0), "sem créditos".into(), true),
-        (Some(Parada::Desligados), _) => (None, "usados no mês · desligados agora".into(), false),
+        (Some(Parada::LimiteDoMes), None) => (Some(1.0), tr!("limite do mês atingido").into(), true),
+        (Some(Parada::SemCreditos), _) => (Some(1.0), tr!("sem créditos").into(), true),
+        (Some(Parada::Desligados), _) => (None, tr!("usados no mês · desligados agora").into(), false),
         (None, Some(l)) => {
             let fracao = creditos.usados as f64 / l as f64;
-            let texto = format!("{}% do limite do mês de {}", porcentagem(fracao), valor(l));
+            let texto = tr!("{porcento}% do limite do mês de {valor}", porcento = porcentagem(fracao), valor = valor(l)).to_string();
             (Some(fracao), texto, false)
         }
-        (None, None) => (None, "usados no mês · sem limite".into(), false),
+        (None, None) => (None, tr!("usados no mês · sem limite").into(), false),
     }
 }
 
@@ -938,11 +934,11 @@ fn secao_contas(
     v_flex()
         .mx(r(-8.))
         .gap(r(2.))
-        .child(CabecalhoDeSecao::new("Conta padrão").primeira(true))
+        .child(CabecalhoDeSecao::new(tr!("Conta padrão")).primeira(true))
         .child(
-            CartaoDeLista::new("uso-conta-automatica", "Automática")
+            CartaoDeLista::new("uso-conta-automatica", tr!("Automática"))
                 .simbolo(Simbolo::Elemento(circulo_automatica(window)))
-                .subtitulo("a de menor uso em cada turno")
+                .subtitulo(tr!("a de menor uso em cada turno"))
                 .acao_fixa(marca(automatica))
                 .on_click(move |_, _, cx| escolher_conta(&escolher, contas::AUTOMATICA, cx)),
         )
@@ -952,7 +948,7 @@ fn secao_contas(
         }))
         .child(
             h_flex().pt(r(4.)).child(
-                botao_fantasma("uso-entrar-conta", Some(Lucide::Plus.into()), "Entrar com outra conta…", TamanhoBotao::Linha, window, cx)
+                botao_fantasma("uso-entrar-conta", Some(Lucide::Plus.into()), tr!("Entrar com outra conta…"), TamanhoBotao::Linha, window, cx)
                     .on_click(move |_, window, cx| {
                         let _ = entrar.update(cx, |p, cx| p.dismiss(window, cx));
                         let _ = janela.update(cx, |this, cx| this.dialogo_entrar_conta(window, cx));
@@ -1027,11 +1023,11 @@ fn menu_conta(
     window: &Window,
     cx: &App,
 ) -> impl IntoElement + use<> {
-    botao_icone(SharedString::from(format!("uso-conta-menu-{id}")), Lucide::Ellipsis, "Mais opções da conta", TamanhoBotao::Linha, window, cx)
+    botao_icone(SharedString::from(format!("uso-conta-menu-{id}")), Lucide::Ellipsis, tr!("Mais opções da conta"), TamanhoBotao::Linha, window, cx)
         .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
             let (sair, id_sair, popover) = (motor.clone(), id.clone(), popover.clone());
             menu.item(
-                PopupMenuItem::new("Desconectar…")
+                PopupMenuItem::new(tr!("Desconectar…"))
                     .icon(Lucide::Unplug)
                     .danger(true)
                     .on_click(move |_, window, cx| {
@@ -1096,10 +1092,10 @@ fn rodape(
                 .flex_1()
                 .min_w_0()
                 .child(linha(atualizado(medido_em, agora).into()))
-                .when(sem_atualizar, |s| s.child(linha("não deu para atualizar".into()))),
+                .when(sem_atualizar, |s| s.child(linha(tr!("não deu para atualizar").into()))),
         )
         .child(
-            botao_fantasma(("uso-atualizar", marca.indice()), Some(Lucide::RotateCw.into()), "Atualizar", TamanhoBotao::Barra, window, cx)
+            botao_fantasma(("uso-atualizar", marca.indice()), Some(Lucide::RotateCw.into()), tr!("Atualizar"), TamanhoBotao::Barra, window, cx)
                 .on_click(move |_, _, cx| {
                     motor.update(cx, |m, cx| match marca {
                         Marca::Claude => m.atualizar_uso(cx),
@@ -1111,7 +1107,7 @@ fn rodape(
         )
         .when(marca == Marca::Claude, |s| {
             s.child(
-                botao_fantasma("uso-contas", Some(Lucide::CircleUser.into()), "Contas…", TamanhoBotao::Barra, window, cx)
+                botao_fantasma("uso-contas", Some(Lucide::CircleUser.into()), tr!("Contas…"), TamanhoBotao::Barra, window, cx)
                     .on_click(move |_, window, cx| {
                         let _ = popover.update(cx, |p, cx| p.dismiss(window, cx));
                         let _ = janela.update(cx, |this, cx| this.dialogo_contas(window, cx));
@@ -1122,7 +1118,7 @@ fn rodape(
 
 /// Abre o terminal com a instalação (se faltar) e o login do Codex.
 fn botao_instalar(
-    rotulo: &'static str,
+    rotulo: SharedString,
     popover: WeakEntity<PopoverState>,
     window: &Window,
     cx: &App,
@@ -1134,7 +1130,7 @@ fn botao_instalar(
         })
 }
 
-fn texto(conteudo: &'static str) -> impl IntoElement + use<> {
+fn texto(conteudo: SharedString) -> impl IntoElement + use<> {
     div().metadado().text_color(Cores::tenue()).child(conteudo)
 }
 
@@ -1153,14 +1149,14 @@ fn texto_renovacao(renova: Option<i64>, agora: i64) -> Option<String> {
     let hoje = local(agora).0;
     let instante = local(renova);
     if renova <= agora {
-        return Some(format!("renovou {}", quando(instante, hoje)));
+        return Some(tr!("renovou {quando}", quando = quando(instante, hoje)).to_string());
     }
     let horario = if instante.0 == hoje {
         format!("{:02}:{:02}", instante.2, instante.3)
     } else {
         quando(instante, hoje)
     };
-    Some(format!("renova em {} · {horario}", duracao(renova.saturating_sub(agora))))
+    Some(tr!("renova em {duracao} · {horario}", duracao = duracao(renova.saturating_sub(agora)), horario = horario).to_string())
 }
 
 /// "No ritmo de agora, chega a 100% às 15:10" (ou "qui. às 09:40", na semana) quando isso cai
@@ -1168,9 +1164,9 @@ fn texto_renovacao(renova: Option<i64>, agora: i64) -> Option<String> {
 fn texto_previsao(previsao: Previsao, agora: i64) -> Option<String> {
     match previsao {
         Previsao::SemDado => None,
-        Previsao::AteRenovar => Some("Dá até a renovação".into()),
+        Previsao::AteRenovar => Some(tr!("Dá até a renovação").into()),
         Previsao::Estoura(hora) => {
-            Some(format!("No ritmo de agora, chega a 100% {}", quando(local(hora), local(agora).0)))
+            Some(tr!("No ritmo de agora, chega a 100% {quando}", quando = quando(local(hora), local(agora).0)).to_string())
         }
     }
 }
@@ -1186,7 +1182,7 @@ fn duracao(segundos: i64) -> String {
         },
         m => {
             let (dias, horas) = (m / 1440, m % 1440 / 60);
-            let dias = if dias == 1 { "1 dia".to_string() } else { format!("{dias} dias") };
+            let dias = if dias == 1 { tr!("1 dia").to_string() } else { tr!("{dias} dias", dias = dias).to_string() };
             if horas == 0 { dias } else { format!("{dias} {horas} h") }
         }
     }
@@ -1231,14 +1227,14 @@ fn maiuscula(texto: &str) -> String {
 /// ou pela linha do Codex).
 fn atualizado(medido_em: Option<i64>, agora: i64) -> String {
     let Some(medido_em) = medido_em else {
-        return "ainda sem leitura do plano".into();
+        return tr!("ainda sem leitura do plano").into();
     };
     match agora.saturating_sub(medido_em).max(0) {
-        s if s < 60 => "atualizado agora".into(),
-        s if s < 3600 => format!("atualizado há {} min", s / 60),
-        s if s < 86_400 => format!("atualizado há {} h", s / 3600),
-        s if s < 2 * 86_400 => "atualizado há 1 dia".into(),
-        s => format!("atualizado há {} dias", s / 86_400),
+        s if s < 60 => tr!("atualizado agora").into(),
+        s if s < 3600 => tr!("atualizado há {n} min", n = s / 60).to_string(),
+        s if s < 86_400 => tr!("atualizado há {n} h", n = s / 3600).to_string(),
+        s if s < 2 * 86_400 => tr!("atualizado há 1 dia").into(),
+        s => tr!("atualizado há {n} dias", n = s / 86_400).to_string(),
     }
 }
 
@@ -1252,12 +1248,12 @@ pub(super) fn local(segundos: i64) -> (i64, usize, i32, i32) {
 
 /// "às 12:59", "amanhã às 12:59" ou "dom. às 03:59", visto do dia `hoje`.
 pub(super) fn quando((dia, semana, hora, minuto): (i64, usize, i32, i32), hoje: i64) -> String {
-    let horario = format!("às {hora:02}:{minuto:02}");
+    let horario = tr!("às {hora}", hora = format!("{hora:02}:{minuto:02}")).to_string();
     match dia - hoje {
         0 => horario,
-        1 => format!("amanhã {horario}"),
-        -1 => format!("ontem {horario}"),
-        _ => format!("{} {horario}", DIAS[semana % 7]),
+        1 => tr!("amanhã {horario}", horario = horario).to_string(),
+        -1 => tr!("ontem {horario}", horario = horario).to_string(),
+        _ => format!("{} {horario}", crate::i18n::traduzir(DIAS[semana % 7])),
     }
 }
 

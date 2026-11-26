@@ -33,34 +33,34 @@ enum Botao {
 }
 
 /// O título, o texto e os botões de cada caso.
-fn textos(leitura: &SomenteLeitura, casa: Option<&Path>) -> (&'static str, String, Vec<Botao>) {
+fn textos(leitura: &SomenteLeitura, casa: Option<&Path>) -> (String, String, Vec<Botao>) {
     let curto = |p: &Path| match casa.and_then(|c| p.strip_prefix(c).ok()) {
         Some(resto) => format!("~/{}", resto.display()),
         None => p.display().to_string(),
     };
     match leitura {
         SomenteLeitura::Ilegivel { arquivo, .. } => (
-            "Os dados não abriram",
-            format!("Não consegui ler {} nem a cópia anterior. Nada foi gravado por cima.", curto(arquivo)),
+            tr!("Os dados não abriram").to_string(),
+            tr!("Não consegui ler {arquivo} nem a cópia anterior. Nada foi gravado por cima.", arquivo = curto(arquivo)).to_string(),
             vec![Botao::AbrirPasta, Botao::ComecarDoZero, Botao::Sair],
         ),
         SomenteLeitura::VersaoNova { versao, .. } => (
-            "Dados de uma versão mais nova",
-            format!("Estes dados são de uma versão mais nova do Vitral ({versao}). Atualize o Vitral."),
+            tr!("Dados de uma versão mais nova").to_string(),
+            tr!("Estes dados são de uma versão mais nova do Vitral ({versao}). Atualize o Vitral.", versao = versao).to_string(),
             vec![Botao::AbrirPasta, Botao::Sair],
         ),
         SomenteLeitura::MigracaoAdiada { raizes, pids } => {
             let pids = pids.iter().map(u32::to_string).collect::<Vec<_>>().join(", ");
             let raizes = raizes.iter().map(|r| curto(r)).collect::<Vec<_>>().join(", ");
             (
-                "O Vitral antigo está aberto",
-                format!("O Vitral antigo está aberto (pid {pids}). Feche-o para eu trazer as conversas de {raizes}."),
+                tr!("O Vitral antigo está aberto").to_string(),
+                tr!("O Vitral antigo está aberto (pid {pids}). Feche-o para eu trazer as conversas de {raizes}.", pids = pids, raizes = raizes).to_string(),
                 vec![Botao::TentarDeNovo, Botao::Sair],
             )
         }
         SomenteLeitura::MigracaoFalhou { raiz, erro } => (
-            "As conversas antigas não vieram",
-            format!("Não consegui trazer as conversas de {} ({erro}). Nada foi gravado.", curto(raiz)),
+            tr!("As conversas antigas não vieram").to_string(),
+            tr!("Não consegui trazer as conversas de {raiz} ({erro}). Nada foi gravado.", raiz = curto(raiz), erro = erro).to_string(),
             vec![Botao::TentarDeNovo, Botao::Sair],
         ),
     }
@@ -99,16 +99,16 @@ impl RenderOnce for Recuperacao {
             let dados = self.dados.clone();
             let t = TamanhoBotao::Controle;
             match botao {
-                Botao::AbrirPasta => botao_fantasma(("rec", i), Some(Lucide::FolderOpen.into()), "Abrir a pasta de dados", t, window, cx)
+                Botao::AbrirPasta => botao_fantasma(("rec", i), Some(Lucide::FolderOpen.into()), tr!("Abrir a pasta de dados"), t, window, cx)
                     .on_click(move |_, _, cx| crate::sistema::abrir_pasta(&dados.pasta, cx))
                     .into_any_element(),
-                Botao::ComecarDoZero => botao_perigo(("rec", i), None, "Começar do zero", t, window, cx)
+                Botao::ComecarDoZero => botao_perigo(("rec", i), None, tr!("Começar do zero"), t, window, cx)
                     .on_click(move |_, window, cx| comecar_do_zero(dados.clone(), window, cx))
                     .into_any_element(),
-                Botao::TentarDeNovo => botao_primario(("rec", i), None, "Tentar de novo", t, window, cx)
+                Botao::TentarDeNovo => botao_primario(("rec", i), None, tr!("Tentar de novo"), t, window, cx)
                     .on_click(|_, window, cx| reabrir(window, cx))
                     .into_any_element(),
-                Botao::Sair => botao_fantasma(("rec", i), None, "Sair", t, window, cx)
+                Botao::Sair => botao_fantasma(("rec", i), None, tr!("Sair"), t, window, cx)
                     .on_click(|_, _, cx| cx.quit())
                     .into_any_element(),
             }
@@ -123,7 +123,7 @@ impl RenderOnce for Recuperacao {
 /// Abre o Vitral de novo no lugar deste processo (a trava sai no exec).
 fn reabrir(window: &mut Window, cx: &mut App) {
     let erro = crate::instancia::reexecutar();
-    window.push_notification(aviso(Tom::Erro, format!("Não consegui abrir de novo: {erro}")), cx);
+    window.push_notification(aviso(Tom::Erro, tr!("Não consegui abrir de novo: {erro}", erro = erro)), cx);
 }
 
 /// Afasta a pasta de dados inteira (nada é apagado) e abre de novo, do zero.
@@ -133,16 +133,16 @@ fn comecar_do_zero(dados: Dados, window: &mut Window, cx: &mut App) {
         Confirmacao {
             tom: TomConfirmacao::Perigo,
             icone: Lucide::Trash.into(),
-            titulo: "Começar do zero?".into(),
-            texto: format!("As conversas atuais vão para {destino}; nada é apagado.").into(),
+            titulo: tr!("Começar do zero?").into(),
+            texto: tr!("As conversas atuais vão para {destino}; nada é apagado.", destino = destino).into(),
             detalhes: Vec::new(),
-            ok: "Começar do zero".into(),
-            cancelar: "Cancelar".into(),
+            ok: tr!("Começar do zero").into(),
+            cancelar: tr!("Cancelar").into(),
             ok_perigo: true,
         },
         move |window, cx| match dados.descartar_tudo() {
             Ok(_) => reabrir(window, cx),
-            Err(erro) => window.push_notification(aviso(Tom::Erro, format!("Nada foi mexido: {erro:#}")), cx),
+            Err(erro) => window.push_notification(aviso(Tom::Erro, tr!("Nada foi mexido: {erro}", erro = format!("{erro:#}"))), cx),
         },
         None,
         window,

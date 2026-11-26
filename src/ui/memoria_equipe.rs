@@ -40,12 +40,12 @@ fn campo(rotulo: &'static str, ajuda: &'static str, entrada: &Entity<InputState>
     let caixa = Input::new(entrada).when(errou.is_some(), |c| c.focus_bordered(false).border_color(Cores::vermelho()));
     v_flex()
         .gap(esp::E4)
-        .child(div().corpo_ui().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(rotulo))
+        .child(div().corpo_ui().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(SharedString::from(crate::i18n::traduzir(rotulo))))
         .child(match errou {
             Some(n) => super::movimento::tremer(div().relative().child(caixa), (rotulo, n as usize)).into_any_element(),
             None => caixa.into_any_element(),
         })
-        .child(div().metadado().text_color(Cores::tenue()).child(ajuda))
+        .child(div().metadado().text_color(Cores::tenue()).child(SharedString::from(crate::i18n::traduzir(ajuda))))
 }
 
 pub fn abrir(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
@@ -56,7 +56,7 @@ pub fn abrir(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
     let ligada = !endereco_atual.is_empty() && tem_chave;
     let endereco = cx.new(|cx| InputState::new(window, cx).placeholder("https://memoria.suaempresa.com.br").default_value(endereco_atual));
     let chave = cx.new(|cx| {
-        InputState::new(window, cx).masked(true).placeholder(if tem_chave { "(a chave guardada continua valendo)" } else { "aim_…" })
+        InputState::new(window, cx).masked(true).placeholder(if tem_chave { tr!("(a chave guardada continua valendo)") } else { "aim_…".into() })
     });
     let estado = cx.new(|_| Estado::default());
     let foco = endereco.read(cx).focus_handle(cx);
@@ -72,10 +72,10 @@ pub fn abrir(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
         };
         let ligada_agora = !motor.read(cx).config.memoria_da_equipe.is_empty() && crate::memoria_equipe::ler_chave(&config).is_some();
         let linha = match &situacao {
-            Situacao::Parada if ligada => Some((Cores::tenue(), "Ligada. Para trocar, preencha e teste de novo.".to_string())),
+            Situacao::Parada if ligada => Some((Cores::tenue(), tr!("Ligada. Para trocar, preencha e teste de novo.").to_string())),
             Situacao::Parada => None,
-            Situacao::Testando => Some((Cores::tenue(), "Conferindo com o servidor…".to_string())),
-            Situacao::Ligada(servidor) => Some((Cores::verde(), format!("Ligada ao {servidor}. Vale a partir da próxima mensagem de cada chat."))),
+            Situacao::Testando => Some((Cores::tenue(), tr!("Conferindo com o servidor…").to_string())),
+            Situacao::Ligada(servidor) => Some((Cores::verde(), tr!("Ligada ao {servidor}. Vale a partir da próxima mensagem de cada chat.", servidor = servidor).to_string())),
             Situacao::Falhou(motivo) => Some((Cores::vermelho(), motivo.clone())),
         };
         let (m_ligar, m_desligar) = (motor.clone(), motor.clone());
@@ -84,8 +84,8 @@ pub fn abrir(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
         let (s_fechar, s_cancelar, m_consultar) = (estado.clone(), estado.clone(), motor.clone());
         super::dialogos::moldura(dialogo, largura::M, window)
             .on_close(move |_, _, cx| { s_fechar.update(cx, |s, _| s.fechada = true); })
-            .title(super::dialogos::topo(CabecalhoDialogo::new("Memória da equipe").subtitulo(
-                div().font_weight(FontWeight::NORMAL).child("O que um chat aprende ajuda os próximos."),
+            .title(super::dialogos::topo(CabecalhoDialogo::new(tr!("Memória da equipe")).subtitulo(
+                div().font_weight(FontWeight::NORMAL).child(tr!("O que um chat aprende ajuda os próximos.")),
             )))
             .child(
                 v_flex()
@@ -94,8 +94,8 @@ pub fn abrir(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
                         h_flex().items_start().gap(esp::E12).p(esp::E12).rounded(raio::CARTAO).bg(Cores::preto())
                             .child(super::mensagens::icone_de(Lucide::Brain, 20.).text_color(Cores::destaque_texto()))
                             .child(v_flex().flex_1().min_w_0().gap(esp::E4)
-                                .child(div().corpo_ui().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(if ligada_agora { "Conectada à equipe" } else { "Conecte a memória da sua equipe" }))
-                                .child(div().corpo_ui().text_color(Cores::tenue()).child("Decisões, procedimentos e aprendizados compartilhados entre o Claude e o Codex. Não precisa instalar o ai-memory neste computador."))),
+                                .child(div().corpo_ui().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(if ligada_agora { tr!("Conectada à equipe") } else { tr!("Conecte a memória da sua equipe") }))
+                                .child(div().corpo_ui().text_color(Cores::tenue()).child(tr!("Decisões, procedimentos e aprendizados compartilhados entre o Claude e o Codex. Não precisa instalar o ai-memory neste computador.")))),
                     )
                     .child(campo("Endereço do servidor", "Quem cuida do servidor passa o endereço.", &endereco, errou_endereco))
                     .child(campo(
@@ -105,10 +105,10 @@ pub fn abrir(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
                         errou_chave,
                     ))
                     .child(div().metadado().text_color(Cores::tenue()).child(
-                        "Só os aprendizados que o agente registra são compartilhados. O histórico do chat não é enviado automaticamente.",
+                        tr!("Só os aprendizados que o agente registra são compartilhados. O histórico do chat não é enviado automaticamente."),
                     ))
                     .when(ligada_agora, |s| s.child(
-                        botao_fantasma("memoria-consultar", Some(Lucide::Search.into()), "Consultar memória", TamanhoBotao::Controle, window, cx)
+                        botao_fantasma("memoria-consultar", Some(Lucide::Search.into()), tr!("Consultar memória"), TamanhoBotao::Controle, window, cx)
                             .disabled(testando)
                             .on_click(move |_, window, cx| abrir_busca(m_consultar.clone(), window, cx)),
                     ))
@@ -118,7 +118,7 @@ pub fn abrir(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
                 RodapeDialogo::new()
                     .when(ligada_agora, |r| {
                         r.esquerda(
-                            botao_fantasma("memoria-desligar", None, "Desligar", TamanhoBotao::Controle, window, cx)
+                            botao_fantasma("memoria-desligar", None, tr!("Desligar"), TamanhoBotao::Controle, window, cx)
                                 .disabled(testando)
                                 .on_click(move |_, window, cx| {
                                     if let Err(erro) = crate::memoria_equipe::gravar_chave(&pasta_desligar, "") {
@@ -136,11 +136,11 @@ pub fn abrir(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
                         )
                     })
                     .cancelar(
-                        botao_fantasma("memoria-fechar", None, "Fechar", TamanhoBotao::Controle, window, cx)
+                        botao_fantasma("memoria-fechar", None, tr!("Fechar"), TamanhoBotao::Controle, window, cx)
                             .on_click(move |_, window, cx| { s_cancelar.update(cx, |s, _| s.fechada = true); window.close_dialog(cx); }),
                     )
                     .principal(
-                        botao_primario("memoria-ligar", None, "Testar e ligar", TamanhoBotao::Controle, window, cx)
+                        botao_primario("memoria-ligar", None, tr!("Testar e ligar"), TamanhoBotao::Controle, window, cx)
                             .disabled(testando)
                             .on_click(move |_, _, cx| {
                                 let digitado = e_ligar.read(cx).value().trim().to_string();
@@ -196,7 +196,7 @@ pub(super) fn abrir_busca(motor: Entity<Motor>, window: &mut Window, cx: &mut Ap
     let m = motor.read(cx);
     let endereco = m.config.memoria_da_equipe.clone();
     let Some(chave) = crate::memoria_equipe::ler_chave(&m.dados.config) else { return; };
-    let consulta = cx.new(|cx| InputState::new(window, cx).placeholder("Busque uma decisão, um procedimento, um projeto…"));
+    let consulta = cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Busque uma decisão, um procedimento, um projeto…")));
     let foco = consulta.read(cx).focus_handle(cx);
     let estado = cx.new(|_| Busca::default());
     window.open_dialog(cx, move |dialogo, window, cx| {
@@ -205,7 +205,7 @@ pub(super) fn abrir_busca(motor: Entity<Motor>, window: &mut Window, cx: &mut Ap
         let (e_buscar, c_buscar, s_buscar, entrada) = (endereco.clone(), chave.clone(), estado.clone(), consulta.clone());
         let mut corpo = v_flex().gap(esp::E12)
             .child(Input::new(&consulta))
-            .child(botao_primario("memoria-buscar", Some(Lucide::Search.into()), "Buscar", TamanhoBotao::Controle, window, cx)
+            .child(botao_primario("memoria-buscar", Some(Lucide::Search.into()), tr!("Buscar"), TamanhoBotao::Controle, window, cx)
                 .disabled(carregando)
                 .on_click(move |_, _, cx| {
                     let texto = entrada.read(cx).value().to_string();
@@ -225,20 +225,20 @@ pub(super) fn abrir_busca(motor: Entity<Motor>, window: &mut Window, cx: &mut Ap
                     }).detach();
                 }));
         if carregando {
-            corpo = corpo.child(div().corpo_ui().text_color(Cores::tenue()).child("Consultando a memória…"));
+            corpo = corpo.child(div().corpo_ui().text_color(Cores::tenue()).child(tr!("Consultando a memória…")));
         }
         if let Some(erro) = &busca.erro {
             corpo = corpo.child(div().corpo_ui().text_color(Cores::vermelho()).child(erro.clone()));
         } else if let Some((titulo, texto)) = &busca.pagina {
             let voltar = estado.clone();
             corpo = corpo
-                .child(botao_fantasma("memoria-resultados", Some(Lucide::ArrowLeft.into()), "Voltar aos resultados", TamanhoBotao::Controle, window, cx)
+                .child(botao_fantasma("memoria-resultados", Some(Lucide::ArrowLeft.into()), tr!("Voltar aos resultados"), TamanhoBotao::Controle, window, cx)
                     .disabled(carregando).on_click(move |_, _, cx| { voltar.update(cx, |s, _| s.pagina = None); cx.refresh_windows(); }))
                 .child(div().corpo_ui().font_weight(FontWeight::SEMIBOLD).text_color(Cores::forte()).child(titulo.clone()))
                 .child(div().id("memoria-pagina").max_h(r(320.)).overflow_y_scroll().child(super::mensagens::markdown("memoria-pagina-texto".into(), texto.clone(), cx)));
         } else {
             if busca.pesquisou && busca.paginas.is_empty() && !carregando {
-                corpo = corpo.child(div().corpo_ui().text_color(Cores::tenue()).child("Nada encontrado. Tente outras palavras; a memória cresce com o que a equipe registra."));
+                corpo = corpo.child(div().corpo_ui().text_color(Cores::tenue()).child(tr!("Nada encontrado. Tente outras palavras; a memória cresce com o que a equipe registra.")));
             }
             let resultados = v_flex().id("memoria-resultados-lista").max_h(r(320.)).overflow_y_scroll().gap(esp::E8)
                 .children(busca.paginas.iter().enumerate().map(|(i, pagina)| {
@@ -270,11 +270,11 @@ pub(super) fn abrir_busca(motor: Entity<Motor>, window: &mut Window, cx: &mut Ap
             corpo = corpo.child(resultados);
         }
         super::dialogos::moldura(dialogo, largura::M, window)
-            .title(super::dialogos::topo(CabecalhoDialogo::new("Consultar a memória").subtitulo(
-                div().font_weight(FontWeight::NORMAL).child("Busque o que a equipe já aprendeu. Abra um resultado para ler."),
+            .title(super::dialogos::topo(CabecalhoDialogo::new(tr!("Consultar a memória")).subtitulo(
+                div().font_weight(FontWeight::NORMAL).child(tr!("Busque o que a equipe já aprendeu. Abra um resultado para ler.")),
             )))
             .child(corpo)
-            .footer(RodapeDialogo::new().cancelar(botao_fantasma("memoria-busca-fechar", None, "Fechar", TamanhoBotao::Controle, window, cx)
+            .footer(RodapeDialogo::new().cancelar(botao_fantasma("memoria-busca-fechar", None, tr!("Fechar"), TamanhoBotao::Controle, window, cx)
                 .on_click(|_, window, cx| window.close_dialog(cx))))
     });
     window.focus(&foco, cx);
