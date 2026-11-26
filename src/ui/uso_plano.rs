@@ -1480,7 +1480,7 @@ impl Janela {
                 .text_size(r(12.))
                 .bg(Cores::preto())
                 .hover(|s| s.bg(Cores::preto().blend(Cores::forte().opacity(0.05))))
-                .child(Anel::new("barra-contexto-anel", fracao).diametro(14.).espessura(2.).cor(Cores::destaque_texto()))
+                .child(Anel::new("barra-contexto-anel", fracao).diametro(14.).espessura(2.).inteiro().cor(Cores::destaque_texto()))
                 .child(div().text_color(Cores::texto_da_fala()).child("Contexto"))
                 .child(div().tabular().text_color(Cores::tenue()).child(format!("{numero}%")))
                 .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
@@ -1555,6 +1555,7 @@ impl RenderOnce for PilulaDeUso {
                 AnelDeUso::new(("uso-pilula-anel", id), self.marca, l.fora.map(|f| f as f32))
                     .semana(l.dentro.map(|f| f as f32))
                     .diametro(14.)
+                    .sem_marca()
                     .bloqueado(l.bloqueado)
                     .apagado(l.apagado)
                     .atencao(l.atencao),

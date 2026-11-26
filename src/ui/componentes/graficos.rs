@@ -131,6 +131,9 @@ pub struct Anel {
     centro: Option<AnyElement>,
     dica: Option<SharedString>,
     movimento: MovimentoDoAnel,
+    /// O trilho inteiro, fino, enchendo a partir do alto, como o `AnelDeUso` (o contexto da barra
+    /// de baixo, ao lado das pílulas de uso).
+    inteiro: bool,
 }
 
 /// Como o arco chega à fração.
@@ -155,7 +158,15 @@ impl Anel {
             centro: None,
             dica: None,
             movimento: MovimentoDoAnel::Desliza,
+            inteiro: false,
         }
+    }
+
+    /// O círculo inteiro, como os anéis de uso (dono, 26/11/2026: "deixa o de contexto um círculo
+    /// inteiro igual os outros").
+    pub fn inteiro(mut self) -> Self {
+        self.inteiro = true;
+        self
     }
 
     /// Enche de 0 até a fração ao aparecer (popover de uso aberto).
@@ -222,6 +233,7 @@ impl RenderOnce for Anel {
         let alvo = self.fracao.clamp(0., 1.);
         let cor = self.cor.unwrap_or_else(|| cor_da_faixa(alvo, Cores::destaque()));
         let fracao = fracao_animada(&self.id, alvo, self.movimento, window, cx);
+        let inteiro = self.inteiro;
         div()
             .id(self.id)
             .relative()
@@ -236,7 +248,11 @@ impl RenderOnce for Anel {
                     move |bounds, _, window, _| {
                         let escala = bounds.size.width.as_f32() / diametro;
                         let raio_fora = bounds.size.width.min(bounds.size.height).as_f32() / 2.;
-                        pintar_anel(bounds, raio_fora, espessura * escala, Some(fracao), cor, window);
+                        if inteiro {
+                            pintar_anel_inteiro(bounds, raio_fora, espessura * escala, Some(fracao), cor, window);
+                        } else {
+                            pintar_anel(bounds, raio_fora, espessura * escala, Some(fracao), cor, window);
+                        }
                     },
                 )
                 .absolute()
@@ -328,6 +344,8 @@ pub struct AnelDeUso {
     apagado: bool,
     encher: bool,
     atencao: bool,
+    /// Só o anel, sem o disco da marca no meio (as pílulas da barra de baixo já dizem o nome).
+    sem_marca: bool,
 }
 
 impl AnelDeUso {
@@ -342,7 +360,14 @@ impl AnelDeUso {
             apagado: false,
             encher: false,
             atencao: false,
+            sem_marca: false,
         }
+    }
+
+    /// Sem o disco da marca no meio (dono, 26/11/2026: "tira os ícones do meio").
+    pub fn sem_marca(mut self) -> Self {
+        self.sem_marca = true;
+        self
     }
 
     /// No ritmo de agora o limite acaba antes de renovar: o arco fica âmbar mesmo abaixo de 70%.
@@ -442,9 +467,11 @@ impl RenderOnce for AnelDeUso {
                 .left_0()
                 .size_full(),
             )
-            .child({
-                let disco = self.marca.disco(disco);
-                if self.apagado { disco.apagada() } else { disco }
+            .when(!self.sem_marca, |s| {
+                s.child({
+                    let disco = self.marca.disco(disco);
+                    if self.apagado { disco.apagada() } else { disco }
+                })
             })
     }
 }
