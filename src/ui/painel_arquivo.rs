@@ -697,7 +697,7 @@ fn titulo_do_binario(caminho: &Path) -> &'static str {
         "pdf" => "Arquivo PDF",
         "xlsx" | "xls" | "ods" | "numbers" => "Planilha",
         "docx" | "doc" | "odt" | "rtf" | "pages" => "Documento",
-        "pptx" | "ppt" | "odp" | "key" => "Apresentação",
+        "pptx" | "ppt" | "odp" | "key" => "Apresentação de slides",
         "zip" | "gz" | "tgz" | "tar" | "rar" | "7z" | "xz" | "bz2" | "zst" => "Arquivo compactado",
         "mp4" | "mov" | "mkv" | "webm" | "avi" => "Vídeo",
         "mp3" | "wav" | "ogg" | "flac" | "m4a" | "opus" => "Áudio",
@@ -1486,7 +1486,7 @@ impl Janela {
             })
         } else if editando.is_some() {
             Some(
-                botao_fantasma("sair-do-editor", None, tr!("Pronto"), TamanhoBotao::Linha, window, cx)
+                botao_fantasma("sair-do-editor", None, tr!("Concluir"), TamanhoBotao::Linha, window, cx)
                     .tooltip(tr!("Voltar à leitura (Esc)"))
                     .on_click(cx.listener(|this, _, window, cx| this.sair_do_editor(window, cx)))
                     .into_any_element(),

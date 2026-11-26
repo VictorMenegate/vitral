@@ -50,12 +50,13 @@ impl Lingua {
         }
     }
 
-    /// A língua dos textos do kit de componentes (o kit tem pt-BR e en; o espanhol fica no inglês
-    /// até o kit ter o dele).
+    /// A língua dos textos do kit de componentes (o `ui.yml` do kit tem pt-BR, en e, desde
+    /// 26/11/2026, es).
     fn do_kit(self) -> &'static str {
         match self {
             Lingua::Portugues => "pt-BR",
-            Lingua::Ingles | Lingua::Espanhol => "en",
+            Lingua::Ingles => "en",
+            Lingua::Espanhol => "es",
         }
     }
 
