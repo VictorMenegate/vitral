@@ -19,7 +19,6 @@ use super::{
     },
     lateral::{Causa, MotivoDaPrevia, previa_elemento},
     mensagens::trechos_perigosos,
-    tempo_relativo,
 };
 use crate::{
     motor::{Motor, Pendencia},
@@ -83,7 +82,7 @@ fn ler_secoes(janela: &Janela, motor: &Motor) -> Secoes {
             }
             // A resposta nova diz o que o chat respondeu (a primeira frase, sem markdown) em vez de
             // "Resposta nova" em toda linha (rodada de uso, item 3.3).
-            None => (None, super::falas::ultima_fala(chat).unwrap_or_else(|| "Resposta nova".to_string())),
+            None => (None, super::falas::ultima_fala(chat).unwrap_or_else(|| tr!("Resposta nova").to_string())),
         };
         let feito = if matches!(p, Pendencia::Nova { .. }) { super::falas::o_que_o_turno_fez(&chat.itens) } else { String::new() };
         let pedido = match p {
@@ -171,7 +170,7 @@ impl Janela {
             // Sem pendência, o primeiro par travado no freio de ciclo; sem ele, a pílula avisa.
             match super::resumo::esperas_de_ciclo(motor.read(cx)).into_iter().next() {
                 Some(e) => self.selecionar(Some(e.chat), window, cx),
-                None => window.push_notification(aviso(Tom::Info, "Nada esperando você").chave("ctrl-g"), cx),
+                None => window.push_notification(aviso(Tom::Info, tr!("Nada esperando você")).chave("ctrl-g"), cx),
             }
             return;
         };
@@ -181,7 +180,7 @@ impl Janela {
         };
         self.selecionar(Some(chat.clone()), window, cx);
         let titulo = motor.read(cx).chat(&chat).map(|c| c.titulo.clone()).unwrap_or_default();
-        let pilula = format!("{} de {} · {} · {titulo}", ix + 1, chats.len(), rotulo_da_pendencia(&pendencia));
+        let pilula = tr!("{n} de {total} · {tipo} · {titulo}", n = ix + 1, total = chats.len(), tipo = rotulo_da_pendencia(&pendencia), titulo = titulo);
         window.push_notification(aviso(Tom::Info, pilula).chave("ctrl-g"), cx);
         // O foco no lugar útil: o Retomar da parada, o Tentar de novo do erro, o comentário do
         // plano; nos outros casos, a caixa. (O pedido de permissão pelo teclado é o item 6.5.)
@@ -229,14 +228,14 @@ fn proxima_na_volta(chats: &[String], atual: Option<&str>, passo: i32) -> Option
 }
 
 /// O nome da pendência na pílula do Ctrl+G.
-fn rotulo_da_pendencia(p: &Pendencia) -> &'static str {
+fn rotulo_da_pendencia(p: &Pendencia) -> SharedString {
     match p {
-        Pendencia::Permissao { .. } => "Permissão",
-        Pendencia::Plano { .. } => "Plano para aprovar",
-        Pendencia::Pergunta { .. } => "Pergunta",
-        Pendencia::Erro { .. } => "Erro",
-        Pendencia::Parada { .. } => "Parada",
-        Pendencia::Nova { .. } => "Resposta nova",
+        Pendencia::Permissao { .. } => tr!("Permissão"),
+        Pendencia::Plano { .. } => tr!("Plano para aprovar"),
+        Pendencia::Pergunta { .. } => tr!("Pergunta"),
+        Pendencia::Erro { .. } => tr!("Erro"),
+        Pendencia::Parada { .. } => tr!("Parada"),
+        Pendencia::Nova { .. } => tr!("Resposta nova"),
     }
 }
 
@@ -297,12 +296,12 @@ fn caixa_do_sino(
                 .line_height(r(20.))
                 .font_semibold()
                 .text_color(Cores::texto())
-                .child("O que precisa de você"),
+                .child(tr!("O que precisa de você")),
         )
         .when(numero > 0, |s| s.child(Selo::contagem(numero).tingida(cor)))
         .child(div().flex_1())
         .when_some(teclas(&ProximaPendencia, None, window), |s, t| {
-            s.child(t).child(div().metadado().text_color(Cores::tenue()).child("próxima"))
+            s.child(t).child(div().metadado().text_color(Cores::tenue()).child(tr!("próxima")))
         });
 
     // Como os itens de menu do kit: o realce do hover a 8 da borda, e o ícone e o texto na guia
@@ -315,8 +314,8 @@ fn caixa_do_sino(
         .overflow_y_scroll();
     if vazia {
         corpo = corpo.child(
-            EstadoVazio::new(Lucide::BellOff, "Nada esperando você")
-                .texto("Pedidos de permissão, planos e erros aparecem aqui."),
+            EstadoVazio::new(Lucide::BellOff, tr!("Nada esperando você"))
+                .texto(tr!("Pedidos de permissão, planos e erros aparecem aqui.")),
         );
     }
     // A primeira seção encosta no título (4 em cima, e não os 16 de respiro).
@@ -326,7 +325,7 @@ fn caixa_do_sino(
         Some(usize::MAX)
     };
     if !de_ciclo.is_empty() {
-        corpo = corpo.child(CabecalhoDeSecao::new("Mensagens seguidas").contagem(de_ciclo.len()).tingida(Cores::espera()).primeira(true));
+        corpo = corpo.child(CabecalhoDeSecao::new(tr!("Mensagens seguidas")).contagem(de_ciclo.len()).tingida(Cores::espera()).primeira(true));
         for e in de_ciclo {
             let (chat, chave) = (e.chat.clone(), e.chave.clone());
             let (janela_v, popover_v) = (janela.clone(), popover.clone());
@@ -343,14 +342,14 @@ fn caixa_do_sino(
                     .simbolo(Simbolo::icone_cor(Lucide::MessageSquare, Cores::espera()))
                     .subtitulo(subtitulo)
                     .acao_fixa(
-                        botao_fantasma(id("caixa-ciclo-ver", &chave), None, "Ver", TamanhoBotao::Linha, window, cx)
+                        botao_fantasma(id("caixa-ciclo-ver", &chave), None, tr!("Ver"), TamanhoBotao::Linha, window, cx)
                             .on_click(move |ev, window, cx| a1(ev, window, cx)),
                     )
                     .on_click(move |ev, window, cx| a2(ev, window, cx)),
             );
         }
     }
-    let secao = |ordem: usize, titulo: &'static str, linhas: &[Linha], cor: Option<Hsla>| {
+    let secao = |ordem: usize, titulo: SharedString, linhas: &[Linha], cor: Option<Hsla>| {
         (!linhas.is_empty()).then(|| {
             let cabecalho = CabecalhoDeSecao::new(titulo).contagem(linhas.len()).primeira(primeira == Some(ordem));
             match cor {
@@ -360,9 +359,9 @@ fn caixa_do_sino(
         })
     };
     corpo = corpo
-        .children(secao(0, "Pedidos", &secoes.pedidos, Some(Cores::espera())))
+        .children(secao(0, tr!("Pedidos"), &secoes.pedidos, Some(Cores::espera())))
         .children(secoes.pedidos.into_iter().map(|l| linha_de_pedido(l, janela, &popover, &motor, window, cx)))
-        .children(secao(1, "Paradas", &secoes.paradas, Some(Cores::espera())).map(|cabecalho| {
+        .children(secao(1, tr!("Paradas"), &secoes.paradas, Some(Cores::espera())).map(|cabecalho| {
             // Com duas ou mais, "Retomar tudo" (o mesmo da lista; item 3.4): depois de "Vitral
             // fechou" eram N cliques.
             if secoes.paradas.len() < 2 {
@@ -370,14 +369,14 @@ fn caixa_do_sino(
             }
             let (motor, chats) = (motor.clone(), secoes.paradas.iter().map(|l| l.chat.clone()).collect::<Vec<_>>());
             cabecalho.acao(
-                botao_fantasma("caixa-retomar-tudo", Some(Lucide::Play.into()), "Retomar tudo", TamanhoBotao::Linha, window, cx)
+                botao_fantasma("caixa-retomar-tudo", Some(Lucide::Play.into()), tr!("Retomar tudo"), TamanhoBotao::Linha, window, cx)
                     .on_click(move |_, _, cx| motor.update(cx, |m, cx| for c in &chats { m.retomar(c, cx) })),
             )
         }))
         .children(secoes.paradas.into_iter().map(|l| linha(l, janela, &popover, &motor, window, cx)))
-        .children(secao(2, "Erros", &secoes.erros, Some(Cores::vermelho())))
+        .children(secao(2, tr!("Erros"), &secoes.erros, Some(Cores::vermelho())))
         .children(secoes.erros.into_iter().map(|l| linha(l, janela, &popover, &motor, window, cx)))
-        .children(secao(3, "Respostas novas", &secoes.novas, None))
+        .children(secao(3, tr!("Respostas novas"), &secoes.novas, None))
         .children(secoes.novas.into_iter().map(|l| linha(l, janela, &popover, &motor, window, cx)));
 
     let (ver, fechar) = (janela.clone(), popover.clone());
@@ -386,14 +385,14 @@ fn caixa_do_sino(
         .when(!novas.is_empty(), |s| {
             let motor = motor.clone();
             s.child(
-                botao_fantasma("caixa-marcar-lidas", Some(Lucide::CheckCheck.into()), "Marcar tudo como lido", TamanhoBotao::Barra, window, cx)
+                botao_fantasma("caixa-marcar-lidas", Some(Lucide::CheckCheck.into()), tr!("Marcar tudo como lido"), TamanhoBotao::Barra, window, cx)
                     .ml(r(-12.))
                     .on_click(move |_, _, cx| motor.update(cx, |m, cx| m.marcar_lidos(&novas, cx))),
             )
         })
         .child(div().flex_1())
         .child(
-            botao_fantasma("caixa-ver-na-lista", Some(Lucide::ArrowRight.into()), "Ver na lista", TamanhoBotao::Barra, window, cx)
+            botao_fantasma("caixa-ver-na-lista", Some(Lucide::ArrowRight.into()), tr!("Ver na lista"), TamanhoBotao::Barra, window, cx)
                 .on_click(move |_, window, cx| {
                     let _ = fechar.update(cx, |p, cx| p.dismiss(window, cx));
                     let _ = ver.update(cx, |this, cx| this.mostrar_esperando(window, cx));
@@ -420,7 +419,7 @@ fn simbolo() -> Simbolo {
 fn meta(l: &Linha) -> AnyElement {
     match l.painel {
         Some((n, ativo)) => numero_painel(n, ativo).into_any_element(),
-        None => div().child(tempo_relativo(l.quando)).into_any_element(),
+        None => div().child(super::tempo_relativo_na_tela(l.quando)).into_any_element(),
     }
 }
 
@@ -437,15 +436,15 @@ fn linha(
     let motor = motor.clone();
     let acao = match l.pedido {
         Pedido::Parada => Some(
-            botao_fantasma(id("caixa-retomar", &l.chave), Some(Lucide::Play.into()), "Retomar", TamanhoBotao::Linha, window, cx)
+            botao_fantasma(id("caixa-retomar", &l.chave), Some(Lucide::Play.into()), tr!("Retomar"), TamanhoBotao::Linha, window, cx)
                 .on_click(move |_, _, cx| motor.update(cx, |m, cx| m.retomar(&chat, cx))),
         ),
         Pedido::Erro { pode_tentar: true } => Some(
-            botao_fantasma(id("caixa-tentar", &l.chave), Some(Lucide::RotateCw.into()), "Tentar de novo", TamanhoBotao::Linha, window, cx)
+            botao_fantasma(id("caixa-tentar", &l.chave), Some(Lucide::RotateCw.into()), tr!("Tentar de novo"), TamanhoBotao::Linha, window, cx)
                 .on_click(move |_, _, cx| motor.update(cx, |m, cx| m.tentar_de_novo(&chat, cx))),
         ),
         Pedido::Nova => Some(
-            botao_icone(id("caixa-lida", &l.chave), Lucide::Check, "Marcar como lida", TamanhoBotao::Linha, window, cx)
+            botao_icone(id("caixa-lida", &l.chave), Lucide::Check, tr!("Marcar como lida"), TamanhoBotao::Linha, window, cx)
                 .on_click(move |_, _, cx| motor.update(cx, |m, cx| m.marcar_lidos(&[chat.clone()], cx))),
         ),
         _ => None,
@@ -490,14 +489,14 @@ fn linha_de_pedido(
         .subtitulo(previa_elemento(l.motivo.as_ref(), l.detalhe.clone(), false))
         .meta(meta(&l))
         .on_click(abrir_conversa(janela, popover, &l.chat));
-    let ver = |rotulo: &'static str| {
+    let ver = |rotulo: SharedString| {
         botao_fantasma(id("caixa-ver", chave), Some(Lucide::ArrowRight.into()), rotulo, TamanhoBotao::Barra, window, cx)
             .on_click(abrir_conversa(janela, popover, &l.chat))
     };
     let (comando, botoes): (Option<String>, Vec<AnyElement>) = match &l.pedido {
         Pedido::Permissao { pedido, ferramenta, comando } => {
             let (m1, m2, p1, p2) = (motor.clone(), motor.clone(), pedido.clone(), pedido.clone());
-            let negar = botao_fantasma(id("caixa-negar", chave), None, "Negar", TamanhoBotao::Barra, window, cx)
+            let negar = botao_fantasma(id("caixa-negar", chave), None, tr!("Negar"), TamanhoBotao::Barra, window, cx)
                 .on_click(move |_, _, cx| m1.update(cx, |m, cx| m.responder_permissao(&p1, false, None, cx)));
             // Comando com trecho que apaga, força ou roda algo difícil de desfazer, ou comprido
             // demais para a caixinha daqui (que corta em duas linhas): não se aprova pelo sino.
@@ -507,17 +506,17 @@ fn linha_de_pedido(
                 && comando.as_deref().is_some_and(|c| !trechos_perigosos(c).is_empty());
             let comprido = comando.as_deref().is_some_and(|c| c.lines().count() > 2 || c.chars().count() > 160);
             let segundo = if perigoso || comprido {
-                ver(if perigoso { "Ver o comando perigoso" } else { "Ver o comando inteiro" }).into_any_element()
+                ver(if perigoso { tr!("Ver o comando perigoso") } else { tr!("Ver o comando inteiro") }).into_any_element()
             } else {
-                botao_primario(id("caixa-permitir", chave), None, "Permitir", TamanhoBotao::Barra, window, cx)
+                botao_primario(id("caixa-permitir", chave), None, tr!("Permitir"), TamanhoBotao::Barra, window, cx)
                     .on_click(move |_, _, cx| m2.update(cx, |m, cx| m.responder_permissao(&p2, true, None, cx)))
                     .into_any_element()
             };
             (comando.clone(), vec![negar.into_any_element(), segundo])
         }
         // A pergunta se responde no cartão dela, na conversa.
-        Pedido::Pergunta => (None, vec![ver("Ver pergunta").into_any_element()]),
-        _ => (None, vec![ver("Ver plano").into_any_element()]),
+        Pedido::Pergunta => (None, vec![ver(tr!("Ver pergunta")).into_any_element()]),
+        _ => (None, vec![ver(tr!("Ver plano")).into_any_element()]),
     };
     v_flex()
         .child(cartao)

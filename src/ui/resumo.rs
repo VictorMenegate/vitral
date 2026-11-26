@@ -38,7 +38,7 @@ pub(super) fn esperas_de_ciclo(motor: &Motor) -> Vec<EsperaDeCiclo> {
             Some(EsperaDeCiclo {
                 chave: format!("ciclo-{a}-{b}"),
                 chat: ca.id.clone(),
-                texto: format!("Muitas mensagens seguidas entre {} e {}: escreva para um dos dois", nome_do_chat(ca), nome_do_chat(cb)),
+                texto: tr!("Muitas mensagens seguidas entre {a} e {b}: escreva para um dos dois", a = nome_do_chat(ca), b = nome_do_chat(cb)).to_string(),
             })
         })
         .collect()
@@ -60,7 +60,7 @@ impl Janela {
             .into_iter()
             .map(|e| {
                 let (chat, chat_v) = (e.chat.clone(), e.chat.clone());
-                let ver = botao_fantasma(SharedString::from(format!("ver-{}", e.chave)), None, "Ver", TamanhoBotao::Linha, window, cx)
+                let ver = botao_fantasma(SharedString::from(format!("ver-{}", e.chave)), None, tr!("Ver"), TamanhoBotao::Linha, window, cx)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
                         this.selecionar(Some(chat_v.clone()), window, cx)

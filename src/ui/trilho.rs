@@ -59,19 +59,19 @@ pub(super) fn logo_v() -> Arc<Image> {
 /// das respostas novas.
 fn dica_sino(p: &PrecisaDeVoce) -> String {
     let partes: Vec<String> = [
-        (p.pedidos, "pedido", "pedidos"),
-        (p.paradas, "parada", "paradas"),
-        (p.erros, "erro", "erros"),
-        (p.novas, "resposta nova", "respostas novas"),
+        (p.pedidos, tr!("pedido"), tr!("pedidos")),
+        (p.paradas, tr!("parada"), tr!("paradas")),
+        (p.erros, tr!("erro"), tr!("erros")),
+        (p.novas, tr!("resposta nova"), tr!("respostas novas")),
     ]
     .into_iter()
     .filter(|(n, ..)| *n > 0)
-    .map(|(n, um, varios)| contagem(n, um, varios))
+    .map(|(n, um, varios)| contagem(n, &um, &varios))
     .collect();
     if partes.is_empty() {
-        "O que precisa de você".into()
+        tr!("O que precisa de você").to_string()
     } else {
-        format!("O que precisa de você\n{}", partes.join(", "))
+        format!("{}\n{}", tr!("O que precisa de você"), partes.join(", "))
     }
 }
 
@@ -149,8 +149,8 @@ fn item(
 /// (a versão era o pé do menu até 24/11/2026; subiu para o menu caber a 150%). Na dica, de onde
 /// veio o binário e a pasta de dados. Fixo, fora do teclado.
 fn cabecalho_vitral(dados: &Path, chats: usize) -> PopupMenuItem {
-    let detalhe = format!("{} · {}", linha_tecnica(), contagem(chats, "chat", "chats"));
-    let dica = format!("{} · {}\nDados em {}", atualizacao::rotulo(), atualizacao::origem(), pasta_curta(dados));
+    let detalhe = format!("{} · {}", linha_tecnica(), contagem(chats, &tr!("chat"), &tr!("chats")));
+    let dica = format!("{} · {}\n{}", atualizacao::rotulo(), atualizacao::origem(), tr!("Dados em {pasta}", pasta = pasta_curta(dados)));
     cabecalho_objeto_com_dica(Simbolo::Imagem(LOGO.clone()), "Vitral", Some(detalhe.into()), dica)
 }
 
@@ -201,15 +201,15 @@ fn grupos_do_menu(compacto: bool) -> Vec<Vec<ItemDoMenu>> {
 fn linha_da_pronta(versao: String, janela: &WeakEntity<Janela>) -> PopupMenuItem {
     let janela = janela.clone();
     PopupMenuItem::element(move |_, _| {
-        let dica: SharedString = format!("Reinicia na {versao}, que já está instalada").into();
+        let dica: SharedString = tr!("Reinicia na {versao}, que já está instalada", versao = versao);
         h_flex()
             .id("menu-versao-pronta")
             .flex_1()
             .min_w_0()
             .gap(esp::E6)
-            .child(div().min_w_0().truncate().text_color(Cores::forte()).child("Versão nova pronta"))
+            .child(div().min_w_0().truncate().text_color(Cores::forte()).child(tr!("Versão nova pronta")))
             .child(div().flex_none().text_color(Cores::apagado()).child("·"))
-            .child(div().flex_none().font_weight(FontWeight::SEMIBOLD).text_color(Cores::destaque_texto()).child("Reiniciar"))
+            .child(div().flex_none().font_weight(FontWeight::SEMIBOLD).text_color(Cores::destaque_texto()).child(tr!("Reiniciar")))
             .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
     })
     .icon(Icon::new(Lucide::RotateCw).text_color(Cores::destaque_texto()))
@@ -283,8 +283,8 @@ impl RenderOnce for BotaoLogo {
                     return s.on_hover(pairando.ouvinte());
                 }
                 let dica = match &self.pronta {
-                    Some(versao) => format!("Menu do Vitral\nVersão {versao} pronta"),
-                    None => "Menu do Vitral".to_string(),
+                    Some(versao) => format!("{}\n{}", tr!("Menu do Vitral"), tr!("Versão {versao} pronta", versao = versao)),
+                    None => tr!("Menu do Vitral").to_string(),
                 };
                 s.hover(|s| s.border_color(Cores::borda())).dica_com_hover(pairando.ouvinte(), move |window, cx| {
                     Tooltip::new(dica.clone()).action(&AbrirMenuVitral, None).build(window, cx)
@@ -404,9 +404,9 @@ impl Janela {
             let ligada = m.config.revisar_edicoes;
             let motor = motor.clone();
             let dica = if ligada {
-                "Revisão automática ligada\nO outro agente confere os turnos que mudam bastante"
+                tr!("Revisão automática ligada\nO outro agente confere os turnos que mudam bastante")
             } else {
-                "Revisão automática desligada"
+                tr!("Revisão automática desligada")
             };
             h_flex()
                 .id("barra-revisao")
@@ -420,8 +420,8 @@ impl Janela {
                 .text_color(if ligada { Cores::texto() } else { Cores::apagado() })
                 .hover(|s| s.bg(Cores::hover()))
                 .child(div().flex_none().text_color(if ligada { Cores::destaque_texto() } else { Cores::apagado() }).child(super::componentes::icone(Lucide::CheckCheck, 14., window)))
-                .child("Revisão")
-                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica).build(window, cx))
+                .child(tr!("Revisão"))
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                 .on_click(move |_, _, cx| motor.update(cx, |m, cx| m.mudar_config(|c| c.revisar_edicoes = !c.revisar_edicoes, cx)))
         };
         let arquivadas = self.botao_arquivadas(m, window, cx);
@@ -591,12 +591,12 @@ fn item_do_menu(
 ) -> PopupMenu {
     use ItemDoMenu::*;
     match qual {
-        MostrarLista => menu.item(item("Mostrar a lista", Lucide::PanelLeftOpen, janela, |this, window, cx| this.alternar_lista(window, cx)).action(Box::new(AlternarLista))),
+        MostrarLista => menu.item(item(tr!("Mostrar a lista"), Lucide::PanelLeftOpen, janela, |this, window, cx| this.alternar_lista(window, cx)).action(Box::new(AlternarLista))),
         PrecisaDeVoce => {
             let (selo, caixa) = (selo_do_menu(precisa), janela.clone());
             menu.item(
                 PopupMenuItem::element(move |_, _| {
-                    h_flex().gap(esp::E8).min_w_0().child(div().flex_1().min_w_0().truncate().child("O que precisa de você")).children(selo.clone())
+                    h_flex().gap(esp::E8).min_w_0().child(div().flex_1().min_w_0().truncate().child(tr!("O que precisa de você"))).children(selo.clone())
                 })
                 .icon(Lucide::Bell)
                 .on_click(move |_, _, cx| {
@@ -608,14 +608,14 @@ fn item_do_menu(
                 }),
             )
         }
-        NovoChatEmOutraPasta => menu.item(item("Chat em outra pasta…", Lucide::FolderOpen, janela, |this, window, cx| this.dialogo_nova_conversa(window, cx))),
-        Importar => menu.item(item("Importar conversa…", Lucide::Download, janela, |this, _, cx| {
+        NovoChatEmOutraPasta => menu.item(item(tr!("Chat em outra pasta…"), Lucide::FolderOpen, janela, |this, window, cx| this.dialogo_nova_conversa(window, cx))),
+        Importar => menu.item(item(tr!("Importar conversa…"), Lucide::Download, janela, |this, _, cx| {
             if let Some(motor) = this.motor.clone() {
                 motor.update(cx, |m, cx| m.importar_do_claude_code(false, cx));
             }
         })),
-        Resumo => menu.item(item("Resumo de hoje", Lucide::CalendarClock, janela, |this, window, cx| this.abrir_resumo_do_dia(window, cx))),
-        Configuracoes => menu.item(item("Configurações", Lucide::Settings, janela, |this, window, cx| this.abrir_configuracoes(window, cx)).action(Box::new(AbrirConfiguracoes))),
+        Resumo => menu.item(item(tr!("Resumo de hoje"), Lucide::CalendarClock, janela, |this, window, cx| this.abrir_resumo_do_dia(window, cx))),
+        Configuracoes => menu.item(item(tr!("Configurações"), Lucide::Settings, janela, |this, window, cx| this.abrir_configuracoes(window, cx)).action(Box::new(AbrirConfiguracoes))),
     }
 }
 

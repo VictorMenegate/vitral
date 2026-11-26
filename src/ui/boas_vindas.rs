@@ -138,7 +138,7 @@ impl Janela {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Usar esta pasta".into()),
+            prompt: Some(tr!("Usar esta pasta")),
         });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(caminhos))) = escolha.await else {
@@ -232,7 +232,7 @@ impl Janela {
                 } else {
                     Cores::apagado().opacity(0.6)
                 }))
-                .child(*nome)
+                .child(SharedString::from(crate::i18n::traduzir(*nome)))
                 .when(pode && !atual, |s| {
                     s.cursor_pointer().on_click(cx.listener(move |this, _, _, cx| this.ir_ao_passo(i, cx)))
                 })
@@ -267,14 +267,14 @@ impl Janela {
             .px(m::PE_X)
             .pb(m::PE_X)
             .when(passo > 0, |s| {
-                s.child(botao_do_pe(botao_fantasma("bv-voltar", None, "Voltar", TamanhoBotao::Controle, window, cx)).bg(Cores::cartao_elevado()).on_click(
+                s.child(botao_do_pe(botao_fantasma("bv-voltar", None, tr!("Voltar"), TamanhoBotao::Controle, window, cx)).bg(Cores::cartao_elevado()).on_click(
                     cx.listener(move |this, _, _, cx| this.ir_ao_passo(passo.saturating_sub(1), cx)),
                 ))
             })
             .child(div().flex_1())
-            .when(sem_pasta && !tela.sugestoes.is_empty(), |s| s.child(div().text_size(r(12.)).text_color(Cores::apagado()).child("Escolha uma pasta")))
+            .when(sem_pasta && !tela.sugestoes.is_empty(), |s| s.child(div().text_size(r(12.)).text_color(Cores::apagado()).child(tr!("Escolha uma pasta"))))
             .child(
-                botao_do_pe(botao_primario("bv-seguir", None, if ultimo { "Começar" } else { "Continuar" }, TamanhoBotao::Controle, window, cx))
+                botao_do_pe(botao_primario("bv-seguir", None, if ultimo { tr!("Começar") } else { tr!("Continuar") }, TamanhoBotao::Controle, window, cx))
                     .when(!pode_seguir, |b| b.opacity(0.45))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !pode_seguir {
@@ -394,17 +394,17 @@ impl Janela {
                 crate::modelo::Agente::Claude => {
                     let instalada = versao_claude.is_some() || crate::claude::binario_claude().is_file();
                     let texto = match versao_claude {
-                        Some((a, b, c)) => format!("Instalado · {a}.{b}.{c}"),
-                        None if instalada => "Instalado".to_string(),
-                        None => "O principal: chats, planos e agentes".to_string(),
+                        Some((a, b, c)) => tr!("Instalado · {versao}", versao = format!("{a}.{b}.{c}")).to_string(),
+                        None if instalada => tr!("Instalado").to_string(),
+                        None => tr!("O principal: chats, planos e agentes").to_string(),
                     };
                     (instalada, texto)
                 }
-                crate::modelo::Agente::Codex => (agente.instalado(), if agente.instalado() { "Instalado".into() } else { "Da OpenAI, com a conta do ChatGPT".to_string() }),
-                crate::modelo::Agente::Gemini => (agente.instalado(), if agente.instalado() { "Instalado".into() } else { "Do Google, com a conta Google".to_string() }),
+                crate::modelo::Agente::Codex => (agente.instalado(), if agente.instalado() { tr!("Instalado").to_string() } else { tr!("Da OpenAI, com a conta do ChatGPT").to_string() }),
+                crate::modelo::Agente::Gemini => (agente.instalado(), if agente.instalado() { tr!("Instalado").to_string() } else { tr!("Do Google, com a conta Google").to_string() }),
                 outro => (
                     outro.instalado(),
-                    if outro.instalado() { "Instalado".into() } else { crate::agente_acp::perfil(outro).map_or("", |p| p.descricao).to_string() },
+                    if outro.instalado() { tr!("Instalado").to_string() } else { crate::i18n::traduzir(crate::agente_acp::perfil(outro).map_or("", |p| p.descricao)).to_string() },
                 ),
             };
             let acao = if instalada {
@@ -414,10 +414,10 @@ impl Janela {
                     .text_size(r(12.5))
                     .text_color(Cores::verde())
                     .child(super::componentes::icone(Lucide::Check, 14., window))
-                    .child("Pronto")
+                    .child(tr!("Pronto"))
                     .into_any_element()
             } else {
-                Self::botao_da_tela(("bv-instalar", i), Lucide::Download, "Instalar", window)
+                Self::botao_da_tela(("bv-instalar", i), Lucide::Download, tr!("Instalar"), window)
                     .on_click(move |_, _, _| super::uso_plano::instalar(agente))
                     .into_any_element()
             };
@@ -444,13 +444,13 @@ impl Janela {
         });
         v_flex()
             .gap(crate::tema::inicio::PASSO_VAO)
-            .child(Self::cabeca_do_passo(false, "Suas IAs", "Instale as que você quer usar. Dá para mudar depois em Configurações, Agentes."))
+            .child(Self::cabeca_do_passo(false, tr!("Suas IAs"), tr!("Instale as que você quer usar. Dá para mudar depois em Configurações, Agentes.")))
             // Nove IAs desde 26/11/2026: a lista rola dentro do cartão.
             .child(div().id("bv-ias").max_h(r(320.)).overflow_y_scroll().child(v_flex().gap(esp::E4).children(linhas)))
     }
 
     /// O título do passo, a frase de baixo e o conteúdo.
-    fn cabeca_do_passo(primeiro: bool, titulo: &'static str, frase: &'static str) -> Div {
+    fn cabeca_do_passo(primeiro: bool, titulo: SharedString, frase: SharedString) -> Div {
         v_flex()
             .gap(esp::E6)
             .child(
@@ -466,7 +466,7 @@ impl Janela {
 
     /// Uma linha da apresentação e da memória: o ícone no azul e o título com a frase embaixo. Entra
     /// um pouco depois da de cima.
-    fn linha_de_apresentacao(i: usize, icone: Lucide, titulo: &'static str, frase: &'static str) -> impl IntoElement {
+    fn linha_de_apresentacao(i: usize, icone: Lucide, titulo: SharedString, frase: SharedString) -> impl IntoElement {
         let linha = h_flex()
             .items_center()
             .gap(esp::E12)
@@ -522,19 +522,19 @@ impl Janela {
         v_flex()
             .gap(crate::tema::inicio::PASSO_VAO)
             .child(linguas)
-            .child(Self::cabeca_do_passo(true, "Bem-vindo ao Vitral", "Chats que trabalham direto nas suas pastas."))
+            .child(Self::cabeca_do_passo(true, tr!("Bem-vindo ao Vitral"), tr!("Chats que trabalham direto nas suas pastas.")))
             .child(
                 v_flex()
                     .gap(esp::E4)
-                    .child(Self::linha_de_apresentacao(0, Lucide::MessagesSquare, "Uma lista de chats", "Cada chat numa pasta. Claude, Codex ou Gemini."))
-                    .child(Self::linha_de_apresentacao(1, Lucide::Columns2, "Vários lado a lado", "Abas e conversas lado a lado."))
-                    .child(Self::linha_de_apresentacao(2, Lucide::ShieldCheck, "Você decide o que roda", "Cada permissão aparece na tela."))
-                    .child(Self::linha_de_apresentacao(3, Lucide::Brain, "O que se aprende fica", "O agente guarda o que vale lembrar.")),
+                    .child(Self::linha_de_apresentacao(0, Lucide::MessagesSquare, tr!("Uma lista de chats"), tr!("Cada chat numa pasta. Claude, Codex ou Gemini.")))
+                    .child(Self::linha_de_apresentacao(1, Lucide::Columns2, tr!("Vários lado a lado"), tr!("Abas e conversas lado a lado.")))
+                    .child(Self::linha_de_apresentacao(2, Lucide::ShieldCheck, tr!("Você decide o que roda"), tr!("Cada permissão aparece na tela.")))
+                    .child(Self::linha_de_apresentacao(3, Lucide::Brain, tr!("O que se aprende fica"), tr!("O agente guarda o que vale lembrar."))),
             )
     }
 
     /// O botão claro de uma linha só da tela (Outra pasta…, Ligar a memória…).
-    fn botao_da_tela(id: impl Into<ElementId>, icone: Lucide, rotulo: &'static str, window: &Window) -> Stateful<Div> {
+    fn botao_da_tela(id: impl Into<ElementId>, icone: Lucide, rotulo: SharedString, window: &Window) -> Stateful<Div> {
         h_flex()
             .id(id)
             .flex_none()
@@ -565,10 +565,10 @@ impl Janela {
                 .text_size(r(12.5))
                 .text_color(Cores::verde())
                 .child(super::componentes::icone(Lucide::Check, 14., window))
-                .child(format!("Ligada a {endereco}"))
+                .child(tr!("Ligada a {endereco}", endereco = endereco))
                 .into_any_element()
         } else {
-            Self::botao_da_tela("bv-memoria", Lucide::Brain, "Ligar a memória…", window)
+            Self::botao_da_tela("bv-memoria", Lucide::Brain, tr!("Ligar a memória…"), window)
                 .on_click(cx.listener(|this, _, window, cx| {
                     if let Some(motor) = this.motor.clone() {
                         super::memoria_equipe::abrir(motor, window, cx);
@@ -579,13 +579,13 @@ impl Janela {
         v_flex()
             .gap(crate::tema::inicio::PASSO_VAO)
             .items_start()
-            .child(Self::cabeca_do_passo(false, "Memória da equipe", "Opcional. Dá para ligar depois."))
+            .child(Self::cabeca_do_passo(false, tr!("Memória da equipe"), tr!("Opcional. Dá para ligar depois.")))
             .child(
                 v_flex()
                     .w_full()
                     .gap(esp::E4)
-                    .child(Self::linha_de_apresentacao(0, Lucide::MessagesSquare, "Todos com o mesmo contexto", "Decisões e armadilhas num lugar só."))
-                    .child(Self::linha_de_apresentacao(1, Lucide::ShieldCheck, "Só o que importa sobe", "O histórico do chat não vai.")),
+                    .child(Self::linha_de_apresentacao(0, Lucide::MessagesSquare, tr!("Todos com o mesmo contexto"), tr!("Decisões e armadilhas num lugar só.")))
+                    .child(Self::linha_de_apresentacao(1, Lucide::ShieldCheck, tr!("Só o que importa sobe"), tr!("O histórico do chat não vai."))),
             )
             .child(acao)
     }
@@ -626,7 +626,7 @@ impl Janela {
                 .child(div().min_w_0().truncate().font_family(FONTE_MONO).text_size(r(13.)).font_weight(FontWeight::MEDIUM).text_color(Cores::texto()).child(com_til(&pasta)))
                 .child(div().flex_1())
                 .children(conversas.map(|n| {
-                    div().flex_none().whitespace_nowrap().text_size(r(12.)).text_color(Cores::apagado()).child(if n == 1 { "1 chat".to_string() } else { format!("{n} chats") })
+                    div().flex_none().whitespace_nowrap().text_size(r(12.)).text_color(Cores::apagado()).child(if n == 1 { tr!("1 chat") } else { tr!("{n} chats", n = n) })
                 }))
                 .when(marcada, |s| {
                     s.child(
@@ -653,7 +653,7 @@ impl Janela {
         v_flex()
             .gap(crate::tema::inicio::PASSO_VAO)
             .items_start()
-            .child(Self::cabeca_do_passo(false, "Em qual pasta você trabalha?", "Os chats novos nascem nela."))
+            .child(Self::cabeca_do_passo(false, tr!("Em qual pasta você trabalha?"), tr!("Os chats novos nascem nela.")))
             .when(procurando, |s| {
                 s.child(
                     h_flex()
@@ -661,11 +661,11 @@ impl Janela {
                         .text_size(r(12.5))
                         .text_color(Cores::apagado())
                         .child(super::componentes::AnelGirando::new(14.).cor(Cores::destaque()))
-                        .child("Procurando suas pastas…"),
+                        .child(tr!("Procurando suas pastas…")),
                 )
             })
             .when(!lista_vazia, |s| s.child(lista.w_full()))
-            .child(Self::botao_da_tela("bv-outra-pasta", Lucide::FolderSearch, "Outra pasta…", window).on_click(cx.listener(|this, _, window, cx| this.escolher_pasta_de_trabalho(window, cx))))
+            .child(Self::botao_da_tela("bv-outra-pasta", Lucide::FolderSearch, tr!("Outra pasta…"), window).on_click(cx.listener(|this, _, window, cx| this.escolher_pasta_de_trabalho(window, cx))))
     }
 
     /// Passo 3: as preferências básicas (tudo muda depois, nas Configurações ou na caixa de cada
@@ -698,7 +698,7 @@ impl Janela {
                         .on_click(move |_, _, cx| escolher(i, cx))
                 }))
         };
-        let preferencia = |titulo: &'static str, controle: AnyElement, frase: Option<String>| {
+        let preferencia = |titulo: SharedString, controle: AnyElement, frase: Option<String>| {
             v_flex()
                 // O segmentado na largura dele, não na do cartão.
                 .items_start()
@@ -728,13 +728,13 @@ impl Janela {
         v_flex()
             .gap(esp::E16)
             .child(preferencia(
-                "Permissões",
-                segmentado("bv-modo", MODOS.iter().map(|(_, nome, _)| (SharedString::from(*nome), None)).collect(), modo, mudar(|t, i| t.modo = i)).into_any_element(),
-                Some(MODOS[modo].2.to_string()),
+                tr!("Permissões"),
+                segmentado("bv-modo", MODOS.iter().map(|(_, nome, _)| (SharedString::from(crate::i18n::traduzir(*nome)), None)).collect(), modo, mudar(|t, i| t.modo = i)).into_any_element(),
+                Some(crate::i18n::traduzir(MODOS[modo].2).to_string()),
             ))
             .when(agentes.len() > 1, |s| {
                 s.child(preferencia(
-                    "Quem responde",
+                    tr!("Quem responde"),
                     segmentado(
                         "bv-agente",
                         agentes.iter().map(|a| (SharedString::from(a.nome()), Some(super::componentes::Marca::do_agente(*a).glifo(15.)))).collect(),
@@ -742,11 +742,11 @@ impl Janela {
                         mudar(|t, i| t.agente = i),
                     )
                     .into_any_element(),
-                    Some("Cada chat pode trocar.".to_string()),
+                    Some(tr!("Cada chat pode trocar.").to_string()),
                 ))
             })
             .child(preferencia(
-                "Modelo do Claude",
+                tr!("Modelo do Claude"),
                 segmentado(
                     "bv-modelo",
                     modelos.iter().map(|i| (SharedString::from(MODELOS[*i].1), None)).collect(),
@@ -774,10 +774,10 @@ impl Janela {
                 v_flex()
                     .rounded(raio::CARTAO)
                     .bg(Cores::cartao_elevado())
-                    .child(Self::linha_de_chave(&janela, "bv-importar", "Trazer as conversas que já existem", "Do Claude Code, nesta pasta.", importar, |t, v| t.importar = v))
-                    .child(Self::linha_de_chave(&janela, "bv-revisar", "Revisão automática", "O outro agente confere o que mudou, só lendo.", tela.revisar, |t, v| t.revisar = v))
-                    .child(Self::linha_de_chave(&janela, "bv-sugerir", "Sugerir a próxima mensagem", "Aparece apagada na caixa; o Tab aceita.", tela.sugerir, |t, v| t.sugerir = v))
-                    .child(Self::linha_de_chave(&janela, "bv-avisos", "Avisar quando um chat precisa de você", "Um aviso no canto, dentro do app.", tela.avisos, |t, v| t.avisos = v)),
+                    .child(Self::linha_de_chave(&janela, "bv-importar", tr!("Trazer as conversas que já existem"), tr!("Do Claude Code, nesta pasta."), importar, |t, v| t.importar = v))
+                    .child(Self::linha_de_chave(&janela, "bv-revisar", tr!("Revisão automática"), tr!("O outro agente confere o que mudou, só lendo."), tela.revisar, |t, v| t.revisar = v))
+                    .child(Self::linha_de_chave(&janela, "bv-sugerir", tr!("Sugerir a próxima mensagem"), tr!("Aparece apagada na caixa; o Tab aceita."), tela.sugerir, |t, v| t.sugerir = v))
+                    .child(Self::linha_de_chave(&janela, "bv-avisos", tr!("Avisar quando um chat precisa de você"), tr!("Um aviso no canto, dentro do app."), tela.avisos, |t, v| t.avisos = v)),
             )
     }
 }
@@ -789,8 +789,8 @@ impl Janela {
     fn linha_de_chave(
         janela: &WeakEntity<Janela>,
         id: &'static str,
-        titulo: &'static str,
-        frase: &'static str,
+        titulo: SharedString,
+        frase: SharedString,
         ligado: bool,
         mudar: fn(&mut BoasVindas, bool),
     ) -> impl IntoElement + use<> {
