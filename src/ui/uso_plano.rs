@@ -1584,7 +1584,7 @@ impl Janela {
                 .bg(Cores::preto())
                 .hover(|s| s.bg(Cores::preto().blend(Cores::forte().opacity(0.05))))
                 .child(Anel::new("barra-contexto-anel", fracao).diametro(14.).espessura(2.).inteiro().cor(Cores::destaque_texto()))
-                .child(div().text_color(Cores::texto_da_fala()).child("Contexto"))
+                .child(div().text_color(Cores::texto_da_fala()).child(tr!("Contexto")))
                 .child(div().tabular().text_color(Cores::tenue()).child(format!("{numero}%")))
                 .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                 .into_any_element(),

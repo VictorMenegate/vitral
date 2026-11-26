@@ -2601,6 +2601,22 @@ do Vitral, guardados no cartão.
   escolhido, até fechar o app. Sem o Linear ligado, o filtro não aparece.
 - **Desligar** (o ícone da tomada) apaga a chave; os cartões das issues saem do quadro.
 
+## Línguas
+
+Português, inglês e espanhol (26/11/2026; dono: "faz várias línguas pra escolher"). A escolha fica
+em Configurações, Aparência (e na tela inicial), em `Config.lingua`: vazio segue o sistema, e fora
+das três o Vitral cai no inglês. O agente recebe no prompt de sistema o pedido de responder na
+língua escolhida; os pedidos internos do Vitral aos agentes continuam em português.
+
+- **Texto novo na tela:** `tr!("Texto em português")`, ou `tr!("Fila · {n}", n = total)`. Em
+  português o texto é a própria chave; nas outras, vem de `locales/en/*.json` e `locales/es/*.json`
+  (o `build.rs` junta os arquivos de cada língua e para a compilação se a mesma chave tiver duas
+  traduções diferentes). Tabela `const` usa `crate::i18n::traduzir(texto)` na hora de mostrar.
+- **O teste `todo_tr_tem_traducao`** acusa `tr!` sem tradução em inglês ou espanhol.
+- **Comparação com texto:** compare com a chave em português (o `tempo_relativo` devolve "agora"
+  sempre) e traduza só ao mostrar; comparar o traduzido com a chave quebra fora do português.
+- Os textos do kit de componentes vêm do `vendor/gpui-component/locales/ui.yml` (pt-BR, en, es).
+
 ## Compilar e rodar
 
 Para usar no dia a dia, instale pelo release, sem compilar: `curl -fsSL
@@ -3021,7 +3037,8 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `ferramentas/logo/` | O logo: `v-do-dono.png` (o V que o dono mandou), `rasterizar.py` (tira o V dele e grava o `assets/vitral-v.png`), `icones.py` (o metal com o V por cima: os `assets/vitral-*.png`, o `vitral.ico` e os dois SVG com o PNG embutido) e `previa.py` (a conta do metal em Python, que o `icones.py` usa); ver **Logo**, em **Acabamento** |
 | `ferramentas/instalar-dev.sh` | Só desenvolvimento: compila e instala no layout do app como `<próxima>-dev.<commit>` |
 | `.github/` | `workflows/ci.yml`, `workflows/release.yml`, `workflows/windows-prints.yml` (à mão: prints num Windows de verdade, pelo `ferramentas/prints-windows.ps1`; o instalador de uma rodada do release, pelo `ferramentas/instalador-windows.ps1`; e o atualizador, da versão publicada a três do ramo num release falso, pelo `ferramentas/atualizador-windows.ps1`) e `dependabot.yml` |
-| `build.rs` | No Windows, o ícone e a versão no `vitral.exe` (o manifesto vem do GPUI); fora dele, nada |
+| `build.rs` | No Windows, o ícone e a versão no `vitral.exe` (o manifesto vem do GPUI); em todos, junta as traduções de `locales/<língua>/*.json` num arquivo só por língua |
+| `src/i18n.rs` e `locales/` | As línguas da interface: o `tr!`, a escolha (`Config.lingua`) e as traduções em inglês e espanhol |
 | `tests/versao.rs` | `--versao` e `--versao --json` sem tela (o binário de verdade, sem DISPLAY nem WAYLAND_DISPLAY) |
 | `tests/instalar.rs` | `--instalar` com o binário de verdade num HOME temporário em `target/tmp`: o layout, o link, o `.desktop`, o `~/.local/bin` e reinstalar sem duplicar |
 | `README.md`, `docs/imagens/` | A porta de entrada do GitHub (o que é, instalar, conferir o download, limites) e os prints dela, tirados na bancada com `RAIZ_SINTETICA=1` e `CLAUDE_FALSO=1`, recortados e com paleta de 256 cores |
