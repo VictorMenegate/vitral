@@ -3,6 +3,21 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.11.1
+
+Mais fluido, com os menus chapados e uma rodada de ajustes do jeito novo.
+
+- **Mais fluido.** As animações acompanham a tela, a roda do mouse rola suave como no navegador,
+  e com um chat trabalhando a janela não engasga mais: o fundo animado ficou bem mais leve. Os
+  giros continuam andando quando você está em outra janela.
+- **Menus chapados.** Sem degradê nem borda clara, com os grupos separados só pelo espaço.
+- **Lista fixa.** Ela não recolhe nem fica mais estreita que a do desenho; quem a esconde é o
+  modo foco. Só a conversa escolhida tem fundo.
+- **Abas no painel estreito.** As outras abas continuam na faixa, encolhendo.
+- **Nesta conversa.** Uma busca pequena em cima da lista, que rola sem levar o painel junto.
+- **Detalhes.** O aro do foco por dentro da moldura da caixa, o anel do contexto igual ao da
+  barra de baixo, barras de rolagem discretas e o uso do modo foco que arrasta sem abrir.
+
 ## 0.11.0
 
 O Vitral ganhou cara nova, chapada e mais limpa, no jeito do Linear. As cores do tema agora são
