@@ -140,7 +140,7 @@ fn meta_na_lista(a: &super::mapa_agentes::Agente) -> String {
 
 /// "2 comandos no fundo"; no painel estreito, só o número (o ícone diz o resto).
 pub(super) fn rotulo_dos_comandos(n: usize, curto: bool) -> String {
-    if curto { n.to_string() } else { contagem(n, "comando no fundo", "comandos no fundo") }
+    if curto { n.to_string() } else { contagem(n, &tr!("comando no fundo"), &tr!("comandos no fundo")) }
 }
 
 /// O que um estado diz na pílula: "2 trabalhando"; no painel estreito, só o número.
@@ -149,10 +149,10 @@ fn rotulo_do_estado(estado: NaPilula, n: usize, curto: bool) -> String {
         return n.to_string();
     }
     match estado {
-        NaPilula::Trabalhando => format!("{n} trabalhando"),
-        NaPilula::EsperandoVoce => format!("{n} esperando você"),
-        NaPilula::Falhou if n == 1 => "1 falhou".to_string(),
-        NaPilula::Falhou => format!("{n} falharam"),
+        NaPilula::Trabalhando => tr!("{n} trabalhando", n = n).to_string(),
+        NaPilula::EsperandoVoce => tr!("{n} esperando você", n = n).to_string(),
+        NaPilula::Falhou if n == 1 => tr!("1 falhou").to_string(),
+        NaPilula::Falhou => tr!("{n} falharam", n = n).to_string(),
     }
 }
 
@@ -170,7 +170,7 @@ pub(super) fn rotulo_dos_passos((feitos, total): (usize, usize)) -> String {
 /// "+40 −12" (o lado zerado não aparece; sem linha contada, "2 arquivos").
 pub(super) fn rotulo_das_mudancas((arquivos, entram, saem): (usize, usize, usize)) -> String {
     let linhas: Vec<String> = [(entram, '+'), (saem, '−')].into_iter().filter(|(n, _)| *n > 0).map(|(n, sinal)| format!("{sinal}{n}")).collect();
-    if linhas.is_empty() { contagem(arquivos, "arquivo", "arquivos") } else { linhas.join(" ") }
+    if linhas.is_empty() { contagem(arquivos, &tr!("arquivo"), &tr!("arquivos")) } else { linhas.join(" ") }
 }
 
 /// Quais pílulas há, na ordem em que a linha as desenha: os comandos, os subagentes, os passos e
@@ -272,7 +272,7 @@ impl Janela {
     /// cada um (o `stop_task` dele) ou todos.
     fn pilula_dos_comandos(&self, comandos: &[(String, String)], chat: &str, painel: u64, curto: bool, cx: &Context<Self>) -> AnyElement {
         let n = comandos.len();
-        let dica = format!("{}\nClique para ver e parar", contagem(n, "comando rodando no fundo", "comandos rodando no fundo"));
+        let dica = tr!("{quantos}\nClique para ver e parar", quantos = contagem(n, &tr!("comando rodando no fundo"), &tr!("comandos rodando no fundo")));
         let gatilho = pilula(
             ("pilula-comandos", painel as usize),
             dica,
@@ -295,15 +295,15 @@ impl Janela {
                         .child(icone_de(Lucide::Terminal, 14.).text_color(Cores::tenue()))
                         .child(div().flex_1().min_w_0().truncate().font_family(FONTE_MONO).metadado().text_color(Cores::codigo()).child(descricao.clone()))
                         .child(
-                            botao_fantasma(("parar-comando", i), Some(Lucide::Square.into()), "Parar", TamanhoBotao::Linha, window, cx)
-                                .tooltip("Parar este comando")
+                            botao_fantasma(("parar-comando", i), Some(Lucide::Square.into()), tr!("Parar"), TamanhoBotao::Linha, window, cx)
+                                .tooltip(tr!("Parar este comando"))
                                 .on_click(move |_, _, cx| motor.update(cx, |m, cx| m.parar_comando_no_fundo(&chat, &tarefa, cx))),
                         )
                         .into_any_element()
                 })
                 .collect();
             let corpo = CorpoPopover::new(LarguraPopover::P360)
-                .child(titulo_do_popover("Rodando no fundo", Some(comandos.len().to_string())))
+                .child(titulo_do_popover(tr!("Rodando no fundo"), Some(comandos.len().to_string())))
                 .child(v_flex().gap(esp::E6).children(linhas));
             if comandos.len() < 2 {
                 return corpo.into_any_element();
@@ -312,7 +312,7 @@ impl Janela {
             corpo
                 .rodape(
                     h_flex().justify_end().child(
-                        botao_fantasma("parar-comandos", Some(Lucide::Square.into()), "Parar todos", TamanhoBotao::Barra, window, cx)
+                        botao_fantasma("parar-comandos", Some(Lucide::Square.into()), tr!("Parar todos"), TamanhoBotao::Barra, window, cx)
                             .on_click(move |_, _, cx| motor.update(cx, |m, cx| m.parar_comandos_no_fundo(&chat, cx))),
                     ),
                 )
@@ -325,7 +325,7 @@ impl Janela {
     /// marca dele; o clique lista os subagentes deste turno, e o clique num deles abre a conversa
     /// inteira dele numa aba.
     fn pilula_dos_agentes(&self, agentes: &[(NaPilula, usize)], chat: &str, painel: u64, curto: bool, cx: &Context<Self>) -> AnyElement {
-        let dica = format!("Subagentes deste turno: {}\nClique para ver cada um e abrir a conversa dele", rotulo_dos_agentes(agentes, false));
+        let dica = tr!("Subagentes deste turno: {estados}\nClique para ver cada um e abrir a conversa dele", estados = rotulo_dos_agentes(agentes, false));
         let segmentos: Vec<Div> = agentes
             .iter()
             .map(|(estado, n)| h_flex().gap(esp::E4).child(marca_do_estado(*estado, painel)).child(rotulo_do_estado(*estado, *n, curto)))
@@ -356,7 +356,7 @@ impl Janela {
                 .enumerate()
                 .map(|(i, a)| {
                     let espera = a.estado == Estado::Rodando && esperando.contains(&a.id);
-                    let (meta, cor) = if espera { ("Esperando a sua resposta".to_string(), Cores::espera()) } else { (meta_na_lista(a), Cores::tenue()) };
+                    let (meta, cor) = if espera { (tr!("Esperando a sua resposta").to_string(), Cores::espera()) } else { (meta_na_lista(a), Cores::tenue()) };
                     let (janela, pop, chat, chamada) = (janela.clone(), pop.clone(), chat.clone(), a.id.clone());
                     h_flex()
                         .id(("agente-do-turno", i))
@@ -386,7 +386,7 @@ impl Janela {
                 })
                 .collect();
             CorpoPopover::new(LarguraPopover::P360)
-                .child(titulo_do_popover("Subagentes deste turno", Some(do_turno.len().to_string())))
+                .child(titulo_do_popover(tr!("Subagentes deste turno"), Some(do_turno.len().to_string())))
                 .child(v_flex().id("agentes-do-turno").max_h(r(320.)).overflow_y_scroll().children(linhas))
                 .into_any_element()
         });
@@ -411,7 +411,7 @@ impl Janela {
             let feitos = lista.iter().filter(|p| p.estado == EstadoDoPasso::Feito).count();
             let linhas: Vec<Div> = lista.iter().map(super::este_chat::linha_do_passo).collect();
             CorpoPopover::new(LarguraPopover::P360)
-                .child(titulo_do_popover("Passos", Some(format!("{feitos} de {}", lista.len()))))
+                .child(titulo_do_popover(tr!("Passos"), Some(tr!("{feitos} de {total}", feitos = feitos, total = lista.len()).to_string())))
                 .child(v_flex().id("passos-do-turno").max_h(r(320.)).overflow_y_scroll().gap(esp::E8).children(linhas))
                 .into_any_element()
         });
@@ -421,17 +421,17 @@ impl Janela {
     /// O que o turno mudou ("+40 −12"): o clique abre a lista, à direita, em "Este chat".
     fn pilula_das_mudancas(&self, mudancas: (usize, usize, usize), painel: u64, curto: bool, cx: &Context<Self>) -> AnyElement {
         let (arquivos, entram, saem) = mudancas;
-        let dica = format!(
-            "{} neste turno: {}\nClique para ver a lista, à direita. O que um comando mudou não aparece aqui.",
-            contagem(arquivos, "arquivo mudado", "arquivos mudados"),
-            rotulo_das_mudancas(mudancas)
+        let dica = tr!(
+            "{quantos} neste turno: {mudancas}\nClique para ver a lista, à direita. O que um comando mudou não aparece aqui.",
+            quantos = contagem(arquivos, &tr!("arquivo mudado"), &tr!("arquivos mudados")),
+            mudancas = rotulo_das_mudancas(mudancas)
         );
         let contadas = entram + saem > 0;
         let conteudo = h_flex()
             .gap(esp::E4)
             .child(icone_de(Lucide::FileDiff, 12.).text_color(Cores::tenue()))
             // Com lugar, quantos arquivos; as linhas vão sempre que foram contadas.
-            .when(!curto || !contadas, |s| s.child(if curto { arquivos.to_string() } else { contagem(arquivos, "arquivo", "arquivos") }))
+            .when(!curto || !contadas, |s| s.child(if curto { arquivos.to_string() } else { contagem(arquivos, &tr!("arquivo"), &tr!("arquivos")) }))
             .when(contadas, |s| {
                 s.child(
                     h_flex()

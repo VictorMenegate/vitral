@@ -182,14 +182,14 @@ pub enum Efeito {
 }
 
 impl Efeito {
-    fn rotulo(self) -> Option<(Lucide, &'static str)> {
+    fn rotulo(self) -> Option<(Lucide, SharedString)> {
         Some(match self {
-            Efeito::Abrir => (Lucide::Plus, "Abrir aqui"),
-            Efeito::AbrirAoLado(Lado::Esquerda) => (Lucide::PanelLeft, "Abrir ao lado"),
-            Efeito::AbrirAoLado(_) => (Lucide::PanelRight, "Abrir ao lado"),
-            Efeito::Trocar { .. } => (Lucide::Plus, "Abrir aqui, como aba"),
-            Efeito::Mover { lado: Lado::Esquerda, .. } => (Lucide::ArrowLeft, "Mover para cá"),
-            Efeito::Mover { .. } => (Lucide::ArrowRight, "Mover para cá"),
+            Efeito::Abrir => (Lucide::Plus, tr!("Abrir aqui")),
+            Efeito::AbrirAoLado(Lado::Esquerda) => (Lucide::PanelLeft, tr!("Abrir ao lado")),
+            Efeito::AbrirAoLado(_) => (Lucide::PanelRight, tr!("Abrir ao lado")),
+            Efeito::Trocar { .. } => (Lucide::Plus, tr!("Abrir aqui, como aba")),
+            Efeito::Mover { lado: Lado::Esquerda, .. } => (Lucide::ArrowLeft, tr!("Mover para cá")),
+            Efeito::Mover { .. } => (Lucide::ArrowRight, tr!("Mover para cá")),
             Efeito::Nenhum => return None,
         })
     }
@@ -320,9 +320,9 @@ fn destino_ao_mover(de: usize, passo: isize, n: usize) -> Option<usize> {
 /// Por que não cabe outro painel: o máximo de lado a lado ou a largura da janela.
 pub(super) fn motivo_sem_lugar(abertos: usize) -> String {
     if abertos >= MAX_PAINEIS {
-        format!("Já há {abertos} lado a lado")
+        tr!("Já há {abertos} lado a lado", abertos = abertos).to_string()
     } else {
-        "Não cabe outro nesta largura".to_string()
+        tr!("Não cabe outro nesta largura").to_string()
     }
 }
 
@@ -371,7 +371,7 @@ impl FormaSoltura {
 impl RenderOnce for FormaSoltura {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let (icone_rotulo, texto, detalhe) = match &self.soltura {
-            Soltura::Arquivos => (Lucide::File, "Solte para anexar à mensagem", None),
+            Soltura::Arquivos => (Lucide::File, tr!("Solte para anexar à mensagem"), None),
             Soltura::Conversa(efeito, detalhe) => match efeito.rotulo() {
                 Some((i, t)) => (i, t, detalhe.clone()),
                 None => return div().into_any_element(),
@@ -457,7 +457,7 @@ impl Janela {
             TextareaState::new(window, cx)
                 .auto_grow(1, super::composer::LINHAS_CAIXA)
                 .submit_on_enter(true)
-                .placeholder("Mensagem")
+                .placeholder(tr!("Mensagem"))
         });
         self._assinaturas.push(cx.subscribe_in(
             &composer,
@@ -517,7 +517,7 @@ impl Janela {
         }));
         // A busca dentro da conversa (Ctrl+F): digitar refaz o índice no desenho seguinte, e o
         // Enter (com Shift, para trás) anda entre os achados sem sair do campo.
-        let busca_na_conversa = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar na conversa"));
+        let busca_na_conversa = cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Buscar na conversa")));
         self._assinaturas.push(cx.subscribe_in(
             &busca_na_conversa,
             window,
@@ -531,7 +531,7 @@ impl Janela {
             },
         ));
         // O histórico do cabeçalho: escolher um chat mostra ele neste painel, como uma aba.
-        let busca_historico = cx.new(|cx| ListaDeEscolha::new("Buscar chat", window, cx));
+        let busca_historico = cx.new(|cx| ListaDeEscolha::new(&tr!("Buscar chat"), window, cx));
         self._assinaturas.push(cx.subscribe_in(&busca_historico, window, move |this, _, evento: &EventoEscolha, window, cx| {
             this.escolheu_no_historico(id, evento, window, cx)
         }));
@@ -572,7 +572,7 @@ impl Janela {
             menu_dispensado: false,
             rolagem_menu: ScrollHandle::new(),
             foco_esforco: cx.focus_handle(),
-            busca_modelo: cx.new(|cx| ListaDeEscolha::new("Buscar modelo", window, cx)),
+            busca_modelo: cx.new(|cx| ListaDeEscolha::new(&tr!("Buscar modelo"), window, cx)),
             busca_historico,
             busca: super::busca_conversa::Busca::nova(busca_na_conversa),
             base_animacao: 0,
@@ -585,7 +585,7 @@ impl Janela {
             envios: 0,
             mostrar: super::mensagens::ITENS_NA_TELA,
             foco_faixa: cx.focus_handle(),
-            dica_caixa: "Mensagem".into(),
+            dica_caixa: tr!("Mensagem"),
             alvo: None,
             ancoras: Default::default(),
             novo_desde: None,
@@ -644,7 +644,7 @@ impl Janela {
                 Some((!m.sem_pasta(chat), tamanho, novidade, chat.itens.len()))
             })
             .unwrap_or((false, 0, None, 0));
-        let dica = "Mensagem";
+        let dica = tr!("Mensagem");
         // As menções do rascunho voltam como pílulas (dono, 16/11/2026).
         let pasta = novo.as_ref().and_then(|id| self.motor.as_ref()?.read(cx).chat(id).map(|c| c.cwd.clone()));
         let conteudo = match &pasta {
@@ -653,9 +653,9 @@ impl Janela {
         };
         painel.composer.update(cx, |c, cx| {
             c.set_value(conteudo, window, cx);
-            c.set_placeholder(dica, window, cx);
+            c.set_placeholder(dica.clone(), window, cx);
         });
-        painel.dica_caixa = dica.into();
+        painel.dica_caixa = dica;
         // Trocar de chat tira a oferta de continuar depois do Esc (item 6.2).
         if let (Some(antigo), Some(motor)) = (painel.chat.clone(), self.motor.clone()) {
             motor.update(cx, |m, _| m.esquecer_parada_por_voce(&antigo));
@@ -708,11 +708,11 @@ impl Janela {
                 (m.parou_por_voce(&chat), m.sugestao(&chat).map(str::to_string))
             };
             let dica: SharedString = if parou {
-                "O que fazer em vez disso? Enter continua".into()
+                tr!("O que fazer em vez disso? Enter continua")
             } else if let Some(sugestao) = sugestao {
                 format!("{sugestao}  ·  Tab").into()
             } else {
-                "Mensagem".into()
+                tr!("Mensagem")
             };
             if painel.dica_caixa != dica {
                 painel.dica_caixa = dica.clone();
@@ -849,9 +849,9 @@ impl Janela {
             self.selecionado = Some(chat);
         } else if !self.cabe_outro_painel() {
             let aviso = if self.paineis.len() >= MAX_PAINEIS {
-                format!("Cabem até {MAX_PAINEIS} conversas lado a lado; feche uma para abrir outra.")
+                tr!("Cabem até {max} conversas lado a lado; feche uma para abrir outra.", max = MAX_PAINEIS).to_string()
             } else {
-                "Não cabe outro painel nesta largura. Aumente a janela ou feche um painel.".into()
+                tr!("Não cabe outro painel nesta largura. Aumente a janela ou feche um painel.").to_string()
             };
             window.push_notification(aviso, cx);
         } else {
@@ -888,13 +888,13 @@ impl Janela {
             return;
         }
         if !self.cabe_outro_painel() {
-            window.push_notification("Não cabe outro painel para a segunda resposta. Aumente a janela ou feche um painel.", cx);
+            window.push_notification(tr!("Não cabe outro painel para a segunda resposta. Aumente a janela ou feche um painel."), cx);
             return;
         }
         let raia = match motor.update(cx, |m, cx| m.abrir_raia(&chat, &texto, cx)) {
             Ok(id) => id,
             Err(erro) => {
-                window.push_notification(super::componentes::aviso(super::componentes::Tom::Erro, format!("Não abriu a segunda resposta: {erro}")), cx);
+                window.push_notification(super::componentes::aviso(super::componentes::Tom::Erro, tr!("Não abriu a segunda resposta: {erro}", erro = erro)), cx);
                 return;
             }
         };
@@ -981,7 +981,7 @@ impl Janela {
             self.focar_composer(window, cx);
             return;
         }
-        window.push_notification(super::componentes::aviso(super::componentes::Tom::Info, "Nenhuma aba fechada para reabrir"), cx);
+        window.push_notification(super::componentes::aviso(super::componentes::Tom::Info, tr!("Nenhuma aba fechada para reabrir")), cx);
     }
 
     /// Ctrl+Shift+C: a última resposta do chat à vista vai para a área de transferência.
@@ -997,9 +997,9 @@ impl Janela {
         let aviso = match texto {
             Some(texto) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(texto));
-                "Última resposta copiada"
+                tr!("Última resposta copiada")
             }
-            None => "Este chat ainda não tem resposta para copiar",
+            None => tr!("Este chat ainda não tem resposta para copiar"),
         };
         window.push_notification(super::componentes::aviso(super::componentes::Tom::Info, aviso), cx);
     }
@@ -1118,21 +1118,21 @@ impl Janela {
             }
             AoFecharAAba::Pergunta => {
                 let (fraca, chat) = (cx.weak_entity(), chat.to_string());
-                let quem = if agentes == 1 { "o agente".to_string() } else { format!("os {agentes} agentes") };
+                let quem = if agentes == 1 { tr!("o agente") } else { tr!("os {n} agentes", n = agentes) };
                 let texto = if agentes > 0 {
-                    format!("Fechar esta aba para o turno e {quem} em segundo plano. O que parou fica em Esperando você, com o botão Retomar.")
+                    tr!("Fechar esta aba para o turno e {quem} em segundo plano. O que parou fica em Esperando você, com o botão Retomar.", quem = quem)
                 } else {
-                    "Fechar esta aba para o turno inteiro, com o que ele roda em segundo plano. O que parou fica em Esperando você, com o botão Retomar.".to_string()
+                    tr!("Fechar esta aba para o turno inteiro, com o que ele roda em segundo plano. O que parou fica em Esperando você, com o botão Retomar.")
                 };
                 super::componentes::confirmar(
                     super::componentes::Confirmacao {
                         tom: super::componentes::TomConfirmacao::Atencao,
                         icone: Lucide::TriangleAlert.into(),
-                        titulo: "Parar este chat?".into(),
+                        titulo: tr!("Parar este chat?"),
                         texto: texto.into(),
                         detalhes: Vec::new(),
-                        ok: "Fechar e parar".into(),
-                        cancelar: "Manter a aba".into(),
+                        ok: tr!("Fechar e parar"),
+                        cancelar: tr!("Manter a aba"),
                         ok_perigo: true,
                     },
                     move |window, cx| {

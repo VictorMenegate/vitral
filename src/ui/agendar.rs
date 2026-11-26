@@ -43,14 +43,14 @@ pub(super) fn itens_do_menu(menu: PopupMenu, dados: &DadosDoMenu) -> PopupMenu {
     menu.when_some(dados.renova, |menu, quando| {
         let hora = crate::modelo::hora_local(quando);
         menu.item(
-            PopupMenuItem::element(move |_, _| super::composer::rotulo_com_gatilho("Quando renovar", hora.clone()))
+            PopupMenuItem::element(move |_, _| super::composer::rotulo_com_gatilho(&tr!("Quando renovar"), hora.clone()))
                 .icon(Lucide::Clock)
                 .on_click(move |_, window, cx| {
                     let _ = janela.update(cx, |this, cx| this.enviar_agendada(painel, quando, window, cx));
                 }),
         )
     })
-    .item(PopupMenuItem::new("Agendar…").icon(Lucide::Clock).on_click(move |_, window, cx| {
+    .item(PopupMenuItem::new(tr!("Agendar…")).icon(Lucide::Clock).on_click(move |_, window, cx| {
         let _ = as_horas.update(cx, |this, cx| this.dialogo_mandar_as(painel, window, cx));
     }))
 }
@@ -94,7 +94,7 @@ pub(super) fn hora_pedida(texto: &str, agora: u64) -> Option<u64> {
 
 /// O selo da mensagem agendada na fila: "sai às 15:10", "sai em 19/11 às 08:00".
 pub(super) fn selo_da_hora(quando: u64) -> String {
-    format!("sai {}", quando_local(quando))
+    tr!("sai {quando}", quando = quando_local(quando)).to_string()
 }
 
 impl Janela {
@@ -111,7 +111,7 @@ impl Janela {
         if let Some(p) = self.paineis.iter_mut().find(|p| p.id == painel) {
             p.fila_aberta = true;
         }
-        let texto = format!("Mensagem agendada: {}. Ela espera na fila deste chat.", selo_da_hora(quando));
+        let texto = tr!("Mensagem agendada: {selo}. Ela espera na fila deste chat.", selo = selo_da_hora(quando));
         window.push_notification(aviso(Tom::Info, texto), cx);
         cx.notify();
     }
@@ -137,12 +137,12 @@ impl Janela {
             let vazio = campo.read(cx).value().trim().is_empty();
             let (no_botao, no_enter) = (agendar.clone(), agendar.clone());
             let nota = match lida {
-                Some(quando) => format!("A mensagem {} e espera na fila até lá, com o Vitral aberto.", selo_da_hora(quando)),
-                None if vazio => "Escreva a hora, como 15:10. Se ela já passou hoje, vale a de amanhã.".to_string(),
-                None => "Não entendi a hora. Escreva como 15:10 ou 15h.".to_string(),
+                Some(quando) => tr!("A mensagem {selo} e espera na fila até lá, com o Vitral aberto.", selo = selo_da_hora(quando)),
+                None if vazio => tr!("Escreva a hora, como 15:10. Se ela já passou hoje, vale a de amanhã."),
+                None => tr!("Não entendi a hora. Escreva como 15:10 ou 15h."),
             };
             moldura(dialogo, largura::P, window)
-                .title(topo(cabecalho("Mandar às…", None)))
+                .title(topo(cabecalho(tr!("Mandar às…"), None)))
                 .child(
                     v_flex()
                         .gap(esp::E8)
@@ -152,12 +152,12 @@ impl Janela {
                 .footer(
                     RodapeDialogo::new()
                         .cancelar(
-                            botao_fantasma("mandar-as-cancelar", None, "Cancelar", TamanhoBotao::Controle, window, cx)
+                            botao_fantasma("mandar-as-cancelar", None, tr!("Cancelar"), TamanhoBotao::Controle, window, cx)
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
                         .principal(
-                            botao_primario("mandar-as-agendar", None, "Agendar", TamanhoBotao::Controle, window, cx)
-                                .when(lida.is_none(), |b| b.disabled(true).opacity(0.45).tooltip("Escreva a hora"))
+                            botao_primario("mandar-as-agendar", None, tr!("Agendar"), TamanhoBotao::Controle, window, cx)
+                                .when(lida.is_none(), |b| b.disabled(true).opacity(0.45).tooltip(tr!("Escreva a hora")))
                                 .on_click(move |_, window, cx| {
                                     if no_botao(window, cx) {
                                         window.close_dialog(cx);

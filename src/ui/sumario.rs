@@ -86,7 +86,7 @@ pub(super) fn linhas_do_sumario(itens: &[Item]) -> Vec<LinhaDoSumario> {
             let Item::Usuario { texto, anexos, em, .. } = &itens[item] else { return None };
             let texto = match (comeco(texto), anexos.len()) {
                 (t, 0) if t.is_empty() => return None,
-                (t, n) if t.is_empty() => super::componentes::contagem(n, "anexo", "anexos"),
+                (t, n) if t.is_empty() => super::componentes::contagem(n, &tr!("anexo"), &tr!("anexos")),
                 (t, _) => t,
             };
             // O turno vai até a sua mensagem seguinte: a conta é a das chamadas desse pedaço.
@@ -379,14 +379,14 @@ impl Janela {
             }
             self.sumario.a_vista = marcada;
         }
-        let contagem = if termo.is_empty() { total.to_string() } else { format!("{} de {total}", linhas.len()) };
+        let contagem = if termo.is_empty() { total.to_string() } else { tr!("{feitos} de {total}", feitos = linhas.len(), total = total).to_string() };
         let vazio = linhas.is_empty().then(|| {
             div()
                 .px(esp::E8)
                 .py(esp::E4)
                 .text_size(r(12.5))
                 .text_color(Cores::tenue())
-                .child(format!("Nenhuma mensagem com “{}”", self.busca_sumario.read(cx).value().trim()))
+                .child(tr!("Nenhuma mensagem com “{termo}”", termo = self.busca_sumario.read(cx).value().trim()))
         });
         // A lista rola por dentro e a rolagem fica nela: no GPUI a roda vai a todo rolável embaixo
         // do ponteiro, e o painel do Este chat rolava junto com ela (dono, 26/11/2026: "melhora a
@@ -420,7 +420,7 @@ impl Janela {
             }))
             .child(super::componentes::campo_de_busca_pequeno("busca-do-sumario", &self.busca_sumario, window, cx));
         Some(super::este_chat::grupo_da_direita(
-            "Nesta conversa",
+            tr!("Nesta conversa"),
             Some(contagem),
             None,
             vec![busca.into_any_element(), lista.into_any_element()],

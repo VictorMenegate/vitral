@@ -69,21 +69,21 @@ fn linhas_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[
     let pasta_do_painel = a_vista.and_then(|id| motor.chat(id)).map(|c| c.cwd.clone());
     let linha = |grupo: Option<&'static str>, c: &Chat| {
         let quando = super::tempo_relativo(c.atualizado_em);
-        let quando = if quando == "agora" { quando } else { format!("há {quando}") };
+        let quando = if quando == crate::i18n::traduzir("agora") { quando } else { tr!("há {quando}", quando = quando).to_string() };
         let pasta = if motor.sem_pasta(c) {
-            Some("sem pasta".to_string())
+            Some(tr!("sem pasta").to_string())
         } else {
             (pasta_do_painel.as_ref() != Some(&c.cwd)).then(|| nome_da_pasta(&c.cwd))
         };
         // Textos curtos (Linear, 25/11/2026): "Aberto aqui", "No painel 2 · rodando".
         let rodando = motor.execucao(&c.id).rodando();
         let onde = if a_vista == Some(c.id.as_str()) {
-            "Aberto aqui · ".to_string()
+            tr!("Aberto aqui · ").to_string()
         } else {
             noutros
                 .iter()
                 .find(|(id, _)| *id == c.id)
-                .map(|(_, n)| if rodando { format!("No painel {n} · rodando · ") } else { format!("No painel {n} · ") })
+                .map(|(_, n)| if rodando { tr!("No painel {n} · rodando · ", n = n).to_string() } else { tr!("No painel {n} · ", n = n).to_string() })
                 .unwrap_or_default()
         };
         // O estado e o começo da última fala ("Terminou · Pronto, mandei as duas…"), com o quando.
@@ -169,7 +169,7 @@ fn grupos_que_casam(
             })
             .collect();
         if !itens.is_empty() {
-            grupos.push(GrupoDeEscolha { titulo: grupo.filter(|g| *g != GRUPO_DE_ACAO).map(Into::into), itens });
+            grupos.push(GrupoDeEscolha { titulo: grupo.filter(|g| *g != GRUPO_DE_ACAO).map(|g| SharedString::from(crate::i18n::traduzir(g))), itens });
         }
     }
     grupos
@@ -179,7 +179,7 @@ fn grupos_que_casam(
 /// min") e o começo da última fala, ou a pasta quando não há o que dizer.
 fn dica_da_aba(motor: &Motor, chat: &Chat) -> String {
     let quando = super::tempo_relativo(chat.atualizado_em);
-    let quando = if quando == "agora" { quando } else { format!("há {quando}") };
+    let quando = if quando == crate::i18n::traduzir("agora") { quando } else { tr!("há {quando}", quando = quando).to_string() };
     let estado = super::falas::estado_do_chat(motor, chat);
     let fala = super::falas::ultima_fala(chat).unwrap_or_default();
     let segunda = match (estado.is_empty(), fala.is_empty()) {
@@ -330,7 +330,7 @@ fn modelo_da_conversa(chat: &Chat) -> (String, Option<String>) {
 
 /// Onde a conversa está, em texto, para a dica da aba: a pasta ("~/Projetos/loja") ou "Sem pasta".
 fn pasta_em_texto(motor: &Motor, chat: &Chat) -> String {
-    if motor.sem_pasta(chat) { "Sem pasta".into() } else { com_til(&chat.cwd) }
+    if motor.sem_pasta(chat) { tr!("Sem pasta").to_string() } else { com_til(&chat.cwd) }
 }
 
 /// Clique de item de menu que mexe na janela.
@@ -380,7 +380,7 @@ fn menu_do_painel(
         let rotulo = estreito.then(|| {
             let modelo = modelo_da_conversa(chat).0;
             if chat.custo_usd > 0.0 {
-                format!("{} nesta conversa · {modelo}", formatar_custo(chat.custo_usd))
+                tr!("{custo} nesta conversa · {modelo}", custo = formatar_custo(chat.custo_usd), modelo = modelo).to_string()
             } else {
                 modelo
             }
@@ -406,7 +406,7 @@ fn menu_do_painel(
     // os chats", que esconde as ferramentas, continua na paleta como "Esconder ferramentas".
     menu = menu
         .item(
-            PopupMenuItem::new("Modo foco")
+            PopupMenuItem::new(tr!("Modo foco"))
                 .icon(Lucide::Focus)
                 .checked(d.foco)
                 .action(Box::new(super::AlternarFoco))
@@ -442,10 +442,10 @@ fn valor_do_uso(agente: crate::modelo::Agente, numero: Option<u32>, custo: &str)
 }
 
 /// A nota do rodapé do popover do contexto.
-fn nota_do_uso(agente: crate::modelo::Agente) -> &'static str {
+fn nota_do_uso(agente: crate::modelo::Agente) -> SharedString {
     match agente {
-        crate::modelo::Agente::Claude => "Custo estimado pelo preço da API; no plano, o que conta é o limite.",
-        _ => "Sem custo em dólar: no plano, o que conta é o limite.",
+        crate::modelo::Agente::Claude => tr!("Custo estimado pelo preço da API; no plano, o que conta é o limite."),
+        _ => tr!("Sem custo em dólar: no plano, o que conta é o limite."),
     }
 }
 
@@ -453,7 +453,7 @@ fn nota_do_uso(agente: crate::modelo::Agente) -> &'static str {
 /// US$ 1,84"); embaixo o modelo, a conta e os tokens; no rodapé a nota da estimativa e `acao` (o
 /// Compactar). `extras` são as linhas que outros módulos põem depois dos tokens (o último turno).
 pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, extras: Vec<AnyElement>, acao: AnyElement) -> CorpoPopover {
-    let linha = |rotulo: &'static str, valor: AnyElement| {
+    let linha = |rotulo: SharedString, valor: AnyElement| {
         h_flex()
             .h(r(28.))
             .gap(esp::E8)
@@ -475,19 +475,19 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, extras: Vec<AnyElement
         .min_w_0()
         .child(div().flex_none().child(modelo))
         .when_some(escolhido, |s, e| {
-            s.child(div().truncate().text_color(Cores::tenue()).child(format!(" · escolhido: {e}")))
+            s.child(div().truncate().text_color(Cores::tenue()).child(tr!(" · escolhido: {e}", e = e)))
         })
         .into_any_element();
     let escolha = motor.escolha_de_conta(chat);
     let conta = if escolha == contas::AUTOMATICA {
-        "Automática".to_string()
+        tr!("Automática").to_string()
     } else {
         motor
             .contas
             .iter()
             .find(|c| c.id == escolha)
             .map(|c| c.nome.clone())
-            .unwrap_or_else(|| "Principal".into())
+            .unwrap_or_else(|| tr!("Principal").to_string())
     };
     let contexto = chat
         .contexto
@@ -504,26 +504,26 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, extras: Vec<AnyElement
         h_flex()
             .gap(esp::E6)
             .child(Anel::new("uso-contexto", fracao).diametro(20.).cor(cor_da_faixa(fracao, Cores::destaque())).encher())
-            .child(div().truncate().child(format!(
-                "{} de {}",
-                composer::milhares(usados),
-                composer::milhares(janela)
+            .child(div().truncate().child(tr!(
+                "{usados} de {janela}",
+                usados = composer::milhares(usados),
+                janela = composer::milhares(janela)
             )))
             .into_any_element()
     });
     CorpoPopover::new(LarguraPopover::P320)
         .cabecalho(CabecalhoPopover::Escolha {
             simbolo,
-            titulo: "Contexto".into(),
+            titulo: tr!("Contexto"),
             valor: Some((valor.into(), Cores::forte())),
             dica: None,
         })
         .child(
             v_flex()
-                .child(linha("Modelo", modelo))
+                .child(linha(tr!("Modelo"), modelo))
                 // O Codex e o Gemini não têm conta no Vitral: a linha é só do Claude.
-                .when(chat.agente == crate::modelo::Agente::Claude, |s| s.child(linha("Conta", texto(format!("Claude · {conta}")))))
-                .when_some(tokens, |s, t| s.child(linha("Tokens", t)))
+                .when(chat.agente == crate::modelo::Agente::Claude, |s| s.child(linha(tr!("Conta"), texto(format!("Claude · {conta}")))))
+                .when_some(tokens, |s, t| s.child(linha(tr!("Tokens"), t)))
                 .children(extras),
         )
         .rodape(
@@ -882,7 +882,7 @@ impl Janela {
                 // em cima da caixa. Os dois agem no apertar, e não no clique: o apertar fora do
                 // texto desfaz a seleção, e a barra sumiria antes.
                 let responder = (ativo && self.trecho.is_some() && !self.segurando_trecho).then(|| {
-                    let botao = |id: &'static str, simbolo: Lucide, rotulo: &'static str| {
+                    let botao = |id: &'static str, simbolo: Lucide, rotulo: SharedString| {
                         h_flex()
                             .id((id, painel_id as usize))
                             .flex_none()
@@ -906,14 +906,14 @@ impl Janela {
                         .rounded(crate::tema::raio::cartao())
                         .bg(Cores::preto())
                         .occlude()
-                        .child(botao("responder-trecho", Lucide::Reply, "Responder").on_mouse_down(
+                        .child(botao("responder-trecho", Lucide::Reply, tr!("Responder")).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _, window, cx| {
                                 this.responder_ao_trecho(painel_id, window, cx);
                                 cx.stop_propagation();
                             }),
                         ))
-                        .child(botao("copiar-trecho", Lucide::Copy, "Copiar").on_mouse_down(
+                        .child(botao("copiar-trecho", Lucide::Copy, tr!("Copiar")).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _, window, cx| {
                                 if let Some(trecho) = this.trecho.take() {
@@ -994,8 +994,8 @@ impl Janela {
         let agente = pai.and_then(|c| agentes_do_chat(&c.itens, rodando, crate::modelo::agora()).into_iter().find(|a| a.id == sub.chamada));
         let espera = motor.subagentes_esperando(&sub.pai).contains(&sub.chamada);
         let (marca, estado) = match &agente {
-            Some(a) if espera => (ponto(a.estado), "Esperando a sua resposta".to_string()),
-            Some(a) if a.estado == Estado::Rodando => (ponto(a.estado), format!("Trabalhando · {}", meta_do_agente(a))),
+            Some(a) if espera => (ponto(a.estado), tr!("Esperando a sua resposta").to_string()),
+            Some(a) if a.estado == Estado::Rodando => (ponto(a.estado), tr!("Trabalhando · {tempo}", tempo = meta_do_agente(a)).to_string()),
             Some(a) => (ponto(a.estado), meta_do_agente(a)),
             None => (div().into_any_element(), String::new()),
         };
@@ -1006,7 +1006,7 @@ impl Janela {
             .metadado()
             .text_color(Cores::tenue())
             .child(marca)
-            .child(div().flex_none().child("Conversa do subagente, só leitura"))
+            .child(div().flex_none().child(tr!("Conversa do subagente, só leitura")))
             .when(!estado.is_empty(), |s| s.child(div().flex_none().text_color(Cores::apagado()).child("·")).child(div().min_w_0().truncate().child(estado)));
         v_flex()
             .flex_none()
@@ -1238,7 +1238,7 @@ impl Janela {
                     );
                 }
                 let aba = aba
-                    .fechar("Fechar a aba (a conversa continua na lista)", false, move |window, cx| {
+                    .fechar(tr!("Fechar a aba (a conversa continua na lista)"), false, move |window, cx| {
                         let _ = fechar.update(cx, |this, cx| this.fechar_aba_do_usuario(painel_id, &id_fechar, window, cx));
                     })
                     .construir(window, cx)
@@ -1323,9 +1323,9 @@ impl Janela {
             .tom(tom)
             .fechar(
                 if painel.abas.len() > 1 {
-                    "Fechar a aba (a conversa continua na lista)"
+                    tr!("Fechar a aba (a conversa continua na lista)")
                 } else {
-                    "Fechar este painel (a conversa continua na lista)"
+                    tr!("Fechar este painel (a conversa continua na lista)")
                 },
                 false,
                 {
@@ -1475,7 +1475,7 @@ impl Janela {
             .trigger(botao_icone(
                 ("historico-painel", painel_id as usize),
                 Lucide::Plus,
-                "Novo chat ou recentes",
+                tr!("Novo chat ou recentes"),
                 TamanhoBotao::Linha,
                 window,
                 cx,
@@ -1495,7 +1495,7 @@ impl Janela {
         let foco = lista.read(cx).focus_handle(cx);
         let janela = cx.entity().downgrade();
         let n = fora.len();
-        let dica = if n == 1 { "1 aba que não coube aqui".to_string() } else { format!("{n} abas que não couberam aqui") };
+        let dica = if n == 1 { tr!("1 aba que não coube aqui") } else { tr!("{n} abas que não couberam aqui", n = n) };
         let gatilho = botao_fantasma(("abas-fora", painel_id as usize), None, format!("+{n}"), TamanhoBotao::Barra, window, cx).tooltip(dica);
         sem_arrastar()
             .flex_none()
@@ -1557,10 +1557,10 @@ impl Janela {
                 LinhaDoHistorico {
                     grupo: Some(GRUPO_DE_ACAO),
                     chave: NOVO_CHAT_NO_PAINEL.into(),
-                    titulo: "Novo chat".into(),
+                    titulo: tr!("Novo chat").to_string(),
                     descricao: String::new(),
                     sinal: None,
-                    termos: "novo chat criar conversa".into(),
+                    termos: tr!("novo chat criar conversa").to_string(),
                 },
             );
         }
@@ -1750,15 +1750,15 @@ impl Janela {
     }
 
     fn sem_conversa(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
-        let vazio = EstadoVazio::new(Lucide::MessageSquarePlus, "Comece um chat")
-            .texto("Cada chat trabalha direto numa pasta do seu computador, como o Claude Code. Sem pasta, ele ganha uma vazia só dele.")
+        let vazio = EstadoVazio::new(Lucide::MessageSquarePlus, tr!("Comece um chat"))
+            .texto(tr!("Cada chat trabalha direto numa pasta do seu computador, como o Claude Code. Sem pasta, ele ganha uma vazia só dele."))
             .acao(
-                botao_primario("comecar", Some(Lucide::Plus.into()), "Novo chat", TamanhoBotao::Controle, window, cx)
-                    .tooltip_with_action("Novo chat", &NovaConversa, None)
+                botao_primario("comecar", Some(Lucide::Plus.into()), tr!("Novo chat"), TamanhoBotao::Controle, window, cx)
+                    .tooltip_with_action(tr!("Novo chat"), &NovaConversa, None)
                     .on_click(cx.listener(|this, _, window, cx| this.novo_chat_direto(window, cx))),
             )
             .acao(
-                botao_fantasma("outra-pasta-vazio", Some(Lucide::FolderOpen.into()), "Em outra pasta…", TamanhoBotao::Controle, window, cx)
+                botao_fantasma("outra-pasta-vazio", Some(Lucide::FolderOpen.into()), tr!("Em outra pasta…"), TamanhoBotao::Controle, window, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.dialogo_nova_conversa(window, cx))),
             );
         v_flex().flex_1().items_center().justify_center().p(esp::E32).child(vazio.amplo())
@@ -1774,11 +1774,11 @@ pub(super) enum Direita {
 
 impl Direita {
     /// O item do "⋯" quando o botão sai do cabeçalho.
-    fn no_menu(self) -> &'static str {
+    fn no_menu(self) -> SharedString {
         match self {
             // Curtos (Linear, 25/11/2026): o visto ao lado já diz se está à vista.
-            Direita::Arquivo => "Arquivo aberto",
-            Direita::EsteChat => "Este chat",
+            Direita::Arquivo => tr!("Arquivo aberto"),
+            Direita::EsteChat => tr!("Este chat"),
         }
     }
 }

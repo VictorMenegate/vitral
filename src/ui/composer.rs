@@ -337,9 +337,9 @@ pub(super) fn menu_sugestoes(itens: Vec<Sugestao>, digitado: &str, limite: Optio
 fn rotulo_da_origem(origem: &crate::claude::Origem) -> Option<String> {
     use crate::claude::Origem;
     match origem {
-        Origem::Projeto => Some("projeto".into()),
-        Origem::Pessoal => Some("pessoal".into()),
-        Origem::Plugin(nome) => Some(format!("plugin {nome}")),
+        Origem::Projeto => Some(tr!("projeto").to_string()),
+        Origem::Pessoal => Some(tr!("pessoal").to_string()),
+        Origem::Plugin(nome) => Some(tr!("plugin {nome}", nome = nome).to_string()),
         Origem::Sincronizada => Some("claude.ai".into()),
         Origem::Embutida | Origem::Desconhecida => None,
     }
@@ -347,7 +347,7 @@ fn rotulo_da_origem(origem: &crate::claude::Origem) -> Option<String> {
 
 /// A sugestão do menu "/" para um comando ou skill do catálogo.
 pub(super) fn sugestao_do_comando(c: &crate::claude::ComandoOferecido) -> Sugestao {
-    let detalhe = descricao_comando(&c.nome).map(str::to_string).or_else(|| Some(c.descricao.clone()).filter(|d| !d.is_empty()));
+    let detalhe = descricao_comando(&c.nome).map(|d| d.to_string()).or_else(|| Some(c.descricao.clone()).filter(|d| !d.is_empty()));
     Sugestao {
         valor: format!("/{}", c.nome),
         titulo: format!("/{}", c.nome),
@@ -517,10 +517,10 @@ fn indice_esforco(valor: &str) -> usize {
 }
 
 /// Nomes dos níveis no segmentado: na faixa estreita, "Máximo" não cabe no segmento.
-fn nomes_dos_niveis(estreita: bool) -> [&'static str; 6] {
-    let mut nomes = ESFORCOS.map(|(_, n)| n);
+fn nomes_dos_niveis(estreita: bool) -> [String; 6] {
+    let mut nomes = ESFORCOS.map(|(_, n)| crate::i18n::traduzir(n).into_owned());
     if estreita {
-        nomes[5] = "Máx";
+        nomes[5] = tr!("Máx").to_string();
     }
     nomes
 }
@@ -633,16 +633,20 @@ pub(super) fn uso_do_contexto(usados: u64, janela: Option<u64>, modelo: Option<&
 /// "120 mil" (ou "1 milhão", para a janela de 1M).
 pub(super) fn milhares(n: u64) -> String {
     match n {
-        1_000_000 => "1 milhão".into(),
-        n if n > 1_000_000 && n % 1_000_000 == 0 => format!("{} milhões", n / 1_000_000),
-        n => format!("{} mil", n / 1000),
+        1_000_000 => tr!("1 milhão").to_string(),
+        n if n > 1_000_000 && n % 1_000_000 == 0 => tr!("{n} milhões", n = n / 1_000_000).to_string(),
+        n => tr!("{n} mil", n = n / 1000).to_string(),
     }
 }
 
 /// "200 mil tokens", "1 milhão de tokens".
 pub(super) fn tokens(n: u64) -> String {
     let quantia = milhares(n);
-    if quantia.ends_with("mil") { format!("{quantia} tokens") } else { format!("{quantia} de tokens") }
+    if n >= 1_000_000 && n % 1_000_000 == 0 {
+        tr!("{quantia} de tokens", quantia = quantia).to_string()
+    } else {
+        tr!("{quantia} tokens", quantia = quantia).to_string()
+    }
 }
 
 /// Onde começa o texto da caixa, da borda de fora dela: a moldura (1 de borda e 2 de folga), a
@@ -732,21 +736,21 @@ pub(super) fn enter_no_turno(motor: &Motor, chat: &str) -> Enter {
 
 /// A dica do Enviar com o chat trabalhando: o que o Enter vai fazer com a mensagem. `reforco`: o
 /// Ultrathink ou o Ultracode ligado na caixa, que valem para o turno inteiro.
-fn dica_do_enviar(enter: Enter, reforco: bool) -> &'static str {
+fn dica_do_enviar(enter: Enter, reforco: bool) -> SharedString {
     match enter {
-        Enter::Fila => "Enviar\nEntra na fila: este turno não recebe mensagem agora",
-        _ if reforco => "Enviar\nO Ultrathink e o Ultracode valem para o turno inteiro: esta espera a vez na fila",
-        Enter::Dirige => "Enviar\nEntra no turno que está rodando, sem pará-lo\nCtrl+Enter manda depois, na fila",
-        Enter::RespondePedido(1) => "Enviar\nNega o pedido aberto e manda isto ao Claude como resposta\nCtrl+Enter manda depois, na fila",
-        Enter::RespondePedido(_) => "Enviar\nNega os pedidos abertos e manda isto ao Claude como resposta\nCtrl+Enter manda depois, na fila",
-        Enter::RespondePergunta => "Enviar\nResponde à pergunta com isto, sem escolher opção\nCtrl+Enter manda depois, na fila",
+        Enter::Fila => tr!("Enviar\nEntra na fila: este turno não recebe mensagem agora"),
+        _ if reforco => tr!("Enviar\nO Ultrathink e o Ultracode valem para o turno inteiro: esta espera a vez na fila"),
+        Enter::Dirige => tr!("Enviar\nEntra no turno que está rodando, sem pará-lo\nCtrl+Enter manda depois, na fila"),
+        Enter::RespondePedido(1) => tr!("Enviar\nNega o pedido aberto e manda isto ao Claude como resposta\nCtrl+Enter manda depois, na fila"),
+        Enter::RespondePedido(_) => tr!("Enviar\nNega os pedidos abertos e manda isto ao Claude como resposta\nCtrl+Enter manda depois, na fila"),
+        Enter::RespondePergunta => tr!("Enviar\nResponde à pergunta com isto, sem escolher opção\nCtrl+Enter manda depois, na fila"),
     }
 }
 
 /// A dica do Enviar com "Enter vai para a fila": o Enter espera a vez, o Ctrl+Enter entra no turno.
-fn dica_do_enviar_na_fila(enter: Enter) -> Option<&'static str> {
+fn dica_do_enviar_na_fila(enter: Enter) -> Option<SharedString> {
     matches!(enter, Enter::Dirige).then_some(
-        "Enviar\nVai para a fila e espera este turno acabar\nCtrl+Enter entra no turno que está rodando, sem pará-lo",
+        tr!("Enviar\nVai para a fila e espera este turno acabar\nCtrl+Enter entra no turno que está rodando, sem pará-lo"),
     )
 }
 
@@ -1164,15 +1168,15 @@ impl Janela {
                 }
             }
         };
-        let dica_parar = "Parar esta conversa";
-        let principal = |icone: Option<Lucide>, dica: &'static str| {
+        let dica_parar = tr!("Parar esta conversa");
+        let principal = |icone: Option<Lucide>, dica: SharedString| {
             // O enviar (e o parar), o par do "+" da lista.
             BotaoRedondo::new(("enviar", painel as usize), icone.map(Into::into), dica)
                 .variante(VarianteRedonda::Primario)
                 .diametro(grande)
                 .pulso(envios)
         };
-        let enviar = |dica: &'static str| {
+        let enviar = |dica: SharedString| {
             principal(Some(Lucide::ArrowUp), dica)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.ativar_painel(painel, cx);
@@ -1194,16 +1198,16 @@ impl Janela {
             None => dica_do_enviar(enter, reforco),
         };
         match envio(b.rodando, vazio) {
-            Envio::Vazio => vec![principal(Some(Lucide::ArrowUp), "Escreva uma mensagem").vazio(true).into_any_element()],
-            Envio::Enviar => vec![enviar("Enviar")],
+            Envio::Vazio => vec![principal(Some(Lucide::ArrowUp), tr!("Escreva uma mensagem")).vazio(true).into_any_element()],
+            Envio::Enviar => vec![enviar(tr!("Enviar"))],
             Envio::Parar => vec![
-                principal(None, dica_parar)
+                principal(None, dica_parar.clone())
                     .dica_acao(Box::new(PararTurno), Some("Caixa"))
                     .on_click(parar())
                     .into_any_element(),
             ],
             Envio::PararEEnviar => vec![
-                BotaoRedondo::new(("parar", painel as usize), None, dica_parar)
+                BotaoRedondo::new(("parar", painel as usize), None, dica_parar.clone())
                     .variante(VarianteRedonda::Neutro)
                     .diametro(pequeno)
                     .dica_acao(Box::new(PararTurno), Some("Caixa"))
@@ -1236,8 +1240,8 @@ impl Janela {
         let barra = Anel::new(("anel-contexto", b.painel as usize), fracao).diametro(14.).espessura(2.).inteiro().cor(cor_arco);
         let cor_numero = if cor_arco == Cores::destaque_texto() { Cores::tenue() } else { cor_arco };
         // O Codex e o Gemini não dizem o custo: o popover mostra os tokens.
-        let o_que_abre = if chat.agente == crate::modelo::Agente::Claude { "O custo, o modelo e o Compactar" } else { "Os tokens, o modelo e o Compactar" };
-        let dica: SharedString = format!("Contexto: {} de {}\n{o_que_abre}", milhares(usados), tokens(janela)).into();
+        let o_que_abre = if chat.agente == crate::modelo::Agente::Claude { tr!("O custo, o modelo e o Compactar") } else { tr!("Os tokens, o modelo e o Compactar") };
+        let dica: SharedString = tr!("Contexto: {usados} de {janela}\n{o_que_abre}", usados = milhares(usados), janela = tokens(janela), o_que_abre = o_que_abre);
         // O anel de 14 e a porcentagem em 12, com 5 entre eles e 4 dos lados (protótipo Linear).
         let _ = estreita;
         let gatilho = Button::new(("contexto", b.painel as usize))
@@ -1269,12 +1273,12 @@ impl Janela {
                     let compactar = botao_fantasma(
                         ("compactar", painel as usize),
                         Some(Lucide::Minimize.into()),
-                        "Compactar a conversa",
+                        tr!("Compactar a conversa"),
                         TamanhoBotao::Barra,
                         window,
                         cx,
                     )
-                    .tooltip(DICA_DO_COMPACTAR)
+                    .tooltip(SharedString::from(crate::i18n::traduzir(DICA_DO_COMPACTAR)))
                     .on_click(move |_, window, cx| {
                         if let Some(pop) = pop.upgrade() {
                             pop.update(cx, |p, cx| p.dismiss(window, cx));
@@ -1339,12 +1343,12 @@ impl Janela {
                         h_flex()
                             .gap(esp::E4)
                             .child(super::mensagens::icone_de(Lucide::MessageSquareQuote, 11.).text_color(Cores::destaque_texto()))
-                            .child(div().etiqueta().text_color(Cores::destaque_texto()).child("Respondendo a")),
+                            .child(div().etiqueta().text_color(Cores::destaque_texto()).child(tr!("Respondendo a"))),
                     )
                     .child(div().min_w_0().line_clamp(2).text_ellipsis().corpo_ui().text_color(Cores::tenue()).child(trecho.to_string())),
             )
             .child(
-                BotaoRedondo::new(SharedString::from(format!("tirar-citacao-{chat}")), Some(Lucide::X.into()), "Tirar a citação")
+                BotaoRedondo::new(SharedString::from(format!("tirar-citacao-{chat}")), Some(Lucide::X.into()), tr!("Tirar a citação"))
                     .variante(VarianteRedonda::Plano)
                     .diametro(24.)
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1617,10 +1621,10 @@ impl Janela {
                             .flex_none()
                             .metadado()
                             .text_color(Cores::tenue())
-                            .child(lido.tamanho.map(|t| t.to_string()).unwrap_or_else(|| "sumiu".into())),
+                            .child(lido.tamanho.map(|t| t.to_string()).unwrap_or_else(|| tr!("sumiu").to_string())),
                     ))
                     .child(
-                        BotaoRedondo::new(("tirar-anexo", i), Some(Lucide::X.into()), "Remover o anexo")
+                        BotaoRedondo::new(("tirar-anexo", i), Some(Lucide::X.into()), tr!("Remover o anexo"))
                             .variante(VarianteRedonda::Plano)
                             .diametro(24.)
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -1669,7 +1673,7 @@ impl Janela {
                     lista.push(Sugestao {
                         valor: format!("@{nome}"),
                         titulo: format!("@{nome}"),
-                        detalhe: Some(format!("Só o {} responde a esta mensagem", agente.nome())),
+                        detalhe: Some(tr!("Só o {agente} responde a esta mensagem", agente = agente.nome()).to_string()),
                         chave: nome.clone(),
                         busca: nome,
                         ..Sugestao::default()
@@ -1678,7 +1682,7 @@ impl Janela {
             }
         }
         let Some((arquivos, pastas)) = self.arquivos_e_pastas_lidos(&chat.cwd).filter(|_| !self.lendo_arquivos(&chat.cwd)) else {
-            lista.push(Sugestao { titulo: "Lendo a pasta…".into(), ..Sugestao::default() });
+            lista.push(Sugestao { titulo: tr!("Lendo a pasta…").to_string(), ..Sugestao::default() });
             return lista;
         };
         // O arquivo aberto à direita, se é deste chat, vem antes dos outros.
@@ -1832,7 +1836,7 @@ impl Janela {
         let marcado = self.paineis[ix].indice_menu.min(lista.len().saturating_sub(1));
         match lista.get(marcado).and_then(|s| s.arquivo.clone()) {
             Some(arquivo) => self.abrir_arquivo_da_skill(&arquivo, window, cx),
-            None => self.avisar_na_estreita(painel, "Este comando não tem arquivo para abrir".to_string(), window, cx),
+            None => self.avisar_na_estreita(painel, tr!("Este comando não tem arquivo para abrir").to_string(), window, cx),
         }
     }
 
@@ -1915,7 +1919,7 @@ impl Janela {
                                         .text_color(Cores::tenue())
                                         .hover(|s| s.bg(Cores::hover()).text_color(Cores::texto()))
                                         .child(super::mensagens::icone_de(Lucide::ScrollText, 14.))
-                                        .dica_no_ponteiro(|window, cx| Tooltip::new("Ver o arquivo da skill (Ctrl+O)").build(window, cx))
+                                        .dica_no_ponteiro(|window, cx| Tooltip::new(tr!("Ver o arquivo da skill (Ctrl+O)")).build(window, cx))
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.abrir_arquivo_da_skill(&arquivo, window, cx);
                                             cx.stop_propagation();
@@ -2084,7 +2088,7 @@ impl Janela {
         if let Some(atual) = atual {
             let proximo = proximo_modo(&atual);
             motor.update(cx, |m, cx| m.mudar_chat(chat, |c| c.permissao = Some(proximo.into()), cx));
-            self.avisar_na_estreita(painel, format!("Modo: {}", nome_do_modo(proximo)), window, cx);
+            self.avisar_na_estreita(painel, tr!("Modo: {modo}", modo = crate::i18n::traduzir(nome_do_modo(proximo))).to_string(), window, cx);
         }
     }
 
@@ -2103,7 +2107,7 @@ impl Janela {
             files: true,
             directories: false,
             multiple: true,
-            prompt: Some("Anexar".into()),
+            prompt: Some(tr!("Anexar")),
         });
         cx.spawn_in(window, async move |this, cx| {
             if let Ok(Ok(Some(caminhos))) = escolha.await {
@@ -2144,22 +2148,22 @@ fn comandos_fora_do_claude(chat: &Chat) -> Option<Vec<String>> {
     Some(lista)
 }
 
-fn descricao_comando(comando: &str) -> Option<&'static str> {
+fn descricao_comando(comando: &str) -> Option<SharedString> {
     Some(match comando {
-        "clear" => "Começa uma sessão nova (o agente esquece a conversa)",
-        "conta" => "Troca a conta deste chat (/conta nome ou padrão)",
-        "compact" => "Resume a conversa para liberar contexto",
-        "context" => "Mostra o uso do contexto",
-        "usage" => "Uso do plano",
-        "init" => "Cria o CLAUDE.md do projeto",
-        "review" => "Revisa as mudanças",
-        "security-review" => "Revisão de segurança das mudanças",
-        "simplify" => "Simplifica o código alterado",
-        "model" => "Troca o modelo",
-        "effort" => "Troca o esforço",
-        "code-review" => "Revisão de código",
-        "debug" => "Ajuda a depurar",
-        "verify" => "Verifica o trabalho",
+        "clear" => tr!("Começa uma sessão nova (o agente esquece a conversa)"),
+        "conta" => tr!("Troca a conta deste chat (/conta nome ou padrão)"),
+        "compact" => tr!("Resume a conversa para liberar contexto"),
+        "context" => tr!("Mostra o uso do contexto"),
+        "usage" => tr!("Uso do plano"),
+        "init" => tr!("Cria o CLAUDE.md do projeto"),
+        "review" => tr!("Revisa as mudanças"),
+        "security-review" => tr!("Revisão de segurança das mudanças"),
+        "simplify" => tr!("Simplifica o código alterado"),
+        "model" => tr!("Troca o modelo"),
+        "effort" => tr!("Troca o esforço"),
+        "code-review" => tr!("Revisão de código"),
+        "debug" => tr!("Ajuda a depurar"),
+        "verify" => tr!("Verifica o trabalho"),
         _ => return None,
     })
 }
@@ -2167,7 +2171,7 @@ fn descricao_comando(comando: &str) -> Option<&'static str> {
 /// Uma regra de "permitir sempre" como aparece no menu do modo.
 fn descricao_regra(regra: &str) -> String {
     if regra == "edicoes" {
-        return "Edições de arquivos neste chat".into();
+        return tr!("Edições de arquivos neste chat").to_string();
     }
     if let Some(comando) = regra.strip_prefix("bash:") {
         let linha = comando.lines().next().unwrap_or_default();
@@ -2301,7 +2305,7 @@ fn proximo_modo(atual: &str) -> &'static str {
 fn rotulo_modelo(escolhido: &str, em_uso: Option<&str>) -> String {
     let em_uso = em_uso.filter(|m| !m.is_empty()).map(nome_curto_modelo);
     if escolhido.is_empty() {
-        return em_uso.unwrap_or_else(|| "Padrão".into());
+        return em_uso.unwrap_or_else(|| tr!("Padrão").to_string());
     }
     match MODELOS.iter().find(|(v, _)| *v == escolhido) {
         Some((_, nome)) => em_uso
