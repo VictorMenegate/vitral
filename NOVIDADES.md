@@ -3,6 +3,32 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.12.0
+
+Seis agentes novos, o Vitral em inglês e espanhol, as Tarefas no lugar do Quadro de ideias e
+várias contas do Codex.
+
+- **Agentes novos.** GitHub Copilot CLI, Cursor Agent, OpenCode, Qwen Code, Kimi Code e Grok
+  Build, pelo mesmo protocolo do Gemini (o ACP). Cada um aparece no seletor de modelo quando está
+  instalado, e se instala e entra por Configurações, Agentes, ou pelo passo IAs da tela inicial.
+- **Línguas.** Português, inglês e espanhol, em Configurações, Aparência, e logo na tela inicial;
+  sem escolha, segue a língua do sistema. O agente também passa a responder na língua escolhida.
+- **Tarefas.** O Quadro de ideias virou Tarefas, no lugar das conversas (Ctrl+I): as ideias e todos
+  os chats, cada um na raia do estado dele (esperando você, trabalhando, para ver, feitas), com
+  busca, filtros e o parar, arquivar e permitir no próprio cartão.
+- **Contas.** Várias contas do Codex, cada uma com o login dela; o `/conta` troca a conta de um
+  chat do Claude ou do Codex; e a conta escolhida à mão também passa sozinha para outra no limite.
+- **Revisão.** Dá para escolher qual IA revisa e com que modelo.
+- **Configurações e início.** As IAs juntas em Agentes, cada uma com o Instalar (o Claude Code
+  também); o menu do logo sem os Instalar; e a tela inicial com o passo IAs e mais opções.
+- **Menus, fila e animações.** Os menus no desenho novo (o "…" da caixa em Anexar, Mandar e
+  Conversa; o modelo numa linha com a marca), a fila redesenhada, diálogos sem a borda clara, o
+  escolhido que desliza na lista e nas Configurações, e os tempos das animações do desenho.
+- **Windows.** Colar o print da tela funciona (ele chegava como BMP e era descartado), e caminhos
+  com barra invertida viram link.
+- **Consertos.** O "Pensando" não aparece mais duas vezes, só uma barra de ações por vez, e o
+  pedido de um subagente não encolhe mais no mapa de agentes.
+
 ## 0.11.2
 
 Bem mais fluido com um chat trabalhando, e os ramos e a dupla de agentes mais firmes.

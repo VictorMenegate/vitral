@@ -5,6 +5,32 @@ The five most recent versions, translated into English. Earlier versions are in
 button names are quoted as they appear in the app, which is in Portuguese for now, with the English
 meaning in parentheses on first use.
 
+## 0.12.0
+
+Six new agents, Vitral in English and Spanish, Tasks in place of the ideas board, and several Codex
+accounts.
+
+- **New agents.** GitHub Copilot CLI, Cursor Agent, OpenCode, Qwen Code, Kimi Code and Grok Build,
+  over the same protocol as Gemini (ACP). Each one shows up in the model picker when installed, and
+  is installed and signed in from Settings, Agents, or from the AIs step of the welcome screen.
+- **Languages.** Portuguese, English and Spanish, in Settings, Appearance, and right on the welcome
+  screen; with no choice, it follows the system language. The agent also answers in the chosen
+  language.
+- **Tasks.** The ideas board became Tasks, shown in place of the chats (Ctrl+I): the ideas and every
+  chat, each in the lane of its state (waiting for you, working, to review, done), with search,
+  filters, and stop, archive and allow right on the card.
+- **Accounts.** Several Codex accounts, each with its own sign-in; `/conta` switches the account of
+  a Claude or Codex chat; and an account picked by hand also moves to another one at the limit.
+- **Review.** You can pick which AI reviews and with which model.
+- **Settings and welcome.** The AIs together under Agents, each with Install (Claude Code too); the
+  logo menu without the Install items; and the welcome screen with the AIs step and more options.
+- **Menus, queue and motion.** Menus in the new design, a redesigned queue, dialogs without the
+  light border, the selection that slides in the list and in Settings, and the prototype's timings.
+- **Windows.** Pasting a screenshot works (it came in as BMP and was dropped), and backslash paths
+  become links.
+- **Fixes.** "Pensando" (Thinking) no longer shows twice, one action bar at a time, and a subagent's
+  request no longer shrinks in the agents map.
+
 ## 0.11.2
 
 Much smoother with a chat working, and branches and the agent pair are more solid.
@@ -88,53 +114,3 @@ field.
   again under the message field, on the status line, and there is no loose line above the box
   anymore. They keep the click that lists and stops each command, the subagent list that opens each
   one's conversation, and the changes that open "Este chat".
-
-## 0.10.2
-
-Codex is now almost as complete as Claude in Vitral: it asks for permission mid-turn through the
-same card, has `/compact`, `/review` and skills in the "/" menu, shows context, tokens and steps,
-and can fix a message or continue from here in another chat without a summary. The diff gained
-per-line comments, the "/" menu shows everything, and there are new shortcuts to move between
-messages, maximize the pane, move tabs and archive.
-
-- **Shortcuts to move and organize.** Alt+Up and Alt+Down jump to your previous and next message;
-  PgUp and PgDn scroll the conversation (in a box with text they still belong to the text).
-  Ctrl+Shift+Enter maximizes the pane and goes back (Esc also goes back), Alt+PgUp and Alt+PgDn
-  move the tab to the neighboring pane, Alt+Shift+PgUp and Alt+Shift+PgDn open a pane beside it
-  with the tab, and Ctrl+Alt+A archives the pane's chat, with Ctrl+Z undoing while the notice is on
-  screen. All of them are in Atalhos do teclado (Keyboard shortcuts) and in the palette.
-- **Mark as unread.** The chat menu brings back the blue dot, and it stays until you open the chat
-  again.
-- **Search in the conversation no longer sits under the rings.** With the pane against the right
-  edge of the window, the Ctrl+F bar leaves room for the usage rings, whether there are one, two,
-  three or none.
-- **Per-line comment in the diff.** In the agent's edit, click a line's margin and write the
-  comment. They accumulate, stay marked on the lines, and **Enviar comentários (N)** (Send comments)
-  sends all of them to the agent at once, with the file and line of each.
-- **Pasting HTML becomes Markdown.** What you copy from a browser or document enters the box with
-  links, lists, bold and code; Ctrl+Z goes back to plain text. On Linux with Wayland.
-- **The "/" menu shows everything.** All commands and skills in a scrolling list, each with its
-  description, argument hint, skill badge and origin; the icon (or Ctrl+O) opens the skill file on
-  the right, and the best matches for what you typed come first.
-- **"@" and "/" where the cursor is.** The menu opens for the word you are on, not only the last
-  one, and completes there. A path with spaces goes in quotes.
-- **Narrow box with the model name.** With three panes side by side, the chip shows "Opus" or
-  "Fable", and mode and effort keep only the icon.
-- **Unused pasted images clean themselves up.** On start, Vitral deletes pasted images that no
-  conversation, queue or draft uses and that have been idle for more than a day.
-- **Codex asks for permission.** In the Manual, Aceitar edições (Accept edits), Planejar (Plan) and
-  Automático (Automatic) modes, Codex asks mid-turn through the same card as Claude, with the full
-  command or the file diff, Negar (Deny) and Permitir (Allow). Before, those modes became only its
-  sandbox. "Permitir sempre" (Always allow) applies to Codex too, and Accept edits lets edits inside
-  the folder through.
-- **Slash commands in Codex.** `/compact` summarizes the Codex conversation (also through Compactar),
-  `/review` asks for a review of the changes (or of whatever is written after it), and the Codex
-  skills in the folder show up in the "/" menu.
-- **Codex context and tokens.** The context meter also appears in a Codex chat, with the model's
-  window, and the "Trabalhou" (Worked) line says how many tokens the turn used. Codex does not report
-  the cost in dollars, so the popover shows only context and tokens.
-- **Codex steps.** The plan Codex keeps appears like Claude's steps: the "1/3" pill above the box
-  and the lines in the trail.
-- **Fix and continue from here in Codex, without a summary.** Fixing a message or continuing the
-  conversation in another chat takes Codex exactly to the chosen point, as it already did with
-  Claude, instead of starting a new conversation with a summary of the last messages.
