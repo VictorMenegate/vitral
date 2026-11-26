@@ -3,6 +3,38 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.11.0
+
+O Vitral ganhou cara nova, chapada e mais limpa, no jeito do Linear. As cores do tema agora são
+suas, o .md abre como uma página que se edita no lugar, e a primeira abertura ficou num cartão só.
+
+- **Visual novo.** A lista com a busca e o "+" no alto e as seções com título; a barra de baixo
+  com o uso de cada agente, o contexto, a Revisão, as Arquivadas e os Avisos; abas, caixa de
+  mensagem, menus e Configurações redesenhados, com textos mais curtos. As larguras padrão da
+  lista e do painel da direita ficaram menores.
+- **Modo foco (Ctrl+.).** Só as conversas na tela, com o uso flutuando num canto, arrastável. O
+  clique duplo na aba maximiza o painel.
+- **Cores do tema.** Em Configurações › Aparência › Cores: temas prontos (Grafite, Noite,
+  Violeta, Floresta, Brasa e Oceano), destaque, fundo e contraste, cores próprias da lista,
+  bordas finas e Importar/Copiar o tema. O metal e o logo seguem a cor do destaque.
+- **Fundo animado.** Smoke, Mesh drift ou desligado, nas cores do tema ou nas da receita. Anda
+  quando um chat está trabalhando.
+- **Página do .md.** O .md abre como página de blocos: um clique edita o bloco, "/" escolhe o
+  tipo, "# " e "- " viram título e lista, a alça põe um bloco embaixo e arrasta, e a seleção tem
+  negrito, itálico, código, Mencionar e Copiar. Grava sozinho, e o que não foi mexido volta ao
+  arquivo como estava.
+- **Painel da direita.** Este chat em grupos, a aba Arquivos com a árvore da pasta e as marcas
+  do git, Mudanças | Arquivo com as linhas iguais dobradas e vários arquivos abertos em abas.
+- **Menção de um trecho.** Selecione um pedaço do código e mencione só ele na conversa.
+- **Revisão com mais opções.** Quando revisar, o mínimo de linhas, pular em Planejar, o foco
+  do revisor, as suas instruções e mandar o achado ao agente sozinho.
+- **Primeira abertura nova**, num cartão com os passos no alto.
+- **Saíram** os Perfis de agente e o "Enquanto você esteve fora". As Contas moram agora em
+  Configurações › Claude Code.
+- **Correções.** A revisão cortada ao fechar o Vitral não volta pela metade; o texto do editor
+  de arquivo é gravado inteiro ao fechar; a barra de ações das mensagens deixou de ficar por
+  baixo do texto de baixo.
+
 ## 0.10.3
 
 O Codex e o Gemini ganharam nas Configurações o mesmo cuidado do Claude Code: dá para instalar,
