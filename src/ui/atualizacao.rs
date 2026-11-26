@@ -228,7 +228,7 @@ pub(super) fn grupo(v: &Vista, trabalhando: usize, estreito: bool, window: &Wind
                 "O Vitral procura no GitHub a cada 6 h, confere a assinatura antes de instalar e nunca reinicia \
                  sozinho: a versão nova vale quando você reiniciar.",
             )
-            .descricao("Vale para o app todo."),
+            .info("Vale para o app todo."),
         modo,
     ));
     let (procurada, proxima) = v.horas();
@@ -254,7 +254,7 @@ pub(super) fn grupo(v: &Vista, trabalhando: usize, estreito: bool, window: &Wind
     let mexendo = matches!(v.estado, Estado::Baixando { .. } | Estado::Instalando { .. } | Estado::Pronta(_));
     if let Some(volta) = v.volta.as_ref().filter(|_| !mexendo) {
         let rotulo = format!("Voltar para a {}…", volta.para);
-        let botao = botao_fantasma("cfg-voltar", Some(Lucide::RotateCcw.into()), rotulo, TamanhoBotao::Barra, window, cx);
+        let botao = botao_fantasma("cfg-voltar", None, rotulo, TamanhoBotao::Caixa, window, cx).h(r(26.));
         let linha = LinhaDeOpcao::new("cfg-voltar", "Versão anterior");
         grupo = grupo.linha(if volta.le_o_disco {
             let (de, para) = (v.versao.clone(), volta.para.clone());
@@ -282,36 +282,36 @@ fn controles(v: &Vista, window: &Window, cx: &App) -> AnyElement {
         _ => None,
     };
     let novidades = novidade.filter(|_| com_novidades).map(|n| {
-        botao_fantasma("cfg-novidades", None, "Novidades", TamanhoBotao::Barra, window, cx).on_click(move |_, window, cx| {
+        botao_fantasma("cfg-novidades", None, "Novidades", TamanhoBotao::Caixa, window, cx).h(r(26.)).bg(Cores::preto()).on_click(move |_, window, cx| {
             let (notas, pagina) = notas_e_pagina(&n, cx);
             abrir_novidades(&n.versao, notas, pagina, window, cx)
         })
     });
     let principal: Option<Button> = match botao {
         Botao::Procurar { ocupado } => Some(
-            botao_fantasma("cfg-procurar", Some(Lucide::RefreshCw.into()), "Procurar agora", TamanhoBotao::Barra, window, cx)
-                .bg(Cores::recuo())
+            botao_fantasma("cfg-procurar", None, "Procurar agora", TamanhoBotao::Caixa, window, cx).h(r(26.))
+                .bg(Cores::preto())
                 .when(ocupado, |b| b.disabled(true))
                 .on_click(|_, _, cx| atualizacao::procurar_agora(cx)),
         ),
         Botao::Instalar => Some(
-            botao_primario("cfg-instalar", Some(Lucide::Download.into()), "Instalar", TamanhoBotao::Barra, window, cx)
+            botao_primario("cfg-instalar", None, "Instalar", TamanhoBotao::Caixa, window, cx).h(r(26.))
                 .on_click(|_, _, cx| atualizacao::instalar_agora(cx)),
         ),
         Botao::InstalarComoApp(versao) => Some(
-            botao_primario("cfg-instalar", Some(Lucide::Download.into()), format!("Instalar a {versao} como app"), TamanhoBotao::Barra, window, cx)
+            botao_primario("cfg-instalar", None, format!("Instalar a {versao} como app"), TamanhoBotao::Caixa, window, cx).h(r(26.))
                 .on_click(|_, _, cx| atualizacao::instalar_agora(cx)),
         ),
         Botao::Baixar(url) => Some(
-            botao_primario("cfg-baixar", Some(Lucide::Download.into()), "Baixar", TamanhoBotao::Barra, window, cx)
+            botao_primario("cfg-baixar", None, "Baixar", TamanhoBotao::Caixa, window, cx).h(r(26.))
                 .on_click(move |_, _, cx| cx.open_url(&url)),
         ),
         Botao::Pagina(url) => Some(
-            botao_fantasma("cfg-pagina", Some(Lucide::ExternalLink.into()), "Abrir a página", TamanhoBotao::Barra, window, cx)
+            botao_fantasma("cfg-pagina", None, "Abrir a página", TamanhoBotao::Caixa, window, cx).h(r(26.))
                 .on_click(move |_, _, cx| cx.open_url(&url)),
         ),
         Botao::Reiniciar => Some(
-            botao_primario("cfg-reiniciar", Some(Lucide::RotateCw.into()), "Reiniciar", TamanhoBotao::Barra, window, cx)
+            botao_primario("cfg-reiniciar", None, "Reiniciar", TamanhoBotao::Caixa, window, cx).h(r(26.))
                 .on_click(|_, window, cx| reiniciar_pela_janela(window, cx)),
         ),
         Botao::Nenhum => None,

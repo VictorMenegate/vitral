@@ -113,6 +113,8 @@ impl Janela {
         if botoes.is_empty() {
             return None;
         }
+        let desloca = self.deslocamento_trilho;
+        let arrastando = self.arrasto_trilho.is_some();
         Some(
             div()
                 .absolute()
@@ -120,15 +122,26 @@ impl Janela {
                 .top(r(USO_DO_TOPO))
                 // Os dois numa peça só, a cápsula opaca de fio fino e sombra curta: eram duas moedas
             // soltas por cima da conversa (dono, 18/11/2026: "melhora o design dessa parte").
+            // No Linear (25/11/2026) ela se arrasta para qualquer lugar (o modo foco é onde ela
+            // aparece) e fica onde foi deixada.
             .child(
                 v_flex()
+                    .id("trilho-de-uso")
+                    .relative()
+                    .left(desloca.x)
+                    .top(desloca.y)
                     .p(esp::E4)
                     .gap(esp::E4)
                     .rounded(crate::tema::raio::de(DIAMETRO_NO_CANTO + 8.))
-                    .bg(Cores::cartao_opaco())
-                    .border_1()
-                    .border_color(Cores::borda())
-                    .shadow(crate::tema::sombra_elevado())
+                    .bg(Cores::preto())
+                    .cursor(if arrastando { CursorStyle::ClosedHand } else { CursorStyle::OpenHand })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                            this.arrasto_trilho = Some((ev.position, this.deslocamento_trilho));
+                            cx.notify();
+                        }),
+                    )
                     .children(botoes),
             )
                 .into_any_element(),
@@ -343,9 +356,25 @@ struct Leitura {
     bloqueado: bool,
     apagado: bool,
     atencao: bool,
+    /// No limite, quando volta (segundos): o "até 12:30" da pílula da barra de baixo.
+    volta: Option<u64>,
 }
 
 impl Leitura {
+    /// O número curto da pílula da barra de baixo: "42%", "até 12:30" no limite, "–" sem leitura.
+    fn curto(&self) -> String {
+        if self.bloqueado {
+            return match self.volta {
+                Some(v) => format!("até {}", crate::modelo::no_fuso_local(v as i64).format("%H:%M")),
+                None => "no limite".to_string(),
+            };
+        }
+        match self.fora.or(self.dentro) {
+            Some(f) => format!("{}%", porcentagem(f)),
+            None => "–".to_string(),
+        }
+    }
+
     /// Há o que mostrar: o serviço instalado e algum uso lido.
     fn em_uso(&self) -> bool {
         !self.apagado && (self.fora.is_some() || self.dentro.is_some())
@@ -386,6 +415,7 @@ fn leitura_claude(uso: &Uso, conta: Option<&Conta>, automatica: bool, volta: Opt
         bloqueado: uso.bloqueado,
         apagado: false,
         atencao: estoura.is_some(),
+        volta,
     }
 }
 
@@ -401,6 +431,7 @@ fn leitura_codex(codex: Option<&Codex>, lido: bool) -> Leitura {
         bloqueado: false,
         apagado,
         atencao: false,
+        volta: None,
     };
     let Some(codex) = codex else {
         return so_dica(
@@ -419,6 +450,7 @@ fn leitura_codex(codex: Option<&Codex>, lido: bool) -> Leitura {
                 bloqueado: uso.bloqueado,
                 apagado: false,
                 atencao: false,
+                volta: None,
             };
         }
         if codex.sem_limites {
@@ -433,6 +465,7 @@ fn leitura_codex(codex: Option<&Codex>, lido: bool) -> Leitura {
         bloqueado: uso.bloqueado,
         apagado: false,
         atencao: false,
+        volta: None,
     }
 }
 
@@ -441,7 +474,7 @@ fn leitura_codex(codex: Option<&Codex>, lido: bool) -> Leitura {
 fn leitura_gemini(uso: Option<&UsoGemini>) -> Leitura {
     let nome = Marca::Gemini.nome();
     let Some(uso) = uso else {
-        return Leitura { fora: None, dentro: None, dica: format!("{nome} · sem leitura da cota"), selo: None, bloqueado: false, apagado: true, atencao: false };
+        return Leitura { fora: None, dentro: None, dica: format!("{nome} · sem leitura da cota"), selo: None, bloqueado: false, apagado: true, atencao: false, volta: None };
     };
     let (gemini, outros) = (uso.do_gemini(), uso.dos_outros());
     let parte = |g: &GrupoDoGemini| g.fracao.map(|f| format!("{} {}%", g.nome, porcentagem(f)));
@@ -454,6 +487,7 @@ fn leitura_gemini(uso: Option<&UsoGemini>) -> Leitura {
         bloqueado: uso.bloqueado(),
         apagado: false,
         atencao: false,
+        volta: None,
     }
 }
 
@@ -1363,5 +1397,170 @@ mod testes {
         let renovado = junto.juntar(Uso::default(), 6000);
         assert_eq!(renovado.cinco_horas, Some(0.0));
         assert_eq!(renovado.semana, Some(0.38));
+    }
+}
+
+impl Janela {
+    /// O uso na barra de baixo (Linear, 25/11/2026): cada agente numa pílula com o anel, o nome e
+    /// o número curto ("Claude 42%", "Codex até 12:30"); o popover é o mesmo do canto e abre para
+    /// cima. Os mesmos agentes que os anéis do canto mostrariam.
+    pub(super) fn pilulas_de_uso(&self, cx: &Context<Self>) -> Vec<AnyElement> {
+        let Some(motor) = self.motor.clone() else {
+            return Vec::new();
+        };
+        let janela = cx.entity().downgrade();
+        let (claude, codex, gemini, [com_claude, com_codex, com_gemini]) = {
+            let m = motor.read(cx);
+            let conta = m.conta_padrao();
+            let varias = (m.contas.len() > 1).then_some(&conta);
+            (
+                leitura_claude(
+                    &m.uso_da_conta(&conta.id),
+                    varias,
+                    m.config.conta == contas::AUTOMATICA,
+                    m.limite_vence(&conta.id),
+                    m.previsao_da_conta(&conta.id).cinco_horas.estoura(),
+                ),
+                leitura_codex(m.codex.as_ref(), m.codex_lido),
+                leitura_gemini(m.gemini.as_ref()),
+                {
+                    let (claude, codex) =
+                        aneis_a_mostrar(m.claude_conectado(), m.codex_conectado(), &leitura_codex(m.codex.as_ref(), m.codex_lido));
+                    crate::opcoes::aneis_escolhidos(
+                        [claude, codex, leitura_gemini(m.gemini.as_ref()).em_uso()],
+                        [m.config.anel_claude, m.config.anel_codex, m.config.anel_gemini],
+                    )
+                },
+            )
+        };
+        let mut pilulas = Vec::new();
+        for (marca, leitura, mostrar) in [(Marca::Claude, claude, com_claude), (Marca::Codex, codex, com_codex), (Marca::Gemini, gemini, com_gemini)] {
+            if mostrar {
+                pilulas.push(popover_pilula(marca, leitura, motor.clone(), janela.clone()).into_any_element());
+            }
+        }
+        pilulas
+    }
+
+    /// "Limite até 12:30" quando o agente está no limite do plano (o grupo Revisão do Este chat).
+    pub(super) fn limite_do_agente(&self, agente: crate::modelo::Agente, cx: &App) -> Option<String> {
+        let m = self.motor.as_ref()?.read(cx);
+        let leitura = match agente {
+            crate::modelo::Agente::Claude => {
+                let conta = m.conta_padrao();
+                leitura_claude(&m.uso_da_conta(&conta.id), None, false, m.limite_vence(&conta.id), None)
+            }
+            crate::modelo::Agente::Codex => leitura_codex(m.codex.as_ref(), m.codex_lido),
+            crate::modelo::Agente::Gemini => leitura_gemini(m.gemini.as_ref()),
+        };
+        leitura.bloqueado.then(|| match leitura.curto() {
+            c if c.starts_with("até") => format!("Limite {c}"),
+            _ => "No limite do plano".to_string(),
+        })
+    }
+
+    /// O contexto do chat aberto na barra de baixo: o anel e "Contexto 50%".
+    pub(super) fn pilula_do_contexto(&self, m: &Motor, window: &Window) -> Option<AnyElement> {
+        let chat = self.selecionado.as_deref().and_then(|id| m.chat(id))?;
+        let usados = chat.contexto?;
+        let (fracao, numero, janela) = super::composer::uso_do_contexto(usados, chat.janela, chat.modelo_atual.as_deref());
+        let dica: SharedString = format!("Contexto do chat aberto: {} de {}", super::composer::milhares(usados), super::composer::tokens(janela)).into();
+        let _ = window;
+        Some(
+            h_flex()
+                .id("barra-contexto")
+                .flex_none()
+                .h(r(24.))
+                // A pílula do protótipo Linear (25/11/2026): no preto, 8 e 10 dos lados, 7 entre
+                // as partes.
+                .pl(esp::E8)
+                .pr(crate::tema::linear::USO_DIREITA)
+                .gap(crate::tema::linear::USO_VAO)
+                .rounded(crate::tema::raio::de(24.))
+                .text_size(r(12.))
+                .bg(Cores::preto())
+                .hover(|s| s.bg(Cores::preto().blend(Cores::forte().opacity(0.05))))
+                .child(Anel::new("barra-contexto-anel", fracao).diametro(14.).espessura(2.).inteiro().cor(Cores::destaque_texto()))
+                .child(div().text_color(Cores::texto_da_fala()).child("Contexto"))
+                .child(div().tabular().text_color(Cores::tenue()).child(format!("{numero}%")))
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                .into_any_element(),
+        )
+    }
+}
+
+/// A pílula de uso da barra de baixo e o popover com os detalhes, que abre para cima.
+fn popover_pilula(marca: Marca, leitura: Leitura, motor: Entity<Motor>, janela: WeakEntity<Janela>) -> impl IntoElement + use<> {
+    popover(("uso-pilula-popover", marca as usize))
+        .anchor(Anchor::BottomLeft)
+        .offset(px(8.))
+        .trigger(PilulaDeUso { marca, leitura, aberto: false })
+        .content(move |_, window, cx| {
+            let popover = cx.entity();
+            if marca == Marca::Claude {
+                vigiar_uso(&motor, window, cx);
+            }
+            let teto = window.viewport_size().height - px(120.);
+            div()
+                .id("uso-pilula-rolagem")
+                .max_h(teto)
+                .overflow_y_scroll()
+                .child(detalhes(marca, motor.clone(), janela.clone(), popover, window, cx))
+        })
+}
+
+#[derive(IntoElement)]
+struct PilulaDeUso {
+    marca: Marca,
+    leitura: Leitura,
+    aberto: bool,
+}
+
+impl Selectable for PilulaDeUso {
+    fn selected(mut self, selected: bool) -> Self {
+        self.aberto = selected;
+        self
+    }
+
+    fn is_selected(&self) -> bool {
+        self.aberto
+    }
+}
+
+impl RenderOnce for PilulaDeUso {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let l = self.leitura;
+        let curto = l.curto();
+        let dica = SharedString::from(l.dica.clone());
+        let id = self.marca as usize;
+        h_flex()
+            .id(("uso-pilula", id))
+            .flex_none()
+            .h(r(24.))
+            // A pílula do protótipo Linear (25/11/2026): no preto, 8 e 10 dos lados, 7 entre as
+            // partes.
+            .pl(esp::E8)
+            .pr(crate::tema::linear::USO_DIREITA)
+            .gap(crate::tema::linear::USO_VAO)
+            .rounded(crate::tema::raio::de(24.))
+            .cursor_pointer()
+            .text_size(r(12.))
+            .bg(Cores::preto())
+            .when(self.aberto, |s| s.bg(Cores::preto().blend(Cores::forte().opacity(0.10))))
+            .when(!self.aberto, |s| {
+                s.hover(|s| s.bg(Cores::preto().blend(Cores::forte().opacity(0.05))))
+                    .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+            })
+            .child(
+                AnelDeUso::new(("uso-pilula-anel", id), self.marca, l.fora.map(|f| f as f32))
+                    .semana(l.dentro.map(|f| f as f32))
+                    .diametro(14.)
+                    .sem_marca()
+                    .bloqueado(l.bloqueado)
+                    .apagado(l.apagado)
+                    .atencao(l.atencao),
+            )
+            .child(div().text_color(Cores::texto_da_fala()).child(self.marca.nome()))
+            .child(div().tabular().text_color(if l.bloqueado { Cores::ambar() } else { Cores::tenue() }).child(curto))
     }
 }

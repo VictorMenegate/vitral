@@ -126,6 +126,24 @@ pub fn entrar<E: IntoElement + Styled + 'static>(el: E, id: impl Into<ElementId>
     el.with_animation(id, animacao(ENTRAR, Curva::Entrar), move |el, t| de.aplicar(el, t))
 }
 
+/// Como o `entrar`, começando `atraso` depois de montar: as linhas de uma lista entram uma depois
+/// da outra (a tela inicial: 80 ms e mais 45 por linha, como no protótipo).
+pub fn entrar_depois<E: IntoElement + Styled + 'static>(el: E, id: impl Into<ElementId>, de: De, atraso: Duration) -> AnimationElement<E> {
+    let total = atraso + ENTRAR;
+    let espera = atraso.as_secs_f32() / total.as_secs_f32();
+    let quadro = Duration::from_secs_f32(1. / QPS);
+    el.with_animation(id, Animation::new(total.saturating_sub(quadro).max(quadro)).with_max_fps(QPS), move |el, t| {
+        let u = ((t - espera) / (1. - espera)).clamp(0., 1.);
+        de.aplicar(el, Curva::Entrar.aplicar(u))
+    })
+}
+
+/// A saída de algo que vai sumir (a tela inicial no "Começar"): a opacidade de 1 a 0 em 160 ms, a
+/// partir do primeiro desenho com este `id`. Quem some espera esse tempo para tirar o elemento.
+pub fn sair<E: IntoElement + Styled + 'static>(el: E, id: impl Into<ElementId>) -> AnimationElement<E> {
+    el.with_animation(id, animacao(ENTRAR, Curva::Sair), |el, t| el.opacity(1. - t))
+}
+
 /// A abertura de uma gaveta por cima da conversa: o progresso de 0 a 1 em 180 ms, uma vez por
 /// `id` (que leva a geração da abertura, para tocar de novo só na próxima). A gaveta entra pelo
 /// `deslizar_gaveta`, e o véu atrás vai junto, pelo mesmo progresso. Fechar é seco; com o
@@ -740,8 +758,7 @@ pub fn escolher_animacoes(escolha: Animacoes, cx: &mut App) {
     .detach();
 }
 
-/// A escolha "seguir o sistema" e o aviso dela nas Configurações.
-pub const SEGUIR_O_SISTEMA: &str = if cfg!(windows) { "Seguir o Windows" } else { "Seguir o GNOME" };
+/// O aviso da escolha "Do sistema" nas Configurações, com o sistema sem animações.
 pub const SISTEMA_SEM_ANIMACOES: &str = if cfg!(windows) {
     "O Windows está sem os efeitos de animação: tudo aparece pronto."
 } else {

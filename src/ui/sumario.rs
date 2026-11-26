@@ -18,12 +18,11 @@ use gpui_kit::*;
 
 use super::{
     Janela,
-    componentes::Reflexo as _,
     mensagens::{AlvoDeAbertura, Ancora},
 };
 use crate::{
     modelo::{Chat, Item},
-    tema::{Cores, FONTE_MONO, Tipo as _, dentro_da_borda, esp, r, raio},
+    tema::{Cores, FONTE_MONO, esp, linear, r, raio},
 };
 
 /// Até quantas letras do começo da mensagem a linha guarda (a tela mostra duas linhas dela).
@@ -289,7 +288,9 @@ impl Janela {
         let mut filho_da_marcada = None;
         for (n, linha) in linhas.iter().enumerate() {
             if com_dias && let Some((_, dia)) = dias.iter().find(|(posicao, _)| *posicao == n) {
-                filhos.push(div().flex_none().px(esp::E6).pt(esp::E6).metadado().text_color(Cores::apagado()).child(dia.clone()).into_any_element());
+                filhos.push(
+                    div().flex_none().px(esp::E8).pt(esp::E6).text_size(r(11.)).text_color(Cores::apagado()).child(dia.clone()).into_any_element(),
+                );
             }
             let lida = a_vista == Some(linha.item);
             if lida {
@@ -297,25 +298,30 @@ impl Janela {
             }
             let quando = if linha.em == 0 { String::new() } else { crate::modelo::hora_local(linha.em) };
             let (chat_id, item) = (chat.id.clone(), linha.item);
+            // A linha do protótipo Linear (25/11/2026): a hora em mono e a mensagem em 12,5, em
+            // até duas linhas; a que está à vista na conversa na cor cheia do escolhido.
             let filho = div()
                 .id(("linha-do-sumario", n))
                 .relative()
                 .flex()
                 .flex_none()
                 .items_start()
-                .gap(esp::E8)
-                .px(esp::E6)
-                .py(esp::E4)
+                .gap(linear::PASSO_VAO)
+                .px(esp::E8)
+                .py(linear::CAIXA_BAIXO)
                 .rounded(raio::CONTROLE)
                 .cursor_pointer()
+                .text_size(r(12.5))
+                .line_height(r(16.))
+                .font_weight(FontWeight::MEDIUM)
                 .when(lida, |s| s.bg(Cores::selecao()))
                 .when(!lida, |s| s.hover(|s| s.bg(Cores::hover())))
                 .child(
                     div()
                         .flex_none()
-                        .w(r(44.))
+                        .w(r(36.))
                         .font_family(FONTE_MONO)
-                        .metadado()
+                        .text_size(r(11.5))
                         .text_color(if lida { Cores::texto() } else { Cores::tenue() })
                         .child(quando),
                 )
@@ -325,8 +331,8 @@ impl Janela {
                         .min_w_0()
                         .flex()
                         .flex_col()
-                        .child(div().corpo_ui().line_clamp(2).text_color(if lida { Cores::forte() } else { Cores::texto() }).child(linha.texto.clone()))
-                        .when(!linha.fez.is_empty(), |s| s.child(div().metadado().text_color(Cores::tenue()).child(linha.fez.clone()))),
+                        .child(div().line_clamp(2).text_color(if lida { Cores::forte() } else { Cores::texto_da_fala() }).child(linha.texto.clone()))
+                        .when(!linha.fez.is_empty(), |s| s.child(div().text_size(r(11.)).text_color(Cores::tenue()).child(linha.fez.clone()))),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| this.ir_a_mensagem_do_sumario(&chat_id, item, cx)));
             filhos.push(filho.into_any_element());
@@ -339,40 +345,20 @@ impl Janela {
             }
             self.sumario.a_vista = marcada;
         }
-        let titulo = div()
-            .flex()
-            .items_center()
-            .gap(esp::E6)
-            .child(div().rotulo().text_color(Cores::forte()).child("Nesta conversa"))
-            .child(div().font_family(FONTE_MONO).metadado().text_color(Cores::apagado()).child(linhas.len().to_string()));
-        Some(
+        let n = linhas.len();
+        let lista = div().relative().child(
             div()
+                .id("lista-do-sumario")
+                .max_h(r(ALTURA_DA_LISTA))
+                .overflow_y_scroll()
+                .track_scroll(&self.sumario.rolagem)
                 .flex()
                 .flex_col()
-                .gap(esp::E8)
-                .p(dentro_da_borda(12.))
-                .rounded(raio::CARTAO)
-                .bg(Cores::cartao_elevado())
-                .border_1()
-                .border_color(Cores::linha())
-                .reflexo(raio::cartao())
-                .child(titulo)
-                .child(
-                    div().relative().child(
-                        div()
-                            .id("lista-do-sumario")
-                            .max_h(r(ALTURA_DA_LISTA))
-                            .overflow_y_scroll()
-                            .track_scroll(&self.sumario.rolagem)
-                            .flex()
-                            .flex_col()
-                            .gap(esp::E2)
-                            .children(filhos)
-                            .vertical_scrollbar(&self.sumario.rolagem),
-                    ),
-                )
-                .into_any_element(),
-        )
+                .gap(linear::GRUPO_LINHAS)
+                .children(filhos)
+                .vertical_scrollbar(&self.sumario.rolagem),
+        );
+        Some(super::este_chat::grupo_da_direita("Nesta conversa", Some(n.to_string()), None, vec![lista.into_any_element()]))
     }
 }
 

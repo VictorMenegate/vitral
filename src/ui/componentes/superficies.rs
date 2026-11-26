@@ -22,7 +22,6 @@ use super::controles::{TamanhoBotao, botao_fantasma, botao_primario, variante_fa
 use super::dialogo::{RodapeDialogo, largura::ALERTA};
 use super::estado::Selo;
 use super::graficos::fio_de_pontos;
-use super::metal::{Encaixe, abertura};
 use super::textos::etiqueta_de_secao;
 use crate::tema::{
     Cores, FONTE_MONO, Lucide, Tipo as _, aresta_de_poco, aresta_de_tecla, aresta_de_vidro, dentro_da_borda, esp,
@@ -315,22 +314,7 @@ impl RenderOnce for CorpoPopover {
     }
 }
 
-/// A placa de metal: um recorte da chapa enchendo o pai (`relative`), debaixo do véu de placa
-/// (em cima dele só `forte` e `texto`), com a aresta de tecla por cima (luz em cima, sombra
-/// embaixo: a placa fica em relevo, sem linha divisória). `raio_de_cima`: os cantos de cima, os
-/// da peça onde ela encosta; os de baixo ficam retos. Vai como primeiro filho.
-pub fn placa_de_metal(raio_de_cima: Pixels) -> Div {
-    let cantos = Corners { top_left: raio_de_cima, top_right: raio_de_cima, ..Corners::default() };
-    div()
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-        .child(abertura(Encaixe::Cobrir, Some(Cores::veu_de_placa()), cantos))
-        .child(div().absolute().top_0().left_0().size_full().rounded_t(raio_de_cima).shadow(aresta_de_tecla()))
-}
-
-/// O cabeçalho de objeto na placa de metal: 52 de altura e 16 dos lados, colado no topo e nas
+/// O cabeçalho de objeto (chapado desde o Linear; era na placa de metal): 52 de altura e 16 dos lados, colado no topo e nas
 /// laterais do menu (o `Static` do kit sangra até a casca), com os cantos de cima do menu.
 fn placa_de_cabecalho(simbolo: Option<AnyElement>, nome: SharedString, detalhe: Option<SharedString>) -> Div {
     div()
@@ -339,7 +323,7 @@ fn placa_de_cabecalho(simbolo: Option<AnyElement>, nome: SharedString, detalhe: 
         .items_center()
         .h(r(52.))
         .px(esp::E16)
-        .child(placa_de_metal(raio::peca() - px(1.)))
+        // Chapado (Linear, 25/11/2026): sem a placa de metal; o cabeçalho é só a linha.
         .child(linha_objeto(simbolo, nome, detalhe, true))
 }
 
@@ -444,15 +428,9 @@ pub fn ficha_de_metal(altura: f32) -> Div {
 
 /// A mesma ficha com o raio dado.
 pub fn ficha_do_escolhido(raio: Pixels) -> Div {
-    div()
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-        .rounded(raio)
-        .shadow(crate::tema::sombra_elevado())
-        .child(abertura(Encaixe::Cobrir, Some(Cores::veu_de_placa()), Corners::all(raio)))
-        .child(div().absolute().top_0().left_0().size_full().rounded(raio).shadow(aresta_de_tecla()))
+    // Linear (25/11/2026): chapada, a cor cheia do escolhido (a mesma da lista, da aba aberta e do
+    // seu balão), sem o metal, a sombra e a aresta de tecla de antes.
+    div().absolute().top_0().left_0().size_full().rounded(raio).bg(Cores::selecao())
 }
 
 /// Marca o item de `altura` como escolhido (o visto à direita) e, se for, põe a ficha de metal

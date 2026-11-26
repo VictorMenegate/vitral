@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use gpui::{
     Anchor, AnyElement, App, ElementId, Entity, FocusHandle, Focusable, Hsla,
     InteractiveElement as _, IntoElement, ParentElement, RenderOnce, SharedString,
@@ -66,6 +68,9 @@ pub struct ColorPicker {
     /// Draws the trigger as a framed field, see [`ColorSelect`].
     field: bool,
     placeholder: Option<SharedString>,
+    /// Vitral: o gatilho desenhado por quem usa (recebe a cor de agora e se o seletor está aberto),
+    /// no lugar do quadradinho.
+    gatilho: Option<Rc<dyn Fn(Option<Hsla>, bool) -> AnyElement>>,
 }
 
 impl ColorPicker {
@@ -83,7 +88,14 @@ impl ColorPicker {
             anchor: Anchor::TopLeft,
             field: false,
             placeholder: None,
+            gatilho: None,
         }
+    }
+
+    /// Vitral: desenha o gatilho com `desenhar(cor, aberto)`; ocupa a largura do seletor.
+    pub fn gatilho(mut self, desenhar: impl Fn(Option<Hsla>, bool) -> AnyElement + 'static) -> Self {
+        self.gatilho = Some(Rc::new(desenhar));
+        self
     }
 
     /// Set the featured colors to be displayed in the color picker.
@@ -501,13 +513,18 @@ impl RenderOnce for ColorPicker {
                 Popover::new("popover")
                     .open(open)
                     .w_72()
+                    // Vitral: a âncora escolhida (a original guardava e não usava).
+                    .anchor(self.anchor)
                     .on_open_change(move |open: &bool, _, cx| {
                         popover_state.update(cx, |state, cx| state.set_open(*open, cx));
                     })
-                    .when(self.field, |this| {
+                    .when(self.field || self.gatilho.is_some(), |this| {
                         this.trigger_style(StyleRefinement::default().w_full())
                     })
-                    .trigger(ColorPickerButton {
+                    .when_some(self.gatilho.clone(), |this, desenhar| {
+                        this.trigger(GatilhoProprio { value, selected: open, desenhar })
+                    })
+                    .when(self.gatilho.is_none(), |this| this.trigger(ColorPickerButton {
                         id: "trigger".into(),
                         size: self.size,
                         label: self.label.clone(),
@@ -522,7 +539,7 @@ impl RenderOnce for ColorPicker {
                         field: self.field,
                         focused,
                         placeholder: self.placeholder.clone(),
-                    })
+                    }))
                     // The popover drops its content while closed, so building the
                     // palette swatches or slider tracks then is wasted work.
                     .when(open, |this| this.child(self.render_colors(window, cx))),
@@ -721,6 +738,31 @@ mod tests {
         cx.update(|window, cx| window.draw(cx).clear(cx));
         let open = cx.update(|_, cx| view.read(cx).state.read(cx).is_open());
         assert!(open, "the whole field is the trigger, like a Select");
+    }
+}
+
+/// Vitral: o gatilho de quem usa (`ColorPicker::gatilho`).
+#[derive(IntoElement)]
+struct GatilhoProprio {
+    value: Option<Hsla>,
+    selected: bool,
+    desenhar: Rc<dyn Fn(Option<Hsla>, bool) -> AnyElement>,
+}
+
+impl Selectable for GatilhoProprio {
+    fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    fn is_selected(&self) -> bool {
+        self.selected
+    }
+}
+
+impl RenderOnce for GatilhoProprio {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        div().id("trigger").w_full().child((self.desenhar)(self.value, self.selected))
     }
 }
 

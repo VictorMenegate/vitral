@@ -37,7 +37,7 @@ use super::{
     busca_conversa::{AchadoAnterior, AchadoSeguinte},
     componentes::{
         ControleSegmentado, EstadoVazio, Flutuante as _, Reflexo as _, Segmento, TamanhoBotao, Tom, aviso, botao_fantasma,
-        botao_icone, campo_de_busca, contagem,
+        botao_icone, campo_de_busca,
     },
     edicao::{Edicao, Fileira, Marca, Vista},
     editor_arquivo::Conflito,
@@ -45,7 +45,7 @@ use super::{
 };
 use crate::{
     motor::Motor,
-    tema::{Cores, FONTE_MONO, Lucide, Tipo as _, altura, esp, r, raio},
+    tema::{Cores, FONTE_MONO, Lucide, Tipo as _, altura, esp, linear, r, raio},
 };
 
 // Ctrl+F com o foco no painel do arquivo, o Esc que fecha a barra e o Ctrl+S do editor.
@@ -206,6 +206,28 @@ enum Conteudo {
     Codigo(Rc<Vec<SharedString>>, usize),
     /// Imagem: desenhada, e não "arquivo binário".
     Imagem,
+}
+
+/// O segmentado das fileiras de baixo do nome (Mudanças | Arquivo, Página | Fonte): 28 no preto.
+fn segmentado_da_faixa() -> Div {
+    h_flex().flex_none().h(r(28.)).p(esp::E2).gap(esp::E2).rounded(raio::de(28.)).bg(Cores::preto())
+}
+
+/// Um segmento dele: o escolhido no azul do escolhido, os outros no tênue.
+fn segmento_da_faixa(id: &'static str, rotulo: &'static str, escolhido: bool) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .h(r(24.))
+        .px(esp::E8)
+        .rounded(raio::de(24.))
+        .text_size(r(12.5))
+        .font_weight(FontWeight::MEDIUM)
+        .when(escolhido, |s| s.bg(Cores::selecao()).text_color(Cores::forte()))
+        .when(!escolhido, |s| s.text_color(Cores::tenue()).cursor_pointer().hover(|s| s.text_color(Cores::texto())))
+        .child(rotulo)
 }
 
 /// Por que o arquivo não aparece aqui.
@@ -426,7 +448,11 @@ fn fileira_de_codigo(
         .text_color(if fundo == Fundo::Escolhida { Cores::texto() } else { Cores::apagado() })
         .children(numero.map(|n| n.to_string()))
         .when_some(numero, |s, n| {
-            s.cursor_pointer().hover(|s| s.text_color(Cores::texto())).on_click(move |evento, _, cx| {
+            s.cursor_pointer()
+                .hover(|s| s.text_color(Cores::texto()))
+                // O apertar no número não começa a seleção de trecho da fileira.
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(move |evento, _, cx| {
                 // O clique no número escolhe a linha, e não abre o editor.
                 cx.stop_propagation();
                 let estender = evento.modifiers().shift;
@@ -440,12 +466,21 @@ fn fileira_de_codigo(
         // A fileira vai até a borda do painel: o clique depois do fim de uma linha curta vale, e o
         // fundo da linha escolhida não acaba no meio.
         .min_w_full()
-        // Um clique no texto abre o editor ali.
-        .when_some(numero.filter(|_| editavel), |s, n| {
-            s.cursor_text().on_click(move |evento, window, cx| {
-                let x = evento.position().x;
-                let _ = janela.update(cx, |this, cx| this.clicou_no_texto(n - 1, x, window, cx));
-            })
+        // Apertar e arrastar seleciona um trecho (Mencionar e Copiar embaixo); um clique sem
+        // arrasto abre o editor ali, no que se edita.
+        .when_some(numero, |s, n| {
+            let janela_do_arrasto = janela.clone();
+            s.cursor_text()
+                .on_mouse_down(MouseButton::Left, move |evento, window, cx| {
+                    let x = evento.position.x;
+                    let _ = janela.update(cx, |this, cx| this.apertou_no_codigo(n - 1, x, editavel, window, cx));
+                })
+                .on_mouse_move(move |evento, window, cx| {
+                    if evento.pressed_button == Some(MouseButton::Left) {
+                        let x = evento.position.x;
+                        let _ = janela_do_arrasto.update(cx, |this, cx| this.arrastou_no_codigo(n - 1, x, window, cx));
+                    }
+                })
         })
         .h(r(20.))
         .pl(esp::E12)
@@ -470,6 +505,7 @@ fn fileira_de_codigo(
                     coluna
                         .id(("comentar-linha", indice))
                         .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .when(marcado, |c| c.text_color(Cores::destaque_texto()))
                         .hover(|c| c.text_color(Cores::destaque_texto()))
                         .child(if marcado { "●" } else { sinal })
@@ -510,6 +546,121 @@ fn nota_de_codigo(texto: SharedString, largura_numero: Rems) -> AnyElement {
         .child(div().flex_none().w(largura_numero))
         .child(div().flex_none().w(r(8.)))
         .child(texto)
+        .into_any_element()
+}
+
+/// A seleção por arrasto no código em leitura (protótipo Linear, 25/11/2026): de onde o botão
+/// apertou a onde está (linha a partir de 0, coluna em letras), se ainda está apertado, onde soltou
+/// (a barra Mencionar e Copiar aparece embaixo) e se o arquivo se edita (um clique sem arrasto abre
+/// o editor ali).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct SelecaoNoCodigo {
+    pub inicio: (usize, usize),
+    pub fim: (usize, usize),
+    pub arrastando: bool,
+    pub ponto: Option<Point<Pixels>>,
+    pub editavel: bool,
+}
+
+/// A seleção do trecho de uma menção (a pílula "fila.rs:12-14 · cabeNa…"): onde o texto dele está
+/// nas linhas dela, como o painel desenha o arquivo. Sem achar, nada.
+pub(super) fn selecao_do_trecho(texto_do_arquivo: &str, (a, b): (u32, u32), trecho: &str) -> Option<SelecaoNoCodigo> {
+    let primeira = a.max(1) as usize - 1;
+    let linhas: Vec<String> = texto_do_arquivo.lines().skip(primeira).take((b.max(a) - a.max(1) + 1) as usize).map(|l| linha_desenhada(l, false)).collect();
+    let junto = linhas.join("\n");
+    let trecho = trecho.replace('\t', "    ");
+    let comeco = junto.find(trecho.as_str())?;
+    let posicao = |byte: usize| {
+        let antes = &junto[..byte];
+        let linha = antes.matches('\n').count();
+        let coluna = antes.rsplit('\n').next().unwrap_or("").chars().count();
+        (primeira + linha, coluna)
+    };
+    Some(SelecaoNoCodigo { inicio: posicao(comeco), fim: posicao(comeco + trecho.len()), arrastando: false, ponto: None, editavel: true })
+}
+
+impl SelecaoNoCodigo {
+    /// O começo e o fim em ordem.
+    fn ordem(&self) -> ((usize, usize), (usize, usize)) {
+        if self.inicio <= self.fim { (self.inicio, self.fim) } else { (self.fim, self.inicio) }
+    }
+
+    pub(super) fn vazia(&self) -> bool {
+        self.inicio == self.fim
+    }
+
+    /// As linhas que a seleção pega (1 é a primeira). Terminar na coluna 0 da linha de baixo não a
+    /// leva.
+    pub(super) fn linhas(&self) -> (u32, u32) {
+        let ((la, _), (lb, cb)) = self.ordem();
+        let lb = if cb == 0 && lb > la { lb - 1 } else { lb };
+        (la as u32 + 1, lb as u32 + 1)
+    }
+
+    /// O texto selecionado, com as quebras entre as linhas.
+    pub(super) fn texto(&self, linhas: &[SharedString]) -> String {
+        let ((la, ca), (lb, cb)) = self.ordem();
+        let mut partes = Vec::new();
+        for l in la..=lb.min(linhas.len().saturating_sub(1)) {
+            let texto = linhas[l].as_ref();
+            let n = texto.chars().count();
+            let de = if l == la { ca.min(n) } else { 0 };
+            let ate = if l == lb { cb.min(n) } else { n };
+            partes.push(texto.chars().skip(de).take(ate.saturating_sub(de)).collect::<String>());
+        }
+        partes.join("\n")
+    }
+
+    /// A seleção pega linhas inteiras: começa na coluna 0 e vai até o fim da última (ou ao começo
+    /// da de baixo).
+    pub(super) fn inteiras(&self, linhas: &[SharedString]) -> bool {
+        let ((la, ca), (lb, cb)) = self.ordem();
+        let fim_da_linha = linhas.get(lb).map_or(0, |t| t.chars().count());
+        ca == 0 && (cb >= fim_da_linha || (cb == 0 && lb > la))
+    }
+
+    /// A faixa (em bytes) da linha `l` que fica pintada.
+    pub(super) fn faixa_na_linha(&self, l: usize, texto: &str) -> Option<std::ops::Range<usize>> {
+        let ((la, ca), (lb, cb)) = self.ordem();
+        if self.vazia() || l < la || l > lb {
+            return None;
+        }
+        let n = texto.chars().count();
+        let de = if l == la { ca.min(n) } else { 0 };
+        let ate = if l == lb { cb.min(n) } else { n };
+        if ate <= de {
+            return None;
+        }
+        let byte = |c: usize| texto.char_indices().nth(c).map_or(texto.len(), |(i, _)| i);
+        Some(byte(de)..byte(ate))
+    }
+}
+
+/// A dobra das linhas iguais longe das mudanças: "⇕ N linhas iguais", na coluna do código; o
+/// clique abre (protótipo Linear, 25/11/2026).
+fn dobra_de_codigo(i: usize, de: usize, ate: usize, largura_numero: Rems, janela: WeakEntity<Janela>, window: &Window) -> AnyElement {
+    let n = ate + 1 - de;
+    div()
+        .id(("dobra", i))
+        .flex()
+        .items_center()
+        .h(r(20.))
+        .pl(esp::E12)
+        .pr(esp::E24)
+        .gap(esp::E8)
+        .whitespace_nowrap()
+        .text_size(r(11.5))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(Cores::tenue())
+        .cursor_pointer()
+        .hover(|s| s.text_color(Cores::texto()).bg(Cores::hover()))
+        .child(div().flex_none().w(largura_numero))
+        .child(div().flex_none().w(r(8.)))
+        .child(div().flex_none().child(super::componentes::icone(Lucide::ChevronsUpDown, 12., window)))
+        .child(super::componentes::contagem(n, "linha igual", "linhas iguais"))
+        .on_click(move |_, _, cx| {
+            let _ = janela.update(cx, |this, cx| this.abrir_dobra(de, cx));
+        })
         .into_any_element()
 }
 
@@ -699,6 +850,9 @@ impl Janela {
         let edicao = self.arquivo_edicao.clone();
         let com_previa = tem_previa(&completo);
         let rico = edicao.is_none() && !self.busca_arquivo.aberta && !(com_previa && self.arquivo_fonte);
+        // O .md abre como página de blocos, editável no lugar (`pagina.rs`), fora da edição do
+        // agente, da busca e da Fonte.
+        let modo_pagina = self.modo_pagina(&completo);
         // Com o editor aberto a leitura fica parada: o arquivo não é relido nem colorido de novo
         // a cada gravação.
         let editando = self.editando(&completo);
@@ -730,8 +884,14 @@ impl Janela {
         // do agente e da busca (que são pelas linhas). Com o editor aberto ele fica: a Prévia
         // grava o que falta e mostra o resultado.
         let seletor = com_previa && edicao.is_none() && !self.busca_arquivo.aberta && (editando || editavel);
-        let barra = self.cabecalho_do_arquivo(&completo, &caminho, pasta, linhas, seletor, reserva, na_gaveta, window, cx);
-        let faixa = edicao.as_ref().map(|e| self.faixa_da_edicao(e, vista.as_ref().map(|(v, _)| v.as_ref()), reserva, na_gaveta, window, cx));
+        let eh_md = matches!(completo.extension().and_then(|e| e.to_str()), Some("md" | "markdown"));
+        let barra = self.cabecalho_do_arquivo(&completo, &caminho, pasta, linhas, seletor && !eh_md, editavel, reserva, na_gaveta, window, cx);
+        let faixa = match (&edicao, &self.edicao_fora) {
+            (None, None) if seletor && eh_md => Some(self.faixa_da_pagina(reserva, cx)),
+            (Some(e), _) => Some(self.faixa_da_edicao(e, true, vista.as_ref().map(|(v, _)| v.as_ref()), reserva, window, cx)),
+            (None, Some(e)) if !editando => Some(self.faixa_da_edicao(e, false, None, reserva, window, cx)),
+            _ => None,
+        };
         // O aviso discreto do arquivo que abre só para ler, e a pergunta do conflito no editor.
         let faixa_de_leitura = match &conteudo {
             Conteudo::Codigo(..) => nota_de_so_leitura(bytes).map(|nota| faixa_de_nota(nota, reserva, na_gaveta, window)),
@@ -767,14 +927,21 @@ impl Janela {
                         .bordered(false)
                         // A calha fica por cima do texto que rola para o lado: opaca (a cor da
                         // gaveta tem 2% de transparência), na cor da superfície em que o painel está.
-                        .gutter_background(if na_gaveta { Cores::gaveta() } else { Cores::cartao_opaco() }.alpha(1.))
+                        .gutter_background(Cores::preto())
                         .h(relative(1.))
                         .text_size(r(13.))
                         .line_height(r(20.)),
                 )
                 .into_any_element()
         });
+        let do_disco = match &conteudo {
+            Conteudo::Markdown(texto, _) => Some(texto.clone()),
+            _ => None,
+        };
         let corpo = match conteudo {
+            _ if modo_pagina && (editando || (editavel && do_disco.is_some())) => {
+                self.corpo_da_pagina(&completo, do_disco.as_deref(), window, cx)
+            }
             _ if editando => corpo_do_editor.take().unwrap_or_else(|| div().into_any_element()),
             Conteudo::Aviso(aviso) => aviso_do_arquivo(aviso, janela.clone(), completo.clone(), window, cx),
             // Sobre o preto, como no visor: imagem com transparência não some no vidro. O clique
@@ -871,13 +1038,21 @@ impl Janela {
                 });
                 let achado_atual = busca.as_ref().and_then(|(_, atual)| *atual);
                 let rolar_ao_achado = self.busca_arquivo.rolar.replace(false);
-                // O fundo de cada achado numa linha do arquivo (o do atual, mais forte).
-                let achados_da_linha = move |linha: usize, texto: &str| match &busca {
-                    Some((termo, atual)) if !termo.is_empty() => {
-                        let na_linha = atual.filter(|(l, _)| *l == linha).map(|(_, k)| k);
-                        super::busca_conversa::destaques_do_trecho(texto, termo, na_linha)
+                // O trecho selecionado por arrasto, pintado no azul; fora dele, o fundo de cada
+                // achado da busca (o do atual, mais forte).
+                let selecao = self.selecao_no_codigo.filter(|s| !s.vazia());
+                let fundo_da_selecao = HighlightStyle { background_color: Some(Cores::destaque().opacity(0.45)), ..Default::default() };
+                let achados_da_linha = move |linha: usize, texto: &str| {
+                    if let Some(faixa) = selecao.and_then(|s| s.faixa_na_linha(linha, texto)) {
+                        return vec![(faixa, fundo_da_selecao)];
                     }
-                    _ => Vec::new(),
+                    match &busca {
+                        Some((termo, atual)) if !termo.is_empty() => {
+                            let na_linha = atual.filter(|(l, _)| *l == linha).map(|(_, k)| k);
+                            super::busca_conversa::destaques_do_trecho(texto, termo, na_linha)
+                        }
+                        _ => Vec::new(),
+                    }
                 };
                 let id = SharedString::from(format!("codigo-{caminho}"));
                 let lista = match vista {
@@ -905,7 +1080,7 @@ impl Janela {
                             let marcado = pendentes.iter().any(|c| c.caminho == caminho_do_diff && c.linha == linha && c.removida == removida && (!removida || c.trecho == trecho));
                             (super::comentarios_diff::Alvo { caminho: caminho_do_diff.clone(), linha, removida, trecho: trecho.to_string() }, marcado)
                         };
-                        uniform_list(id, vista.fileiras.len(), move |faixa, _, _| {
+                        uniform_list(id, vista.fileiras.len(), move |faixa, window, _| {
                             faixa
                                 .map(|i| match &vista.fileiras[i] {
                                     Fileira::Arquivo { linha, entrou } => {
@@ -935,6 +1110,7 @@ impl Janela {
                                         fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, fundo, Some(sinal), Vec::new(), false, janela.clone(), None)
                                     }
                                     Fileira::Nota(texto) => nota_de_codigo(texto.clone().into(), largura_numero),
+                                    Fileira::Dobra { de, ate } => dobra_de_codigo(i, *de, *ate, largura_numero, janela.clone(), window),
                                 })
                                 .collect()
                         })
@@ -980,6 +1156,59 @@ impl Janela {
                     .into_any_element()
             }
         };
+        // Selecionado um trecho no código: Mencionar (com as linhas) e Copiar, embaixo de onde o
+        // botão soltou, no preto, como a barra do trecho da conversa (protótipo Linear).
+        let barra_do_trecho = self.selecao_no_codigo.filter(|s| !s.vazia() && !s.arrastando).and_then(|s| s.ponto.map(|p| (s, p))).map(|(sel, ponto)| {
+            let (a, b) = sel.linhas();
+            let faixa = if b > a { format!("{a}-{b}") } else { a.to_string() };
+            let botao = |id: &'static str, simbolo: Lucide, rotulo: &'static str| {
+                h_flex()
+                    .id(id)
+                    .flex_none()
+                    .h(r(26.))
+                    .pl(esp::E8)
+                    .pr(linear::ITEM_LADO)
+                    .gap(esp::E6)
+                    .rounded(raio::de(24.))
+                    .text_size(r(12.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(Cores::texto_da_fala())
+                    .cursor_pointer()
+                    .hover(|s| s.bg(Cores::cartao_elevado()).text_color(Cores::texto()))
+                    .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(simbolo, 14., window)))
+                    .child(rotulo)
+            };
+            let barra = h_flex()
+                .flex_none()
+                .p(linear::MOLDURA_FOLGA)
+                .gap(linear::CONTROLES_VAO)
+                .rounded(raio::cartao())
+                .bg(Cores::preto())
+                .occlude()
+                .child(
+                    botao("mencionar-trecho", Lucide::AtSign, "Mencionar")
+                        .child(div().flex_none().text_color(Cores::tenue()).tabular().child(faixa))
+                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.mencionar_a_selecao(window, cx);
+                        })),
+                )
+                .child(botao("copiar-trecho-codigo", Lucide::Copy, "Copiar").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.copiar_a_selecao(cx);
+                    }),
+                ));
+            deferred(
+                anchored()
+                    .anchor(Anchor::TopCenter)
+                    .position(ponto + point(px(0.), crate::tema::tam(window, 14.)))
+                    .snap_to_window_with_margin(px(8.))
+                    .child(movimento::entrar(barra, "entra-barra-do-codigo", De::Cima)),
+            )
+            .with_priority(1)
+        });
         // A barra da busca flutua no alto do conteúdo, à direita, e nunca mais larga que o painel.
         // Com os anéis de uso no canto da janela, ela guarda o lugar deles, como as fileiras de cima.
         let barra_da_busca = self.barra_da_busca_no_arquivo(contagem_da_busca, window, cx).map(|(barra, nova)| {
@@ -996,6 +1225,13 @@ impl Janela {
             // O clique no painel leva o foco para ele: daí o Ctrl+F é do arquivo, e não da conversa.
             .key_context("Arquivo")
             .track_focus(&self.foco_arquivo)
+            // O Esc desfaz a seleção do trecho antes de qualquer outra coisa.
+            .capture_key_down(cx.listener(|this, evento: &KeyDownEvent, _, cx| {
+                if evento.keystroke.key == "escape" && this.selecao_no_codigo.take().is_some() {
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(|this, _: &BuscarNoArquivo, window, cx| this.abrir_busca_no_arquivo(window, cx)))
             // O campo da barra liga o Ctrl+F ao `Search` do kit: com o foco nele, a busca continua a do arquivo.
             .on_action(cx.listener(|this, _: &gpui_kit::component::input::Search, window, cx| this.abrir_busca_no_arquivo(window, cx)))
@@ -1003,17 +1239,36 @@ impl Janela {
             .on_action(cx.listener(|this, _: &SalvarArquivo, window, cx| this.salvar_arquivo_agora(window, cx)))
             .on_action(cx.listener(|this, _: &AchadoSeguinte, _, cx| this.f3_no_arquivo(1, cx)))
             .on_action(cx.listener(|this, _: &AchadoAnterior, _, cx| this.f3_no_arquivo(-1, cx)))
-            // Ancorado, é a última peça da fileira das conversas: encosta no topo e na direita da
-            // janela e emenda na conversa da esquerda pela divisória (ver `aresta_encostada`).
+            // Ancorado, é a última peça do cartão das conversas: fecha os cantos da direita e
+            // emenda na conversa da esquerda pela divisória (ver `aresta_encostada`).
             .when(na_gaveta, |s| s.rounded(crate::tema::raio_da_peca()))
-            .when(!na_gaveta, |s| s.bg(Cores::cartao()))
+            .when(!na_gaveta, |s| s.bg(Cores::cartao()).rounded_r(crate::tema::raio_da_peca()))
+            .when_some(crate::tema::bordas_finas().filter(|_| !na_gaveta), |s, anel| s.shadow(vec![anel]))
             .overflow_hidden()
             .child(cabecalho)
             .child(barra)
             .children(faixa)
             .children(faixa_de_leitura)
             .children(faixa_do_conflito)
-            .child(div().relative().flex_1().min_h_0().flex().flex_col().child(corpo).children(barra_da_busca))
+            // O conteúdo num cartão no preto, a 8 dos lados e 12 do pé (protótipo Linear).
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .mx(esp::E8)
+                    .mt(esp::E6)
+                    .mb(esp::E12)
+                    .rounded(raio::CARTAO)
+                    // A página do .md fica sem o cartão, direto no painel (o `.arq-corpo.previa`).
+                    .when(!modo_pagina, |s| s.bg(Cores::preto()))
+                    .overflow_hidden()
+                    .flex()
+                    .flex_col()
+                    .child(corpo)
+                    .children(barra_da_busca)
+                    .children(barra_do_trecho),
+            )
             // Na edição do agente, o campo do comentário da linha e o "Enviar comentários (N)".
             .children(edicao.as_ref().and_then(|_| self.barra_de_comentarios(window, cx)).map(|barra| div().flex_none().p(esp::E8).child(barra)))
             .when(!na_gaveta, |s| s.aresta_encostada(crate::tema::Esquerda::Emendada))
@@ -1022,18 +1277,14 @@ impl Janela {
     }
 }
 
-/// A largura livre da faixa da edição (em px a 100%) a partir da qual "arquivo 2 de 8" cabe por
-/// extenso ao lado de "Edição +N −M 2 de 5", das setas e do ×; abaixo dela, "2/8".
-const FAIXA_COM_A_FRASE: f32 = 400.;
-
 /// Quanto ocupam as ações do cabeçalho do arquivo (em px a 100%): só os ícones (Mencionar, VS
 /// Code e o "⋯", de 28, com 4 entre eles) ou com os rótulos.
-const ACOES_SO_ICONES: f32 = 3. * 28. + 2. * 4.;
+const ACOES_SO_ICONES: f32 = 4. * 24. + 3. * 8.;
 
 /// Quanto ocupa o seletor Prévia | Fonte no cabeçalho (em px a 100%): com os nomes ou só os símbolos.
-const SELETOR_COM_ROTULOS: f32 = 138.;
+const SELETOR_COM_ROTULOS: f32 = 70.;
 const SELETOR_SO_ICONES: f32 = 70.;
-const ACOES_COM_ROTULOS: f32 = 116. + 96. + 28. + 2. * 4.;
+const ACOES_COM_ROTULOS: f32 = 24. + 98. + 2. * 24. + 3. * 8.;
 
 /// O que cabe no cabeçalho do arquivo: os rótulos das ações, as linhas e a linguagem. A conta é
 /// pela largura do painel e pelo tamanho dos textos (a 100%, em px), para nada passar por baixo
@@ -1061,29 +1312,26 @@ impl Janela {
         pasta: String,
         linhas: Option<usize>,
         seletor: bool,
+        editavel: bool,
         reserva: Option<Pixels>,
         na_gaveta: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let _ = na_gaveta;
         let janela = cx.entity().downgrade();
         let nome = caminho.rsplit('/').next().unwrap_or(caminho).to_string();
         let selecao = self.arquivo_selecao;
         // Com o editor aberto, no lugar das linhas e da linguagem: "editando", o ponto do que
         // falta gravar e o × que volta à leitura.
         let editando = self.editor_arquivo.as_ref().filter(|e| e.sessao.caminho() == completo);
+        // Só as linhas escolhidas aparecem ao lado do nome (o protótipo não mostra a contagem nem
+        // a linguagem; o lápis e o ponto já dizem que está editando).
         let info = match selecao {
-            _ if editando.is_some() => Some("editando".to_string()),
+            _ if editando.is_some() => None,
             Some((a, b)) if b > a => Some(format!("linhas {a} a {b}")),
             Some((a, _)) => Some(format!("linha {a}")),
-            None => linhas.map(|n| {
-                let mut texto = contagem(n, "linha", "linhas");
-                if let Some(linguagem) = nome_da_linguagem(caminho) {
-                    texto.push_str(" · ");
-                    texto.push_str(linguagem);
-                }
-                texto
-            }),
+            None => None,
         };
         // A largura livre para o nome, a informação e as ações (a 100%, em px): o painel menos o
         // respiro dos lados, o ícone e a folga dos anéis. Antes da primeira medida, a do estreito.
@@ -1101,13 +1349,6 @@ impl Janela {
             },
         };
         let absoluto = SharedString::from(completo.display().to_string());
-        let botao = |id: &'static str, icone: Lucide, rotulo: &'static str, dica: SharedString| {
-            if com_rotulos {
-                botao_fantasma(id, Some(icone.into()), rotulo, TamanhoBotao::Barra, window, cx).tooltip(dica)
-            } else {
-                botao_icone(id, icone, dica, TamanhoBotao::Barra, window, cx)
-            }
-        };
         let dica_mencao = SharedString::from(match self.alvo_da_mencao() {
             Some((a, b)) if self.arquivo_selecao.is_none() && self.arquivo_edicao.is_some() => {
                 if b > a { format!("Mencionar esta mudança na conversa (linhas {a} a {b})") } else { format!("Mencionar esta mudança na conversa (linha {a})") }
@@ -1136,7 +1377,7 @@ impl Janela {
                 Some(super::edicao::Origem::Git { sem_espaco }) => Some(*sem_espaco),
                 _ => None,
             };
-            botao_icone("menu-arquivo", Lucide::Ellipsis, "Mais opções do arquivo", TamanhoBotao::Barra, window, cx)
+            botao_icone("menu-arquivo", Lucide::Ellipsis, "Mais opções do arquivo", TamanhoBotao::Linha, window, cx)
                 .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                     let (conteudo, relativo, onde, inteiro, janela, fora) =
                         (conteudo.clone(), relativo.clone(), onde.clone(), inteiro.clone(), janela.clone(), fora.clone());
@@ -1200,67 +1441,106 @@ impl Janela {
                     cx.notify();
                 }))
         });
-        // O que falta gravar (âmbar; vermelho quando a gravação falhou) e a volta à leitura.
-        let do_editor = editando.map(|e| {
+        // O que falta gravar (âmbar; vermelho quando a gravação falhou), ao lado do nome.
+        let ponto_do_editor = editando.map(|e| {
             let (cor, estado) = match (&e.erro, e.por_salvar) {
                 (Some(erro), _) => (Cores::vermelho(), format!("Não deu para salvar: {erro}")),
                 (None, true) => (Cores::ambar(), "Ainda não salvo: grava sozinho quando você para de digitar, ou no Ctrl+S".to_string()),
                 (None, false) => (gpui_kit::transparent_black().into(), "Salvo".to_string()),
             };
             div()
-                .flex()
+                .id("ponto-do-editor")
                 .flex_none()
-                .items_center()
-                .gap(esp::E4)
-                .child(
-                    div()
-                        .id("ponto-do-editor")
-                        .flex_none()
-                        .size(r(6.))
-                        .rounded_full()
-                        .bg(cor)
-                        .dica_no_ponteiro(move |window, cx| Tooltip::new(estado.clone()).build(window, cx)),
-                )
-                .child(
-                    botao_icone("sair-do-editor", Lucide::X, "Voltar à leitura (Esc)", TamanhoBotao::Linha, window, cx)
-                        .on_click(cx.listener(|this, _, window, cx| this.sair_do_editor(window, cx))),
-                )
+                .size(r(6.))
+                .rounded_full()
+                .bg(cor)
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(estado.clone()).build(window, cx))
         });
         let seletor = seletor.then(|| {
             let janela = janela.clone();
-            // Estreito, só os símbolos (o nome vai na dica).
-            let opcoes = if com_rotulos {
-                [Segmento::new("Prévia"), Segmento::new("Fonte")]
-            } else {
-                [Segmento::new("Prévia").icone(Lucide::Eye), Segmento::new("Fonte").icone(Lucide::Braces)]
-            };
+            let md = matches!(completo.extension().and_then(|e| e.to_str()), Some("md" | "markdown"));
+            let opcoes = [
+                if md { Segmento::new("Página").icone(Lucide::FileText) } else { Segmento::new("Prévia").icone(Lucide::Eye) },
+                Segmento::new("Fonte").icone(Lucide::Braces),
+            ];
             ControleSegmentado::new("previa-ou-fonte", opcoes, usize::from(self.arquivo_fonte), move |novo, window, cx| {
                 let _ = janela.update(cx, |this, cx| this.escolher_vista_do_arquivo(novo == 1, window, cx));
             })
             .with_size(Size::Small)
-            .so_icone(!com_rotulos)
+            .so_icone(true)
         });
-        // Editando, o lápis no lugar do símbolo do arquivo (o que resta à vista no painel estreito).
-        let simbolo = match editando {
-            Some(_) => div().flex_none().text_color(Cores::destaque_texto()).child(super::componentes::icone(Lucide::Pencil, 16., window)),
-            None => div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(icone_do_arquivo(caminho), 16., window)),
+        // Editar e Pronto (protótipo Linear, 25/11/2026): o lápis entra na edição; editando, o
+        // "Pronto" volta à leitura (o que falta gravar é gravado antes).
+        // Na página do .md o lápis leva à Fonte, já editando (os blocos se editam no lugar).
+        let editar = if self.modo_pagina(completo) {
+            linhas.filter(|_| editavel).map(|_| {
+                botao_icone("editar-arquivo", Lucide::Pencil, "Editar a fonte", TamanhoBotao::Linha, window, cx)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.escolher_vista_do_arquivo(true, window, cx);
+                        this.entrar_no_editor(0, 0, window, cx);
+                    }))
+                    .into_any_element()
+            })
+        } else if editando.is_some() {
+            Some(
+                botao_fantasma("sair-do-editor", None, "Pronto", TamanhoBotao::Linha, window, cx)
+                    .tooltip("Voltar à leitura (Esc)")
+                    .on_click(cx.listener(|this, _, window, cx| this.sair_do_editor(window, cx)))
+                    .into_any_element(),
+            )
+        } else {
+            linhas.filter(|_| editavel).map(|_| {
+                botao_icone("editar-arquivo", Lucide::Pencil, "Editar o arquivo\nOu um clique no texto", TamanhoBotao::Linha, window, cx)
+                    .on_click(cx.listener(|this, _, window, cx| this.entrar_no_editor(0, 0, window, cx)))
+                    .into_any_element()
+            })
         };
-        let em_destaque = selecao.is_some() || editando.is_some();
-        let j_mencionar = janela.clone();
+        let mencionar = {
+            let j = janela.clone();
+            div()
+                .id("mencionar-arquivo")
+                .flex()
+                .flex_none()
+                .items_center()
+                .h(r(26.))
+                .when(com_rotulos, |s| s.px(linear::ITEM_LADO).gap(esp::E6))
+                .when(!com_rotulos, |s| s.w(r(26.)).justify_center())
+                .rounded(raio::de(26.))
+                .bg(Cores::preto())
+                .text_size(r(12.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(Cores::texto_da_fala())
+                .cursor_pointer()
+                .hover(|s| s.bg(Cores::preto().blend(Cores::forte().opacity(0.06))))
+                .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(Lucide::AtSign, 14., window)))
+                .when(com_rotulos, |s| s.child("Mencionar"))
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica_mencao.clone()).build(window, cx))
+                .on_click(move |_, window, cx| {
+                    let _ = j.update(cx, |this, cx| this.mencionar_do_painel(window, cx));
+                })
+        };
+        let abrir_no_editor = botao_icone("editor-arquivo", Lucide::ExternalLink, dica_editor, TamanhoBotao::Linha, window, cx)
+            .on_click(move |_, _, _| crate::sistema::abrir_no_editor(&editor, linha_editor));
+        // Editando, o lápis no lugar do símbolo do arquivo.
+        let simbolo = match editando {
+            Some(_) => div().flex_none().text_color(Cores::destaque_texto()).child(super::componentes::icone(Lucide::Pencil, 15., window)),
+            None => div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(icone_do_arquivo(caminho), 15., window)),
+        };
+        let em_destaque = selecao.is_some();
+        // A linha do nome do protótipo: 26 de altura, 8 entre as partes, 6 na esquerda e 2 na
+        // direita (dentro dos 6 do painel).
         div()
             .flex()
             .flex_none()
             .items_center()
-            .h(altura::GRANDE)
+            .h(r(26.))
+            .mt(esp::E4)
             .pl(esp::E12)
             .map(|s| match reserva {
                 Some(folga) => s.pr(folga),
                 None => s.pr(esp::E8),
             })
             .gap(esp::E8)
-            .border_b_1()
-            // Na gaveta, opaca, a linha() some: lá vai a borda().
-            .border_color(if na_gaveta { Cores::borda() } else { Cores::linha() })
             .child(
                 div()
                     .id("caminho-arquivo")
@@ -1279,22 +1559,19 @@ impl Janela {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis_middle()
-                            .rotulo()
-                            .text_color(Cores::forte())
+                            .text_size(r(13.))
+                            .line_height(r(16.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(Cores::texto())
                             .child(nome),
                     )
+                    .children(ponto_do_editor)
                     .when(com_info, |s| {
-                        s.children(info.map(|i| {
-                            div()
-                                .flex_none()
-                                .whitespace_nowrap()
-                                .metadado()
-                                .text_color(if em_destaque { Cores::destaque_texto() } else { Cores::apagado() })
-                                .child(i)
+                        s.children(info.clone().filter(|_| em_destaque).map(|i| {
+                            div().flex_none().whitespace_nowrap().text_size(r(12.)).text_color(Cores::destaque_texto()).child(i)
                         }))
                     })
                     .children(desfazer)
-                    .children(do_editor)
                     .child(
                         div()
                             .flex_1()
@@ -1302,8 +1579,9 @@ impl Janela {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis_start()
-                            .mono_pequeno()
-                            .text_color(Cores::tenue())
+                            .font_family(FONTE_MONO)
+                            .text_size(r(11.5))
+                            .text_color(Cores::apagado())
                             .child(pasta),
                     )
                     .dica_no_ponteiro(move |window, cx| Tooltip::new(absoluto.clone()).build(window, cx)),
@@ -1313,15 +1591,11 @@ impl Janela {
                     .flex()
                     .flex_none()
                     .items_center()
-                    .gap(esp::E4)
+                    .gap(esp::E8)
                     .children(seletor)
-                    .child(botao("mencionar-arquivo", Lucide::AtSign, "Mencionar", dica_mencao).on_click(move |_, window, cx| {
-                        let _ = j_mencionar.update(cx, |this, cx| this.mencionar_do_painel(window, cx));
-                    }))
-                    .child(
-                        botao("editor-arquivo", Lucide::CodeXml, "VS Code", dica_editor)
-                            .on_click(move |_, _, _| crate::sistema::abrir_no_editor(&editor, linha_editor)),
-                    )
+                    .children(editar)
+                    .child(mencionar)
+                    .child(abrir_no_editor)
                     .child(menu),
             )
             .into_any_element()
@@ -1343,13 +1617,46 @@ impl Janela {
             Conflito::Mudou => ("O arquivo mudou no disco.", "Fica o que você escreveu: ao salvar, passa por cima do que está no disco"),
             Conflito::Apagado => ("O arquivo foi apagado. O seu texto continua aqui.", "Fica o que você escreveu: ao salvar, o arquivo é criado de novo"),
         };
-        let recarregar = (conflito == Conflito::Mudou).then(|| {
-            botao_fantasma("recarregar-arquivo", None, "Recarregar", TamanhoBotao::Linha, window, cx)
-                .tooltip("Fica o que está no disco: o que você escreveu se perde")
+        let _ = (reserva, na_gaveta);
+        // Os botões da faixa do protótipo: os claros só com o texto (o fundo vem no ponteiro) e o
+        // azul cheio, de 24.
+        let claro = |id: &'static str, rotulo: &'static str| {
+            div()
+                .id(id)
+                .flex()
+                .flex_none()
+                .items_center()
+                .h(r(24.))
+                .px(esp::E8)
+                .rounded(raio::de(24.))
+                .text_size(r(12.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(Cores::tenue())
+                .cursor_pointer()
+                .hover(|s| s.bg(Cores::cartao_elevado()).text_color(Cores::texto()))
+                .child(rotulo)
+        };
+        let dele = (conflito == Conflito::Mudou).then(|| {
+            claro("recarregar-arquivo", "Usar o dele")
+                .dica_no_ponteiro(|window, cx| Tooltip::new("Fica o que está no disco: o que você escreveu se perde").build(window, cx))
                 .on_click(cx.listener(|this, _, window, cx| this.recarregar_editor(window, cx)))
         });
-        let manter = botao_fantasma("manter-o-meu", None, "Manter o meu", TamanhoBotao::Linha, window, cx)
-            .tooltip(dica_manter)
+        let manter = div()
+            .id("manter-o-meu")
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(r(24.))
+            .px(linear::ABA_LADO)
+            .rounded(raio::de(24.))
+            .bg(Cores::destaque())
+            .text_size(r(12.))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(Cores::forte())
+            .cursor_pointer()
+            .hover(|s| s.bg(Cores::destaque_ativo()))
+            .child("Manter o meu")
+            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica_manter).build(window, cx))
             .on_click(cx.listener(|this, _, window, cx| this.manter_o_meu_no_editor(window, cx)));
         let faixa = div()
             .id("conflito-do-arquivo")
@@ -1357,21 +1664,17 @@ impl Janela {
             .flex_none()
             .flex_wrap()
             .items_center()
-            .min_h(altura::CONTROLE)
-            .py(esp::E4)
-            .pl(esp::E12)
-            .map(|s| match reserva {
-                Some(folga) => s.pr(folga),
-                None => s.pr(esp::E8),
-            })
-            .gap_x(esp::E8)
-            .gap_y(esp::E2)
-            .border_b_1()
-            .border_color(if na_gaveta { Cores::borda() } else { Cores::linha() })
-            .bg(Cores::tinta_leve(Cores::ambar()))
-            .child(div().flex_none().text_color(Cores::ambar()).child(super::componentes::icone(Lucide::TriangleAlert, 14., window)))
-            .child(div().flex_1().min_w(r(132.)).metadado().text_color(Cores::texto()).child(frase))
-            .child(div().flex().flex_none().items_center().gap(esp::E4).children(recarregar).child(manter));
+            .mx(esp::E8)
+            .mt(esp::E6)
+            .py(linear::CAIXA_BAIXO)
+            .pl(linear::ESTADO_DIREITA)
+            .pr(linear::CAIXA_BAIXO)
+            .gap(esp::E6)
+            .rounded(raio::de(28.))
+            .bg(Cores::preto().blend(Cores::ambar().opacity(0.14)))
+            .child(div().flex_none().text_color(Cores::ambar()).child(super::componentes::icone(Lucide::TriangleAlert, 15., window)))
+            .child(div().flex_1().min_w(r(120.)).text_size(r(12.5)).text_color(Cores::texto_da_fala()).child(frase))
+            .child(div().flex().flex_none().items_center().gap(esp::E2).children(dele).child(manter));
         movimento::entrada("entra-conflito-do-arquivo", nova, De::Cima, faixa).into_any_element()
     }
 
@@ -1393,161 +1696,121 @@ impl Janela {
         }
     }
 
-    /// Um clique no texto da linha (a partir de 0), em `x` na janela: abre o editor com o cursor ali.
-    fn clicou_no_texto(&mut self, linha: usize, x: Pixels, window: &mut Window, cx: &mut Context<Self>) {
-        let (total, rolado) = {
-            let lido = self.arquivo_lido.borrow();
-            let Some(lido) = lido.as_ref() else { return };
-            let Conteudo::Codigo(linhas, _) = &lido.conteudo else { return };
-            (linhas.len(), lido.rolagem.0.borrow().base_handle.offset().x)
-        };
-        // Onde o texto começa: a margem da fileira, o número e o respiro (na edição do agente,
-        // também a coluna do sinal), menos o que o código rolou para o lado.
-        let com_sinal = self.arquivo_edicao.as_ref().is_some_and(|e| !e.sem_registro);
-        let antes = 12. + largura_do_numero(total) + if com_sinal { 24. } else { 16. };
-        let escala = window.rem_size().as_f32() / 15.;
-        let comeco = self.codigo_esquerda.get() + px(antes * escala) + rolado;
-        let coluna = ((x - comeco).as_f32() / (LETRA_DO_CODIGO * escala)).round().max(0.) as usize;
-        self.entrar_no_editor(linha, coluna, window, cx);
+    /// O seletor Prévia | Fonte do .md e do .svg. A Prévia fecha o editor (gravando o que falta).
+    /// O arquivo aberto é um .md que aparece como página (não a Fonte, nem a edição do agente, nem a
+    /// busca, que são pelas linhas).
+    pub(super) fn modo_pagina(&self, completo: &Path) -> bool {
+        let md = matches!(completo.extension().and_then(|e| e.to_str()), Some("md" | "markdown"));
+        md && self.arquivo_edicao.is_none() && !self.busca_arquivo.aberta && !self.arquivo_fonte
     }
 
-    /// O seletor Prévia | Fonte do .md e do .svg. A Prévia fecha o editor (gravando o que falta).
     fn escolher_vista_do_arquivo(&mut self, fonte: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if !fonte {
+        // A página lê de novo (a Fonte pode ter mudado o texto).
+        self.esquecer_pagina();
+        // Na Prévia do .svg o editor fecha; na Página do .md ele fica (ela edita pelo mesmo editor).
+        let md = self.arquivo_aberto.as_ref().is_some_and(|(_, caminho)| caminho.ends_with(".md") || caminho.ends_with(".markdown"));
+        if !fonte && !md {
             self.largar_editor(window, cx);
         }
         self.arquivo_fonte = fonte;
         cx.notify();
     }
 
-    /// A faixa da edição, embaixo do cabeçalho: "Edição", o +N −M e "2 de 5", com as setas que
-    /// passam de uma mudança à outra e o × que volta ao arquivo sem a edição. Aberta pelas
-    /// Mudanças de um chat com mais de um arquivo, diz também "arquivo 2 de 8", e a seta da última
-    /// mudança passa ao arquivo seguinte da lista. No registro de antes de guardar o diff, um
-    /// aviso discreto no lugar.
+    /// A fileira de baixo do nome com o arquivo mudado (protótipo Linear, 25/11/2026): "Mudanças"
+    /// e "Arquivo" num segmentado no preto, o +N −M e, nas mudanças, "1 de 4" e as setas (que
+    /// passam ao arquivo vizinho das Mudanças do chat no fim).
+    #[allow(clippy::too_many_arguments)]
     fn faixa_da_edicao(
         &self,
         edicao: &Edicao,
+        ativa: bool,
         vista: Option<&Vista>,
         reserva: Option<Pixels>,
-        na_gaveta: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let mudancas = vista.map_or(0, |v| v.mudancas.len());
         let atual = self.edicao_atual.min(mudancas.saturating_sub(1));
         let lugar = self.lugar_do_arquivo_no_turno(edicao, cx).filter(|(_, total)| *total > 1);
-        let fechar = botao_icone("fechar-edicao", Lucide::X, "Ver o arquivo sem a edição", TamanhoBotao::Linha, window, cx)
-            .on_click(cx.listener(|this, _, _, cx| this.sair_da_edicao(cx)));
-        // A dica diz para onde a seta vai: outra mudança ou outro arquivo.
         let seta = |id: &'static str, icone: Lucide, passo: isize| {
-            // Com uma mudança só e sem outro arquivo, a seta não levaria a lugar nenhum.
             let destino = passo_da_revisao(atual, mudancas, lugar, passo).filter(|d| *d != Passo::Mudanca(atual))?;
-            let dica = match (destino, passo > 0) {
-                (Passo::Mudanca(_), true) => "Próxima mudança",
-                (Passo::Mudanca(_), false) => "Mudança anterior",
-                (Passo::Arquivo { .. }, true) => "Próximo arquivo das Mudanças",
-                (Passo::Arquivo { .. }, false) => "Arquivo anterior das Mudanças",
+            let dica: SharedString = match (destino, passo > 0) {
+                (Passo::Mudanca(_), true) => "Próxima mudança".into(),
+                (Passo::Mudanca(_), false) => "Mudança anterior".into(),
+                (Passo::Arquivo { .. }, true) => format!("Próximo arquivo das Mudanças ({} de {})", lugar.map_or(0, |l| l.0 + 2), lugar.map_or(0, |l| l.1)).into(),
+                (Passo::Arquivo { .. }, false) => format!("Arquivo anterior das Mudanças ({} de {})", lugar.map_or(0, |l| l.0), lugar.map_or(0, |l| l.1)).into(),
             };
             Some(
                 botao_icone(id, icone, dica, TamanhoBotao::Linha, window, cx)
                     .on_click(cx.listener(move |this, _, window, cx| this.ir_para_mudanca(passo, window, cx))),
             )
         };
-        let (anterior, seguinte) = (seta("mudanca-anterior", Lucide::ChevronUp, -1), seta("mudanca-seguinte", Lucide::ChevronDown, 1));
-        let setas = (anterior.is_some() || seguinte.is_some())
-            .then(|| div().flex().flex_none().items_center().gap(esp::E2).children(anterior).children(seguinte));
-        // Quando a faixa não tem lugar para as frases (o painel na largura mínima, os anéis de
-        // uso no canto), elas encolhem: "2/8" e um ícone, com a frase na dica.
-        let escala = window.rem_size().as_f32() / 15.;
-        let livre = self.direita_largura * 15. - reserva.map_or(8., |r| r.as_f32() / escala);
-        let curto = self.direita_estreita || livre < FAIXA_COM_A_FRASE;
-        // "arquivo 2 de 8".
-        let do_turno = lugar.map(|(posicao, total)| {
-            let longo = SharedString::from(format!("arquivo {} de {}", posicao + 1, total));
-            let texto = if curto { SharedString::from(format!("{}/{}", posicao + 1, total)) } else { longo.clone() };
-            div()
-                .id("arquivo-do-turno")
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap(esp::E4)
-                .whitespace_nowrap()
-                .metadado()
-                .text_color(Cores::tenue())
-                .child(super::componentes::icone(Lucide::Files, 12., window))
-                .child(texto)
-                .dica_no_ponteiro(move |window, cx| Tooltip::new(format!("Nas Mudanças deste chat: {longo}")).build(window, cx))
-        });
+        let (anterior, seguinte) = if ativa { (seta("mudanca-anterior", Lucide::ChevronUp, -1), seta("mudanca-seguinte", Lucide::ChevronDown, 1)) } else { (None, None) };
+        let segmento = segmento_da_faixa;
+        let segmentado = segmentado_da_faixa()
+            .child(segmento("ver-mudancas", "Mudanças", ativa).when(!ativa, |s| {
+                s.on_click(cx.listener(|this, _, window, cx| this.voltar_a_edicao(window, cx)))
+            }))
+            .child(segmento("ver-arquivo", "Arquivo", !ativa).when(ativa, |s| s.on_click(cx.listener(|this, _, _, cx| this.sair_da_edicao(cx)))));
         let so_espaco = matches!(edicao.origem, super::edicao::Origem::Git { sem_espaco: true });
-        let esquerda = if edicao.sem_registro {
-            // O diff sem espaço em branco que ficou vazio não é um registro antigo: só mudou espaço.
-            let (simbolo, texto) = if so_espaco {
-                (Lucide::FileDiff, "Só mudou espaço em branco.")
-            } else {
-                (Lucide::Info, "Este registro não guardou a edição: o arquivo aparece como está agora.")
-            };
-            div()
-                .flex()
-                .flex_1()
-                .min_w_0()
-                .items_center()
-                .gap(esp::E8)
-                .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(simbolo, 14., window)))
-                .child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::tenue()).child(texto))
-                .children(do_turno)
+        let resumo = if edicao.sem_registro {
+            let texto = if so_espaco { "Só mudou espaço em branco" } else { "Este registro não guardou a edição" };
+            div().flex_1().min_w_0().truncate().text_size(r(12.)).text_color(Cores::tenue()).child(texto).into_any_element()
         } else {
-            let posicao = (mudancas > 0).then(|| format!("{} de {}", atual + 1, mudancas));
-            div()
-                .flex()
-                .flex_1()
-                .min_w_0()
-                .overflow_hidden()
-                .items_center()
-                .gap(esp::E8)
-                .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(Lucide::FileDiff, 14., window)))
-                .child(div().flex_none().rotulo().text_color(Cores::texto()).child("Edição"))
-                .child(
-                    div()
-                        .flex()
-                        .flex_none()
-                        .gap(esp::E6)
-                        .font_family(FONTE_MONO)
-                        .metadado()
-                        .when(edicao.entram > 0, |s| s.child(div().text_color(Cores::verde()).child(format!("+{}", edicao.entram))))
-                        .when(edicao.saem > 0, |s| s.child(div().text_color(Cores::vermelho()).child(format!("−{}", edicao.saem)))),
-                )
-                .children(posicao.map(|p| div().flex_none().whitespace_nowrap().metadado().text_color(Cores::tenue()).child(p)))
-                // O diff está filtrado: a frase, ou o funil com a frase na dica.
-                .when(so_espaco, |s| {
-                    let marca = div().id("diff-sem-espaco").flex_none().whitespace_nowrap().metadado().text_color(Cores::tenue());
-                    s.child(if curto {
-                        marca
-                            .child(super::componentes::icone(Lucide::Funnel, 12., window))
-                            .dica_no_ponteiro(|window, cx| Tooltip::new("Sem as mudanças só de espaço em branco").build(window, cx))
-                    } else {
-                        marca.child("sem espaço em branco")
-                    })
-                })
-                .child(div().flex_1())
-                .children(do_turno)
+            h_flex()
+                .flex_none()
+                .gap(linear::PASSO_VAO)
+                .text_size(r(12.))
+                .when(edicao.entram > 0, |s| s.child(div().text_color(Cores::verde()).child(format!("+{}", edicao.entram))))
+                .when(edicao.saem > 0, |s| s.child(div().text_color(Cores::vermelho()).child(format!("−{}", edicao.saem))))
+                .when(so_espaco, |s| s.child(div().text_color(Cores::tenue()).child("sem espaço em branco")))
+                .into_any_element()
         };
+        let posicao = (ativa && mudancas > 0 && !edicao.sem_registro)
+            .then(|| div().flex_none().whitespace_nowrap().text_size(r(12.)).text_color(Cores::tenue()).child(format!("{} de {}", atual + 1, mudancas)));
         div()
             .flex()
             .flex_none()
             .items_center()
-            .h(altura::CONTROLE)
+            .h(r(28.))
+            .mt(esp::E4)
             .pl(esp::E12)
             .map(|s| match reserva {
                 Some(folga) => s.pr(folga),
                 None => s.pr(esp::E8),
             })
             .gap(esp::E8)
-            .border_b_1()
-            .border_color(if na_gaveta { Cores::borda() } else { Cores::linha() })
-            .child(esquerda)
-            .children(setas)
-            .child(fechar)
+            .child(segmentado)
+            .child(resumo)
+            .child(div().flex_1())
+            .children(posicao)
+            .child(h_flex().flex_none().gap(esp::E8).children(anterior).children(seguinte))
+            .into_any_element()
+    }
+
+    /// A fileira de baixo do nome no .md (protótipo Linear): "Página" e "Fonte" num segmentado no
+    /// preto, como o "Mudanças | Arquivo".
+    fn faixa_da_pagina(&self, reserva: Option<Pixels>, cx: &Context<Self>) -> AnyElement {
+        let fonte = self.arquivo_fonte;
+        let segmentado = segmentado_da_faixa()
+            .child(segmento_da_faixa("ver-pagina", "Página", !fonte).when(fonte, |s| {
+                s.on_click(cx.listener(|this, _, window, cx| this.escolher_vista_do_arquivo(false, window, cx)))
+            }))
+            .child(segmento_da_faixa("ver-fonte", "Fonte", fonte).when(!fonte, |s| {
+                s.on_click(cx.listener(|this, _, window, cx| this.escolher_vista_do_arquivo(true, window, cx)))
+            }));
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(r(28.))
+            .mt(esp::E4)
+            .pl(esp::E12)
+            .map(|s| match reserva {
+                Some(folga) => s.pr(folga),
+                None => s.pr(esp::E8),
+            })
+            .child(segmentado)
             .into_any_element()
     }
 
@@ -1582,10 +1845,13 @@ impl Janela {
         {
             return (vista.clone(), *mais_longa);
         }
-        let vista = Rc::new(super::edicao::vista(&edicao.trechos, linhas.as_slice()));
+        // As linhas iguais longe das mudanças dobram; com a busca aberta, não (ela anda pelas linhas).
+        let inteira = super::edicao::vista(&edicao.trechos, linhas.as_slice());
+        let vista = Rc::new(if self.busca_arquivo.aberta { inteira } else { super::edicao::dobrar(&inteira, &self.dobras_abertas.borrow()) });
         let largura = |f: &Fileira| match f {
             Fileira::Arquivo { linha, .. } => linhas.get(*linha).map_or(0, |t| t.chars().count()),
             Fileira::Saiu(t) | Fileira::Solta(_, t) | Fileira::Nota(t) => t.chars().count(),
+            Fileira::Dobra { .. } => 20,
         };
         let mais_longa = (0..vista.fileiras.len()).max_by_key(|&i| largura(&vista.fileiras[i])).unwrap_or(0);
         l.vista = Some((Rc::as_ptr(edicao) as usize, vista.clone(), mais_longa));
@@ -1594,7 +1860,8 @@ impl Janela {
 
     /// As linhas que o Mencionar leva: as escolhidas ou, na edição, as da mudança à vista.
     fn alvo_da_mencao(&self) -> Option<(u32, u32)> {
-        self.arquivo_selecao.or_else(|| {
+        let arrastada = self.selecao_no_codigo.filter(|s| !s.vazia() && !s.arrastando).map(|s| s.linhas());
+        arrastada.or(self.arquivo_selecao).or_else(|| {
             self.arquivo_edicao.as_ref()?;
             let lido = self.arquivo_lido.borrow();
             let (_, vista, _) = lido.as_ref()?.vista.as_ref()?;
@@ -1605,14 +1872,101 @@ impl Janela {
 
     /// Mencionar, no cabeçalho do arquivo: a seleção, a mudança à vista ou o arquivo inteiro.
     fn mencionar_do_painel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selecao_no_codigo.is_some_and(|s| !s.vazia() && !s.arrastando) {
+            self.mencionar_a_selecao(window, cx);
+            return;
+        }
         let Some((raiz, caminho)) = self.arquivo_aberto.clone() else { return };
         let linhas = self.alvo_da_mencao();
         self.mencionar_arquivo(&raiz.join(caminho), linhas, window, cx);
     }
 
+    /// As linhas do arquivo lido, quando ele está em linhas.
+    fn linhas_lidas(&self) -> Option<Rc<Vec<SharedString>>> {
+        match &self.arquivo_lido.borrow().as_ref()?.conteudo {
+            Conteudo::Codigo(linhas, _) => Some(linhas.clone()),
+            _ => None,
+        }
+    }
+
+    /// Menciona o que foi selecionado por arrasto: as linhas e, quando é parte delas, o texto exato.
+    fn mencionar_a_selecao(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(sel), Some((raiz, caminho)), Some(linhas)) = (self.selecao_no_codigo.take(), self.arquivo_aberto.clone(), self.linhas_lidas())
+        else {
+            return;
+        };
+        let trecho = (!sel.inteiras(&linhas)).then(|| sel.texto(&linhas).trim_end().to_string());
+        self.mencionar_pedaco(&raiz.join(caminho), Some(sel.linhas()), trecho.as_deref(), window, cx);
+        cx.notify();
+    }
+
+    /// Copia o que foi selecionado por arrasto.
+    fn copiar_a_selecao(&mut self, cx: &mut Context<Self>) {
+        if let (Some(sel), Some(linhas)) = (self.selecao_no_codigo.take(), self.linhas_lidas()) {
+            cx.write_to_clipboard(ClipboardItem::new_string(sel.texto(&linhas)));
+        }
+        cx.notify();
+    }
+
+    /// Onde a coluna (em letras) cai no código lido, pela posição do ponteiro.
+    fn coluna_no_x(&self, x: Pixels, window: &Window) -> Option<usize> {
+        let (total, rolado) = {
+            let lido = self.arquivo_lido.borrow();
+            let lido = lido.as_ref()?;
+            let Conteudo::Codigo(linhas, _) = &lido.conteudo else { return None };
+            (linhas.len(), lido.rolagem.0.borrow().base_handle.offset().x)
+        };
+        // Onde o texto começa: a margem da fileira, o número e o respiro (na edição do agente,
+        // também a coluna do sinal), menos o que o código rolou para o lado.
+        let com_sinal = self.arquivo_edicao.as_ref().is_some_and(|e| !e.sem_registro);
+        let antes = 12. + largura_do_numero(total) + if com_sinal { 24. } else { 16. };
+        let escala = window.rem_size().as_f32() / 15.;
+        let comeco = self.codigo_esquerda.get() + px(antes * escala) + rolado;
+        Some(((x - comeco).as_f32() / (LETRA_DO_CODIGO * escala)).round().max(0.) as usize)
+    }
+
+    /// O botão apertou no texto da linha `linha`: começa uma seleção ali.
+    fn apertou_no_codigo(&mut self, linha: usize, x: Pixels, editavel: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(coluna) = self.coluna_no_x(x, window) else { return };
+        self.selecao_no_codigo = Some(SelecaoNoCodigo { inicio: (linha, coluna), fim: (linha, coluna), arrastando: true, ponto: None, editavel });
+        cx.notify();
+    }
+
+    /// O ponteiro, com o botão apertado, passou pela linha `linha`: a seleção vai até ali.
+    fn arrastou_no_codigo(&mut self, linha: usize, x: Pixels, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.selecao_no_codigo.is_some_and(|s| s.arrastando) {
+            return;
+        }
+        let Some(coluna) = self.coluna_no_x(x, window) else { return };
+        if let Some(sel) = self.selecao_no_codigo.as_mut()
+            && sel.fim != (linha, coluna)
+        {
+            sel.fim = (linha, coluna);
+            cx.notify();
+        }
+    }
+
+    /// O botão soltou: sem arrasto é um clique (abre o editor ali, no que se edita); com ele, a
+    /// barra de Mencionar e Copiar aparece embaixo de onde soltou.
+    pub(super) fn soltou_no_codigo(&mut self, ponto: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(mut sel) = self.selecao_no_codigo.take() else { return };
+        if sel.vazia() {
+            if sel.editavel {
+                self.entrar_no_editor(sel.inicio.0, sel.inicio.1, window, cx);
+            }
+            cx.notify();
+            return;
+        }
+        sel.arrastando = false;
+        sel.ponto = Some(ponto);
+        self.selecao_no_codigo = Some(sel);
+        cx.notify();
+    }
+
     /// Um clique no número da linha: escolhe a linha (o segundo clique nela desfaz); com Shift,
     /// estende a escolha desde a primeira.
     pub(super) fn escolher_linha(&mut self, linha: u32, estender: bool, cx: &mut Context<Self>) {
+        self.selecao_no_codigo = None;
         match (estender, self.arquivo_ancora) {
             (true, Some(ancora)) => self.arquivo_selecao = Some((ancora.min(linha), ancora.max(linha))),
             _ if self.arquivo_selecao == Some((linha, linha)) => {
@@ -1678,6 +2032,8 @@ impl Janela {
     /// Ctrl+F com o foco no arquivo (ou "Buscar no arquivo", no "…" e na paleta): abre a barra da
     /// busca, ou volta o foco a ela, com o termo de antes selecionado. A imagem não tem o que buscar.
     pub(super) fn abrir_busca_no_arquivo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A edição dobra as linhas iguais fora da busca e as mostra todas com ela.
+        self.esquecer_vista();
         let Some((raiz, caminho)) = self.arquivo_aberto.clone() else {
             window.push_notification(aviso(Tom::Info, "Abra um arquivo à direita para buscar nele."), cx);
             return;
@@ -1703,6 +2059,8 @@ impl Janela {
     /// Esc (ou o ×): fecha a barra e devolve o foco ao painel do arquivo; o termo fica guardado, e
     /// o markdown volta a aparecer renderizado.
     fn fechar_busca_no_arquivo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A edição dobra as linhas iguais fora da busca e as mostra todas com ela.
+        self.esquecer_vista();
         if !self.busca_arquivo.aberta {
             // Sem barra aberta, o Esc é de quem vem depois (recolher a gaveta, parar o turno).
             cx.propagate();
@@ -1808,14 +2166,37 @@ impl Janela {
     }
 
     /// O × da faixa da edição: o arquivo fica aberto, sem as marcas.
+    /// "Arquivo": o arquivo como está, com a edição guardada para o "Mudanças".
     fn sair_da_edicao(&mut self, cx: &mut Context<Self>) {
-        self.arquivo_edicao = None;
+        if let Some(edicao) = self.arquivo_edicao.take() {
+            self.edicao_fora = Some(edicao);
+        }
         self.esquecer_vista();
+        cx.notify();
+    }
+
+    /// "Mudanças": volta à edição guardada, na primeira mudança. Editando, grava e sai antes.
+    fn voltar_a_edicao(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(edicao) = self.edicao_fora.take() else {
+            return;
+        };
+        self.largar_editor(window, cx);
+        self.arquivo_edicao = Some(edicao);
+        self.esquecer_vista();
+        self.edicao_atual = 0;
+        self.edicao_rolar.set(true);
         cx.notify();
     }
 
     /// Larga a edição posta nas linhas: a próxima é montada de novo (a chave é o endereço da
     /// edição, que pode voltar a ser usado depois que ela some).
+    /// Abre a dobra que começa na linha `de` do arquivo.
+    fn abrir_dobra(&mut self, de: usize, cx: &mut Context<Self>) {
+        self.dobras_abertas.borrow_mut().insert(de);
+        self.esquecer_vista();
+        cx.notify();
+    }
+
     pub(super) fn esquecer_vista(&self) {
         if let Some(l) = self.arquivo_lido.borrow_mut().as_mut() {
             l.vista = None;
@@ -1979,8 +2360,54 @@ mod testes {
     use super::{
         Aviso, Conteudo, LINHA_MAXIMA, Passo, Saida, TETO_DE_LEITURA, achados_na_linha, achados_nas_linhas, cores_por_linha, icone_do_arquivo,
         ler_arquivo, linha_do_editor, nome_da_linguagem, nota_de_so_leitura, passo_da_revisao, saidas_do_aviso, tamanho,
-        titulo_do_binario,
+        titulo_do_binario, SelecaoNoCodigo, selecao_do_trecho,
     };
+
+    fn sel(inicio: (usize, usize), fim: (usize, usize)) -> SelecaoNoCodigo {
+        SelecaoNoCodigo { inicio, fim, arrastando: false, ponto: None, editavel: true }
+    }
+
+    /// A seleção por arrasto no código: o texto (de trás para a frente também), a faixa de cada
+    /// linha para pintar, as linhas que ela pega e se são linhas inteiras (aí a menção vai só com
+    /// as linhas; senão, com o trecho exato).
+    #[test]
+    fn a_selecao_no_codigo_da_o_texto_as_linhas_e_se_sao_inteiras() {
+        let linhas: Vec<SharedString> = vec!["fn a() {".into(), "    let é = 1;".into(), "}".into()];
+        let s = sel((1, 4), (1, 7));
+        assert_eq!(s.texto(&linhas), "let");
+        assert_eq!(s.linhas(), (2, 2));
+        assert!(!s.inteiras(&linhas));
+        // De trás para a frente, do meio da 2ª ao meio da 1ª.
+        let s = sel((1, 9), (0, 3));
+        assert_eq!(s.texto(&linhas), "a() {\n    let é");
+        assert_eq!(s.linhas(), (1, 2));
+        // A faixa da linha em bytes (o "é" tem 2): as colunas 0 a 9 da linha 2 são os bytes 0 a 10.
+        assert_eq!(s.faixa_na_linha(1, &linhas[1]), Some(0..10));
+        assert_eq!(s.faixa_na_linha(0, &linhas[0]), Some(3..8));
+        assert_eq!(s.faixa_na_linha(2, &linhas[2]), None);
+        // Do começo de uma linha ao fim de outra: linhas inteiras.
+        let s = sel((0, 0), (1, 99));
+        assert!(s.inteiras(&linhas));
+        assert_eq!(s.texto(&linhas), "fn a() {\n    let é = 1;");
+        // Terminar no começo da linha de baixo não a leva.
+        let s = sel((0, 0), (2, 0));
+        assert_eq!(s.linhas(), (1, 2));
+        assert!(s.inteiras(&linhas));
+        // Parada no mesmo lugar é um clique, não uma seleção.
+        assert!(sel((1, 3), (1, 3)).vazia());
+    }
+
+    /// A pílula de um trecho abre o arquivo com ele marcado, achado nas linhas dela.
+    #[test]
+    fn o_trecho_da_mencao_volta_como_selecao() {
+        let texto = "a\n  let x = 1;\n\tfim(x)\nb";
+        let s = selecao_do_trecho(texto, (2, 2), "x = 1").unwrap();
+        assert_eq!((s.inicio, s.fim), ((1, 6), (1, 11)));
+        // Em duas linhas, com a tabulação desenhada como 4 espaços.
+        let s = selecao_do_trecho(texto, (2, 3), "1;\n\tfim").unwrap();
+        assert_eq!((s.inicio, s.fim), ((1, 10), (2, 7)));
+        assert_eq!(selecao_do_trecho(texto, (1, 1), "x = 1"), None);
+    }
     use crate::tema::Lucide;
     use gpui_kit::{HighlightStyle, SharedString};
 

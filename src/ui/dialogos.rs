@@ -7,7 +7,6 @@ use gpui_kit::component::{
     Disableable as _, WindowExt as _, v_flex,
     dialog::Dialog,
     input::{Input, InputState},
-    tooltip::{ManagedTooltipExt as _, Tooltip},
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -374,16 +373,15 @@ impl Janela {
         let janela = cx.entity().downgrade();
         let vista = cx.new(|cx| Configuracoes::new(motor, janela, cx));
         self.foco_antes_do_dialogo(window, cx);
+        // Protótipo Linear (25/11/2026): o diálogo é a própria peça, no preto, sem o cabeçalho de
+        // cima (o título fica na coluna das partes e o da parte, ao lado do ×). Gravam na hora; o
+        // arquivo fica na dica da coluna.
+        let _ = dica;
         window.open_dialog(cx, move |dialogo, window, _| {
-            let dica = dica.clone();
-            let subtitulo = div()
-                .id("configuracoes-pasta")
-                .font_weight(FontWeight::NORMAL)
-                // Em Aparência e Atualizações não é dos chats: vale para o app, e grava na hora.
-                .child("Gravam na hora")
-                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx));
             moldura(dialogo, super::configuracoes::LARGURA_DAS_CONFIGURACOES, window)
-                .title(topo(CabecalhoDialogo::new("Configurações").subtitulo(subtitulo)))
+                .p_0()
+                .bg(Cores::preto())
+                .border_color(gpui_kit::transparent_black())
                 .child(vista.clone())
         });
     }
@@ -463,7 +461,7 @@ impl Janela {
         self.abrir_contas_em(false, conta, escolher, window, cx);
     }
 
-    fn abrir_contas(&mut self, entrar: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn abrir_contas(&mut self, entrar: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.abrir_contas_em(entrar, None, false, window, cx);
     }
 
@@ -555,18 +553,30 @@ impl Janela {
     /// Põe "@caminho " na caixa de mensagem, trocando o "@" solto que abriu a lista. O caminho é o
     /// relativo à pasta do chat.
     pub(super) fn mencionar(&mut self, caminho: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.mencionar_trecho(caminho, None, window, cx);
+        self.mencionar_trecho(caminho, None, None, window, cx);
     }
 
     /// Menciona um arquivo pelo caminho inteiro (o do painel da direita), com as linhas quando é
     /// um trecho: relativo à pasta do chat da caixa quando está nela; senão, o caminho inteiro.
     pub(super) fn mencionar_arquivo(&mut self, completo: &Path, linhas: Option<(u32, u32)>, window: &mut Window, cx: &mut Context<Self>) {
+        self.mencionar_pedaco(completo, linhas, None, window, cx);
+    }
+
+    /// Menciona um pedaço do arquivo: as linhas e, quando é parte delas, o texto exato.
+    pub(super) fn mencionar_pedaco(
+        &mut self,
+        completo: &Path,
+        linhas: Option<(u32, u32)>,
+        trecho: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let cwd = self.pasta_da_caixa(cx);
         let caminho = cwd
             .and_then(|cwd| completo.strip_prefix(dunce::canonicalize(&cwd).unwrap_or(cwd)).ok().map(crate::git::caminho_em_texto))
             .filter(|c| !c.is_empty())
             .unwrap_or_else(|| completo.display().to_string());
-        self.mencionar_trecho(&caminho, linhas, window, cx);
+        self.mencionar_trecho(&caminho, linhas, trecho, window, cx);
     }
 
     /// A pasta do chat da caixa do painel ativo.
@@ -577,15 +587,17 @@ impl Janela {
 
     /// Põe a menção no fim da caixa, como pílula (o texto dela, "@src/x.rs#L3-9", é o que vai ao
     /// agente), trocando o "@" solto que abriu a lista, e um espaço depois.
-    fn mencionar_trecho(&mut self, caminho: &str, linhas: Option<(u32, u32)>, window: &mut Window, cx: &mut Context<Self>) {
+    fn mencionar_trecho(&mut self, caminho: &str, linhas: Option<(u32, u32)>, trecho: Option<&str>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(composer) = self.composer_ativo() else {
             return;
         };
-        let texto = super::mencao::texto_da_mencao(caminho, linhas);
+        let texto = super::mencao::texto_da_mencao_com(caminho, linhas, trecho);
+        // O trecho que não cabe no formato (com « ou ») vai só com as linhas.
+        let trecho = trecho.filter(|_| texto.ends_with('»'));
         let ficha = self
             .pasta_da_caixa(cx)
             .and_then(|cwd| super::links_arquivo::resolver_mencao(&cwd, caminho))
-            .map(|inteiro| super::composer::ficha_da_mencao(&texto, &inteiro, linhas));
+            .map(|inteiro| super::composer::ficha_da_mencao(&texto, &inteiro, linhas, trecho));
         let atual = composer.read(cx).value().to_string();
         composer.update(cx, |c, cx| {
             let inicio = if atual.ends_with('@') {

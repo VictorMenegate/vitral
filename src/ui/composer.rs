@@ -22,14 +22,14 @@ use gpui_kit::*;
 
 use super::Janela;
 use super::componentes::{
-    BotaoRedondo, FaixaCaixa, Flutuante as _, TamanhoBotao, VarianteRedonda, botao_fantasma, cor_da_faixa,
+    Anel, BotaoRedondo, FaixaCaixa, Flutuante as _, TamanhoBotao, VarianteRedonda, botao_fantasma, cor_da_faixa,
     popover, variante_fantasma,
 };
 use super::movimento::{self, Curva, com_estado};
 use crate::{
     modelo::Chat,
     motor::{self, Motor},
-    tema::{Cores, Lucide, Tipo as _, esp, gradiente_quente, r, raio, tam},
+    tema::{Cores, Lucide, Tipo as _, esp, gradiente_quente, linear, r, raio, tam},
 };
 
 #[path = "composer_seletores.rs"]
@@ -40,31 +40,12 @@ pub(super) use seletores::Abertos as AbertosDoModelo;
 
 /// (valor, nome, descrição) dos modos de permissão do Claude Code.
 pub const MODOS: [(&str, &str, &str); 5] = [
-    (
-        "manual",
-        "Manual",
-        "Pede aprovação antes de cada edição ou comando",
-    ),
-    (
-        "acceptEdits",
-        "Aceitar edições",
-        "Edita arquivos sem perguntar; comandos ainda pedem",
-    ),
-    (
-        "plan",
-        "Planejar",
-        "Explora o código e apresenta um plano antes de mexer",
-    ),
-    (
-        "auto",
-        "Automático",
-        "Um classificador decide o que precisa de aprovação",
-    ),
-    (
-        "bypassPermissions",
-        "Sem perguntar",
-        "Faz tudo sem pedir permissão",
-    ),
+    // Textos curtos (Linear, 25/11/2026: "tudo muito verboso").
+    ("manual", "Manual", "Pede antes de tudo"),
+    ("acceptEdits", "Aceitar edições", "Edita sem pedir"),
+    ("plan", "Planejar", "Só planeja"),
+    ("auto", "Automático", "Decide sozinho"),
+    ("bypassPermissions", "Sem perguntar", "Nunca pede"),
 ];
 
 pub const MODELOS: [(&str, &str); 5] = [
@@ -430,8 +411,8 @@ pub(super) fn por_texto(c: &mut TextareaState, texto: String, window: &mut Windo
 /// menções ficarem de uma forma melhor"): o texto dela é o que vai ao agente ("@src/x.rs#L3-9");
 /// o id, o endereço que o clique abre (`vitral:mencao/…`); o rótulo, o nome curto ("x.rs:3-9").
 /// Apagar com Backspace leva a menção inteira.
-pub(super) fn ficha_da_mencao(texto: &str, inteiro: &str, linhas: Option<(u32, u32)>) -> InlineToken {
-    InlineToken::new(super::mencao::link_da_mencao(inteiro, linhas), texto.to_string())
+pub(super) fn ficha_da_mencao(texto: &str, inteiro: &str, linhas: Option<(u32, u32)>, trecho: Option<&str>) -> InlineToken {
+    InlineToken::new(super::mencao::link_da_mencao_com(inteiro, linhas, trecho), texto.to_string())
         .with_label(super::mencao::rotulo_da_mencao(inteiro, linhas))
 }
 
@@ -441,7 +422,7 @@ pub(super) fn conteudo_com_mencoes(texto: &str, base: &Path) -> InputContent {
     let mut conteudo = InputContent::new(texto.to_string());
     for (faixa, mencao) in super::mencao::mencoes_no_texto(texto) {
         let Some(inteiro) = super::links_arquivo::resolver_mencao(base, &mencao.caminho) else { continue };
-        let ficha = ficha_da_mencao(&texto[faixa.clone()], &inteiro, mencao.linhas);
+        let ficha = ficha_da_mencao(&texto[faixa.clone()], &inteiro, mencao.linhas, mencao.trecho.as_deref());
         if let Ok(com) = conteudo.clone().with_token(faixa, ficha) {
             conteudo = com;
         }
@@ -608,6 +589,33 @@ pub fn nome_curto_modelo(id: &str) -> String {
     }
 }
 
+/// O agente e o modelo do chat por extenso, para a linha do Este chat ("Claude · Opus 5.5").
+pub(super) fn modelo_por_extenso(motor: &Motor, chat: &Chat) -> String {
+    match chat.agente {
+        crate::modelo::Agente::Codex => match chat.modelo.as_deref() {
+            Some(m) => format!("Codex · {}", crate::agente_codex::nome_do_modelo(m)),
+            None => "Codex".to_string(),
+        },
+        crate::modelo::Agente::Gemini => match chat.modelo.as_deref() {
+            Some(m) => format!("Gemini · {}", crate::agente_gemini::nome_do_modelo(m)),
+            None => "Gemini".to_string(),
+        },
+        crate::modelo::Agente::Claude => {
+            let efetivo = chat.modelo.clone().unwrap_or_else(|| motor.config.modelo_chats.clone());
+            let em_uso = chat.modelo_atual.as_deref().filter(|m| !m.is_empty());
+            format!("Claude · {}", rotulo_modelo(&efetivo, em_uso))
+        }
+    }
+}
+
+/// O nível de esforço do chat (o índice em `ESFORCOS`), o que o automático usa agora e se o
+/// modelo usa esforço.
+pub(super) fn esforco_do_chat(motor: &Motor, chat: &Chat) -> (usize, Option<usize>, bool) {
+    let atual = indice_esforco(chat.esforco.as_deref().unwrap_or(""));
+    let padrao = motor.esforco_automatico(chat).map(|e| indice_esforco(&e)).filter(|i| *i != 0);
+    (atual, padrao, usa_esforco(chat.modelo_atual.as_deref()))
+}
+
 /// "Opus 5.5" vira "Claude Opus 5.5"; "Padrão" e nomes de fora do Claude ficam como estão.
 fn com_claude(rotulo: &str) -> String {
     if MODELOS[1..].iter().any(|(_, familia)| rotulo.starts_with(familia)) {
@@ -660,9 +668,13 @@ pub(super) fn borda_ao_conteudo(estreita: bool, window: &Window) -> Pixels {
 /// arquivos mudados") medem daqui, para o texto de tudo cair na mesma coluna. A faixa usava 16
 /// fixo e, quando a coluna foi a 24 (17/11/2026), ficou 8 px à esquerda do texto da caixa e 8
 /// antes do enviar (folha dimensional, 23/11/2026).
-pub(super) fn margem_da_caixa(estreita: bool) -> Rems {
-    if estreita { esp::E16 } else { super::mensagens::MARGEM_DA_COLUNA }
+pub(super) fn margem_da_caixa(_estreita: bool) -> Rems {
+    // 8 do cartão em qualquer largura (protótipo Linear, 25/11/2026).
+    esp::E8
 }
+
+/// O enviar e o parar da caixa: 26,67, o do protótipo Linear (25/11/2026).
+const ALTURA_DO_ENVIAR: f32 = 26.67;
 
 /// A dica dos botões de compactar: o clique compacta já; quem quer foco escreve a instrução.
 pub(super) const DICA_DO_COMPACTAR: &str =
@@ -786,7 +798,7 @@ impl Janela {
         let barra = self.barra_da_caixa(motor, chat, ix, &barra, anexos.is_empty(), window, cx);
         // O mesmo canto na caixa larga e na estreita (dono, 13/11/2026: a estreita estava menos
         // redonda que o resto).
-        let raio_caixa = raio::peca();
+        let raio_caixa = raio::moldura();
         let foco_da_caixa = composer.read(cx).focus_handle(cx);
         let caixa_vazia = composer.read(cx).value().trim().is_empty();
         // "Letra da conversa também na caixa de mensagem".
@@ -801,7 +813,8 @@ impl Janela {
         // menos a borda de 1 e a folga de 2 (eram 4; dono, 16/11/2026: "diminui as bordas"). A
         // conta tirava só a folga e o canto de dentro saía 1 px mais aberto (2 a 150%), visto na
         // folha dimensional de 23/11/2026. A borda é 1 px em qualquer zoom; a folga cresce com ele.
-        let raio_miolo = raio::peca() - px(1.) - tam(window, 2.);
+        // Protótipo Linear (25/11/2026): a moldura de 17 com 3 de folga, e o miolo de 14 dentro.
+        let raio_miolo = raio::cartao();
         // A linha de estado: com o chat trabalhando, o que ele faz agora (M15); parada, as teclas.
         // A linha de baixo só existe com o chat trabalhando (o que ele faz agora e o Esc). Parada,
         // a caixa não tem mais a linha das teclas (dono, 13/11/2026: "tira essa parte de baixo").
@@ -818,10 +831,12 @@ impl Janela {
             .flex_col()
             .min_w_0()
             .rounded(raio_miolo)
-            .border_1()
-            .border_color(Cores::borda())
             .bg(gradiente_quente())
-            .map(|s| if estreita { s.pt(esp::E8).pb(esp::E6).px(esp::E6) } else { s.pt(esp::E12).pb(esp::E8).px(esp::E8) })
+            // 8 em cima, 6 na direita, 5 embaixo; na esquerda, só os 10 do campo do kit, e os
+            // controles a 6 da borda (os 10 do protótipo menos os 4 que eles voltam).
+            .pt(linear::CAIXA_ALTO)
+            .pr(linear::CAIXA_DIREITA)
+            .pb(linear::CAIXA_BAIXO)
             .child(
                 // Só o campo da mensagem fica em "Composer": o Shift+Tab troca o modo aqui, e não
                 // na busca de um popover da caixa. Sem margem própria, o texto (com os 10 do campo
@@ -840,11 +855,15 @@ impl Janela {
                     } else {
                         "Composer"
                     })
-                    .when(estreita, |s| s.ml(r(-2.)))
                     .child(super::vista_mensagens::na_letra(
                         fator_da_caixa,
                         Textarea::new(&composer)
                             .appearance(false)
+                            // 14/21, sem o respiro de cima e de baixo do kit: o campo começa nos 8
+                            // do miolo (protótipo Linear, 25/11/2026).
+                            .respiro_vertical(px(0.))
+                            .text_size(r(14.))
+                            .line_height(r(21.))
                             // As menções de arquivo são pílulas dentro do texto; o clique abre o
                             // arquivo à direita, nas linhas.
                             .token(|ficha, _, _| {
@@ -854,6 +873,8 @@ impl Janela {
                                         SharedString::from(format!("ficha-{id}")),
                                         &inteiro,
                                         linhas,
+                                        super::mencao::trecho_do_link(&id).as_deref(),
+                                        false,
                                         ficha.is_selected(),
                                         ficha.line_height(),
                                     )
@@ -904,19 +925,20 @@ impl Janela {
                             }),
                     )),
             )
-            .child(div().h(esp::E8))
-            .child(barra);
+            .child(div().h(esp::E4))
+            .child(div().pl(esp::E6).child(barra));
         // Na altura, os 2 de cima igualam a folga de baixo da moldura. Quando o turno começa, ela
         // entra com fade (sem deslize: ela abre o lugar dela na moldura, e a caixa cresce 22 px).
         let estado_novo = estado.is_some() && self.paineis[ix].ja_vistos.borrow_mut().novo("linha-de-estado");
         let linha_de_estado = estado.map(|(estado_esquerda, estado_direita)| {
+            // 22 de altura, 8 na esquerda e 9 na direita, em 12 (protótipo Linear, 25/11/2026).
             let linha = h_flex()
                 .h(r(22.))
-                .pt(esp::E2)
-                .px(esp::E12)
+                .pl(linear::ESTADO_ESQUERDA)
+                .pr(linear::ESTADO_DIREITA)
                 .gap(esp::E8)
                 .justify_between()
-                .etiqueta()
+                .metadado()
                 .text_color(Cores::tenue())
                 .child(h_flex().flex_1().min_w_0().gap(esp::E12).overflow_hidden().children(estado_esquerda))
                 .child(h_flex().flex_none().gap(esp::E12).children(estado_direita));
@@ -925,14 +947,16 @@ impl Janela {
         // A moldura preta: o campo e a linha de estado. O vão entre as peças, a folga e a linha
         // são da caixa: o clique ali não leva o foco para a janela. O campo e os botões tratam o
         // deles antes.
+        let tem_estado = linha_de_estado.is_some();
         let moldura = v_flex()
             .min_w_0()
             // O hover da caixa acende os controles que recuam nos painéis de fundo.
             .group(grupo_da_caixa(painel_id))
             .rounded(raio_caixa)
             .bg(Cores::preto())
-            .border_1()
-            .p(esp::E2)
+            // 3 de folga; embaixo, a linha de estado quando há (protótipo Linear, 25/11/2026).
+            .p(linear::MOLDURA_FOLGA)
+            .when(tem_estado, |s| s.pb_0())
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                 if !window.default_prevented() {
                     window.focus(&foco_da_caixa, cx);
@@ -968,7 +992,7 @@ impl Janela {
 
         div()
             .map(|s| super::mensagens::coluna(s, estreita))
-            .pb(esp::E12)
+            .pb(esp::E6)
             .on_prepaint(ajustar_linhas(janela.clone(), painel_id, linhas))
             .key_context("Caixa")
             .on_action(cx.listener({
@@ -1029,7 +1053,8 @@ impl Janela {
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
         let estreita = b.faixa == FaixaCaixa::Estreita;
-        let altura = if estreita { 28. } else { 32. };
+        // A fileira dos controles: os chips de 26 e o enviar de 26,67 (protótipo Linear, 25/11/2026).
+        let altura = ALTURA_DO_ENVIAR;
         let vazio = sem_anexos && b.composer.read(cx).value().trim().is_empty();
         let envios = self.paineis[ix].envios;
         // Nos painéis de fundo, a caixa recua: o modelo, o esforço, o clipe, o "⋯" e o modo (menos
@@ -1055,7 +1080,7 @@ impl Janela {
             })
             .into_any_element()
         };
-        let grupo = |e: AnyElement| div().flex_none().ml(esp::E4).child(e);
+        let grupo = |e: AnyElement| div().flex_none().ml(linear::CONTROLES_VAO).child(e);
         // O esforço que não cabe inteiro ao lado do modelo fica só com o ícone, em vez de ir para a
         // segunda linha escondida e sumir (`decidir_esforco`).
         let compacto = self.paineis[ix].esforco_compacto;
@@ -1108,13 +1133,11 @@ impl Janela {
                     .flex()
                     .flex_none()
                     .items_center()
-                    .gap(r(4.))
-                    .ml(r(8.))
+                    .gap(linear::CONTROLES_VAO)
+                    .ml(linear::CONTROLES_VAO)
                     .children(self.anel_do_contexto(chat, b, cx))
-                    .when(!estreita, |s| s.child(em_repouso("repouso-anexar", self.botao_anexar(b, window, cx).into_any_element())))
-                    .when(b.faixa != FaixaCaixa::Media, |s| {
-                        s.child(em_repouso("repouso-mais", self.botao_mais(motor, chat, b, window, cx).into_any_element()))
-                    })
+                    // O clipe mora no "…" (protótipo Linear, 25/11/2026).
+                    .child(em_repouso("repouso-mais", self.botao_mais(motor, chat, b, window, cx).into_any_element()))
                     .children(self.botoes_de_envio(b, vazio, enter_no_turno(motor, &chat.id), envios, cx)),
             )
     }
@@ -1130,10 +1153,8 @@ impl Janela {
         envios: u64,
         cx: &Context<Self>,
     ) -> Vec<AnyElement> {
-        let estreita = b.faixa == FaixaCaixa::Estreita;
-        // O enviar na altura dos chips da linha (eram 36 ao lado de 32; rodada de concisão,
-        // 17/11/2026: vizinhos na mesma altura).
-        let (grande, pequeno) = if estreita { (28., 28.) } else { (32., 32.) };
+        // O enviar e o parar de 26,67, no azul-marinho do escolhido (protótipo Linear, 25/11/2026).
+        let (grande, pequeno) = (ALTURA_DO_ENVIAR, 26.);
         let painel = b.painel;
         let parar = || {
             let (motor, chat) = (self.motor.clone(), b.chat.clone());
@@ -1145,9 +1166,9 @@ impl Janela {
         };
         let dica_parar = "Parar esta conversa";
         let principal = |icone: Option<Lucide>, dica: &'static str| {
-            // O enviar (e o parar) é uma tecla de metal, o par do "+" da lista.
+            // O enviar (e o parar), o par do "+" da lista.
             BotaoRedondo::new(("enviar", painel as usize), icone.map(Into::into), dica)
-                .variante(VarianteRedonda::Metal)
+                .variante(VarianteRedonda::Primario)
                 .diametro(grande)
                 .pulso(envios)
         };
@@ -1207,29 +1228,26 @@ impl Janela {
         // Um medidor deitado, e não um anel: o anel com um pedaço azul lia como o "carregando"
         // (dono, 18/11/2026: "melhora o design dessa parte de usos e contexto").
         let cor_arco = cor_da_faixa(fracao, Cores::destaque());
-        let barra = div()
-            .flex_none()
-            .w(r(if estreita { 16. } else { 24. }))
-            .h(r(4.))
-            .rounded_full()
-            .bg(Cores::traco())
-            .child(div().h_full().w(relative(fracao.clamp(0.06, 1.))).rounded_full().bg(cor_arco));
+        // Linear (25/11/2026): de novo um anel, fino, com o número ao lado ("essa parte da
+        // porcentagem de contexto tá feia", sobre o medidor deitado de 18/11).
+        let barra = Anel::new(("anel-contexto", b.painel as usize), fracao).diametro(14.).espessura(2.).cor(cor_arco);
         let cor_numero = if cor_arco == Cores::destaque() { Cores::tenue() } else { cor_arco };
         // O Codex e o Gemini não dizem o custo: o popover mostra os tokens.
         let o_que_abre = if chat.agente == crate::modelo::Agente::Claude { "O custo, o modelo e o Compactar" } else { "Os tokens, o modelo e o Compactar" };
         let dica: SharedString = format!("Contexto: {} de {}\n{o_que_abre}", milhares(usados), tokens(janela)).into();
-        let lado = if estreita { 28. } else { 32. };
+        // O anel de 14 e a porcentagem em 12, com 5 entre eles e 4 dos lados (protótipo Linear).
+        let _ = estreita;
         let gatilho = Button::new(("contexto", b.painel as usize))
             .custom(variante_fantasma(cx))
-            .h(r(lado))
-            .px(if estreita { esp::E4 } else { esp::E8 })
-            .rounded(raio::de(lado))
+            .h(r(26.))
+            .px(esp::E4)
+            .rounded(raio::de(26.))
             .tooltip(dica)
             .child(
                 h_flex()
-                    .gap(if estreita { esp::E4 } else { esp::E6 })
+                    .gap(linear::CONTEXTO_VAO)
                     .child(barra)
-                    .child(div().etiqueta().text_color(cor_numero).child(format!("{numero}%"))),
+                    .child(div().text_size(r(12.)).line_height(r(16.)).tabular().text_color(cor_numero).child(format!("{numero}%"))),
             );
         let (motor, janela_e, chat_id, painel) = (self.motor.clone(), cx.entity().downgrade(), chat.id.clone(), b.painel);
         Some(
@@ -1964,7 +1982,7 @@ impl Janela {
             .filter(|c| c.contains(['.', '/']))
             .zip(cwd)
             .and_then(|(caminho, cwd)| super::links_arquivo::resolver_mencao(&cwd, caminho))
-            .map(|inteiro| ficha_da_mencao(valor, &inteiro, None));
+            .map(|inteiro| ficha_da_mencao(valor, &inteiro, None, None));
         composer.update(cx, |c, cx| trocar_palavra(c, inicio, fim, valor, ficha, window, cx));
         let foco = composer.read(cx).focus_handle(cx);
         window.focus(&foco, cx);

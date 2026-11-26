@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, DefiniteLength, Edges, ElementId, Entity, Hsla, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, Rems, RenderOnce, Role, SharedString,
+    IntoElement, MouseButton, ParentElement as _, Pixels, Rems, RenderOnce, Role, SharedString,
     StyleRefinement, Styled, TextAlign, TouchPhase, Window, div, px, relative,
 };
 
@@ -114,6 +114,10 @@ pub struct Input {
     state: TextInputState,
     style: StyleRefinement,
     size: Size,
+    /// Vitral: o respiro de cima e de baixo do editor de várias linhas, no lugar do do tamanho.
+    editor_py: Option<Pixels>,
+    /// Vitral: a margem dos lados do editor de várias linhas (a página do .md a quer em 0).
+    editor_px: Option<Pixels>,
     prefix: Option<AnyElement>,
     suffix: Option<AnyElement>,
     height: Option<DefiniteLength>,
@@ -229,6 +233,8 @@ impl Input {
             id: None,
             state,
             size: Size::default(),
+            editor_py: None,
+            editor_px: None,
             style: StyleRefinement::default(),
             prefix: None,
             suffix: None,
@@ -301,6 +307,18 @@ impl Input {
     /// Set height of the input (Multi-line only).
     pub fn h(mut self, height: impl Into<DefiniteLength>) -> Self {
         self.height = Some(height.into());
+        self
+    }
+
+    /// Vitral: o respiro de cima e de baixo do editor de várias linhas (o padrão é o do tamanho).
+    pub fn respiro_vertical(mut self, py: Pixels) -> Self {
+        self.editor_py = Some(py);
+        self
+    }
+
+    /// Vitral: a margem dos lados do editor de várias linhas.
+    pub fn respiro_lateral(mut self, px: Pixels) -> Self {
+        self.editor_px = Some(px);
         self
     }
 
@@ -589,14 +607,14 @@ impl RenderOnce for Input {
         state.set_editor_paddings(
             if state.presentation(cx).is_multi_line() {
                 Edges {
-                    top: self.size.input_py(),
-                    right: input_px,
-                    bottom: self.size.input_py(),
-                    left: if state.presentation(cx).is_code_editor() {
+                    top: self.editor_py.unwrap_or(self.size.input_py()),
+                    right: self.editor_px.unwrap_or(input_px),
+                    bottom: self.editor_py.unwrap_or(self.size.input_py()),
+                    left: self.editor_px.unwrap_or(if state.presentation(cx).is_code_editor() {
                         input_px.min(px(6.))
                     } else {
                         input_px
-                    },
+                    }),
                 }
             } else {
                 Edges::default()

@@ -27,9 +27,10 @@ use gpui_kit::*;
 use super::{
     AbaLateral, Buscar, Filtro, Gaveta, Janela, NovaConversa,
     componentes::{
-        BotaoRedondo, CabecalhoDeSecao, CartaoDeLista, barra_de_rolagem, ControleSegmentado, EstadoVazio,
-        ALTURA_DA_LINHA_DE_CHAT, PreviaArrasto, Segmento, Sinal, TamanhoBotao, Tom,
-        VarianteRedonda, aviso, aviso_com_acao, botao_fantasma, botao_icone, botao_primario, campo_de_busca_de,
+        BotaoRedondo, CabecalhoDeSecao, CartaoDeLista, SecaoDaLista, barra_de_rolagem, EstadoVazio,
+        ALTURA_DA_LINHA_DE_CHAT, PreviaArrasto, Sinal, TamanhoBotao, Tom,
+        Reflexo as _, VarianteRedonda, aviso, aviso_com_acao, botao_fantasma, botao_icone, botao_primario, campo_de_busca_de,
+        campo_de_busca_pequeno,
         contagem, icone, motivo_curto, numero_painel, sinal_do_chat, variante_fantasma,
     },
     dialogos::{com_til, nome_da_pasta},
@@ -41,7 +42,7 @@ use super::{
 use crate::{
     modelo::{Chat, Execucao, Item, agora},
     motor::Motor,
-    tema::{Cores, Lucide, Tipo as _, altura, esp, r, raio},
+    tema::{Cores, Lucide, Tipo as _, esp, linear, r, raio},
 };
 
 /// Larguras da lista, a 100% (a conta é a mesma em qualquer zoom, porque o texto cresce junto).
@@ -74,13 +75,6 @@ impl Aperto {
     }
 }
 
-/// O texto da busca: "Buscar", e o resto na dica do campo (com o Ctrl+K).
-fn dica_da_busca(aba: AbaLateral, apertada: bool) -> &'static str {
-    match (aba, apertada) {
-        (AbaLateral::Arquivos, false) => "Buscar arquivos",
-        _ => "Buscar",
-    }
-}
 
 /// Onde uma conversa aparece na lista.
 #[derive(PartialEq)]
@@ -91,20 +85,22 @@ enum Secao {
     Conversas,
 }
 
-/// Faixas de data das conversas paradas, pela última atividade: o tempo de cada cartão já está
-/// nele, então bastam duas.
+/// Faixas de data das conversas paradas, pela última atividade, no jeito do Linear (25/11/2026):
+/// Hoje, Esta semana e Mais antigas, cada uma com o título à vista.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Faixa {
-    Recentes,
+    Hoje,
+    EstaSemana,
     Antigas,
 }
 
 impl Faixa {
-    const TODAS: [Faixa; 2] = [Faixa::Recentes, Faixa::Antigas];
+    const TODAS: [Faixa; 3] = [Faixa::Hoje, Faixa::EstaSemana, Faixa::Antigas];
 
     fn nome(self) -> &'static str {
         match self {
-            Faixa::Recentes => "Recentes",
+            Faixa::Hoje => "Hoje",
+            Faixa::EstaSemana => "Esta semana",
             Faixa::Antigas => "Mais antigas",
         }
     }
@@ -112,7 +108,13 @@ impl Faixa {
     /// `hoje` é a meia-noite local de hoje; os 7 dias contam a partir dela.
     fn de(instante: u64, hoje: u64) -> Faixa {
         const DIA: u64 = 86_400;
-        if instante >= hoje.saturating_sub(7 * DIA) { Faixa::Recentes } else { Faixa::Antigas }
+        if instante >= hoje {
+            Faixa::Hoje
+        } else if instante >= hoje.saturating_sub(7 * DIA) {
+            Faixa::EstaSemana
+        } else {
+            Faixa::Antigas
+        }
     }
 }
 
@@ -446,7 +448,9 @@ fn posicao_do_realce(n: usize, atual: Option<usize>, tecla: &str) -> Option<usiz
     }
 }
 
-/// "3 rodando": a pasta inteira, sem filtro; nada quando nada roda.
+/// "3 rodando": a pasta inteira, sem filtro; nada quando nada roda. Saiu do rodapé da lista no
+/// Linear (a seção Rodando já conta); fica para os testes.
+#[cfg(test)]
 fn texto_agentes(rodando: usize) -> Option<String> {
     (rodando > 0).then(|| format!("{rodando} rodando"))
 }
@@ -588,10 +592,6 @@ struct Navegavel {
 struct Montagem {
     itens: Vec<AnyElement>,
     navegaveis: Vec<Navegavel>,
-    /// A lista dos chats é corrida: o que espera você, o que roda, as fixadas e os outros, nessa
-    /// ordem, sem o título de cada seção (o ponto do cartão e o alfinete já dizem qual é). As
-    /// Arquivadas têm os títulos das faixas de data.
-    corrida: bool,
     /// As posições (entre os filhos da lista) que estão perto da área à vista: fora delas, o cartão
     /// vira um espaço da mesma altura. `None` desenha tudo.
     a_vista: Option<Range<usize>>,
@@ -613,16 +613,9 @@ fn linhas_a_vista(rolado: f32, visivel: f32, altura: f32, margem: f32) -> Option
 }
 
 impl Montagem {
-    /// A primeira seção visível fica com 4 em cima.
-    fn cabecalho(&mut self, c: CabecalhoDeSecao) {
-        if self.corrida {
-            if self.itens.is_empty() {
-                self.itens.push(div().flex_none().h(esp::E4).into_any_element());
-            }
-            return;
-        }
-        let item = c.primeira(self.itens.is_empty()).into_any_element();
-        self.itens.push(item);
+    /// O título de uma seção.
+    fn secao(&mut self, s: SecaoDaLista) {
+        self.itens.push(s.into_any_element());
     }
 
     fn navegavel(&mut self, e: AnyElement, chat: &str, pendencia: bool) {
@@ -652,7 +645,8 @@ fn linha_meta(altura: f32) -> Div {
 /// numa coluna só. Era mono de 11 apagado, que dava 2,6 a 3,4:1 e um espaço largo em "5  d"
 /// (relatório de design, 16/11/2026).
 fn hora_do_cartao() -> Div {
-    linha_meta(20.).metadado()
+    // 12,5 no tênue da lista (protótipo Linear, 25/11/2026).
+    linha_meta(20.).metadado().text_size(r(12.5))
 }
 
 /// A prévia: o motivo (o ponto do sinal e o rótulo em texto) e o texto tênue cortado, separados
@@ -689,8 +683,8 @@ fn campo_da_lista(estado: &Entity<InputState>, aba: AbaLateral, estreita: bool, 
     // O atalho ("Ctrl" "K") à direita, com o campo vazio e sem foco; abaixo de 276 de lista, nada.
     // Só na aba Conversas: o Ctrl+K leva a ela, então na busca de arquivos ele enganaria.
     let atalho: Option<Box<dyn Action>> = (!estreita && conversas).then(|| Box::new(Buscar) as Box<dyn Action>);
-    // No alto da lista, o logo, a busca e o "+" têm a mesma altura (40).
-    campo_de_busca_de("busca-lista", estado, atalho, 40., window, cx)
+    // No alto da lista, a busca e o "+" com 30 (protótipo Linear, 25/11/2026).
+    campo_de_busca_de("busca-lista", estado, atalho, 30., window, cx)
         // Com o cursor no campo, a dica sairia por cima dos resultados.
         .when(!focado, |s| {
             s.dica_no_ponteiro(move |window, cx| {
@@ -826,7 +820,9 @@ fn acoes_do_arquivo(
         )
 }
 
-/// Uma linha da árvore de arquivos: 28 de altura e 16 de recuo por nível.
+/// Uma linha da árvore de arquivos no jeito do Linear (25/11/2026): 24 de altura, 14 de recuo por
+/// nível, a seta de 12 no apagado, o ícone de 14 e o nome em 12,5; à direita, a letra do git (M,
+/// A); a pasta com mudança dentro fica com o nome âmbar.
 #[allow(clippy::too_many_arguments)]
 fn linha_da_arvore(
     ix: usize,
@@ -834,16 +830,18 @@ fn linha_da_arvore(
     pasta: &Path,
     aberto: Option<&str>,
     ignorados: Option<&super::seletor_arquivos::Ignorados>,
+    marcas: Option<&super::git_da_pasta::MarcasDoGit>,
     janela: &WeakEntity<Janela>,
     window: &Window,
     cx: &App,
 ) -> ListItem {
     const GRUPO: &str = "linha-da-arvore";
     let caminho = entrada.item().id.to_string();
+    let recuo = 6. + 14. * entrada.depth() as f32;
     // A linha que só avisa, dentro de uma pasta ignorada: "Lendo…" ou "Pasta vazia".
     if caminho.ends_with(MARCA_DE_AVISO) {
-        return ListItem::new(ix).h(r(28.)).py_0().pl(r(8. + 16. * entrada.depth() as f32 + 18.)).pr(esp::E4).child(
-            div().metadado().text_color(Cores::apagado()).child(entrada.item().label.clone()),
+        return ListItem::new(ix).h(r(24.)).py_0().pl(r(recuo + 18.)).pr(esp::E8).child(
+            div().text_size(r(12.)).text_color(Cores::apagado()).child(entrada.item().label.clone()),
         );
     }
     let e_pasta = entrada.is_folder();
@@ -852,42 +850,53 @@ fn linha_da_arvore(
     let ignorado = ignorados.is_some_and(|i| {
         i.entradas.binary_search(&caminho).is_ok() || i.entradas.binary_search(&format!("{caminho}/")).is_ok()
     });
+    let marca = marcas.and_then(|m| m.arquivos.get(&caminho)).filter(|_| !e_pasta).copied();
+    let mudou_dentro = e_pasta && marcas.is_some_and(|m| m.pastas.contains(&caminho));
     let escolhido = aberto == Some(caminho.as_str());
-    let simbolo = match (e_pasta, expandida) {
-        (true, true) => Lucide::FolderOpen,
-        (true, false) => Lucide::Folder,
+    let simbolo = match e_pasta {
+        true => Lucide::Folder,
         // Uma imagem se acha na árvore pelo ícone, antes de abrir.
         _ if crate::claude::imagem_de_ver(Path::new(&caminho)) => Lucide::FileImage,
-        _ => Lucide::FileText,
+        _ => Lucide::File,
     };
     let seta = e_pasta.then(|| icone(if expandida { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12., window));
+    let cor_do_nome = if mudou_dentro {
+        Cores::ambar()
+    } else if ignorado {
+        Cores::tenue()
+    } else {
+        Cores::texto_da_fala()
+    };
     let item = ListItem::new(ix)
         .group(GRUPO)
-        .h(r(28.))
+        .h(r(24.))
         .py_0()
-        .pl(r(8. + 16. * entrada.depth() as f32))
-        .pr(esp::E4)
-        .rounded(raio::CONTROLE)
+        .pl(r(recuo))
+        .pr(esp::E8)
+        .rounded(raio::de(20.))
         .when(escolhido, |l| l.bg(Cores::selecao()))
         .child(
             h_flex()
                 .w_full()
                 .min_w_0()
                 .gap(esp::E6)
-                .child(div().flex_none().w(r(12.)).text_color(Cores::tenue()).children(seta))
-                .child(div().flex_none().text_color(Cores::tenue()).child(icone(simbolo, 16., window)))
+                .child(div().flex_none().w(r(12.)).text_color(Cores::apagado()).children(seta))
+                .child(div().flex_none().text_color(Cores::tenue()).child(icone(simbolo, 14., window)))
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
                         // O arquivo corta no meio, para a extensão ficar à vista; a pasta, no fim.
                         .map(|s| if e_pasta { s.truncate() } else { s.overflow_hidden().whitespace_nowrap().text_ellipsis_middle() })
-                        .text_size(r(13.))
-                        .line_height(r(18.))
-                        .font_weight(if e_pasta { FontWeight::MEDIUM } else { FontWeight::NORMAL })
-                        .text_color(if ignorado { Cores::tenue() } else { Cores::texto() })
+                        .text_size(r(12.5))
+                        .line_height(r(16.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(cor_do_nome)
                         .child(entrada.item().label.clone()),
                 )
+                .children(marca.map(|(letra, cor)| {
+                    div().flex_none().font_family(crate::tema::FONTE_MONO).text_size(r(10.5)).font_weight(FontWeight::SEMIBOLD).text_color(cor).child(letra)
+                }))
                 .when(!e_pasta, |d| {
                     d.child(acoes_do_arquivo(GRUPO, ix, janela.clone(), pasta.to_path_buf(), caminho.clone(), window, cx))
                 }),
@@ -985,7 +994,8 @@ impl Janela {
         let largura = window.use_keyed_state("largura-da-lista", cx, move |_, _| inicial);
         let largura_atual = *largura.read(cx);
         let aperto = Aperto::de(largura_atual);
-        let dica = dica_da_busca(self.aba, aperto.apertada);
+        // O texto da busca: "Buscar", e o resto na dica do campo (com o Ctrl+K).
+        let dica = "Buscar";
         if self.dica_busca != dica {
             self.dica_busca = dica;
             self.busca.update(cx, |b, cx| b.set_placeholder(dica, window, cx));
@@ -993,7 +1003,10 @@ impl Janela {
         let busca = self.busca.read(cx).value().to_lowercase();
         // A aba Arquivos mostra a pasta do chat aberto.
         let conversas = self.aba == AbaLateral::Conversas;
-        let arquivos = (!conversas).then(|| self.preparar_arquivos(motor_entidade, &busca, window, cx));
+        let arquivos = (!conversas).then(|| {
+            let pasta = self.selecionado.as_ref().and_then(|id| motor_entidade.read(cx).chat(id)).map(|c| c.cwd.clone());
+            self.preparar_arquivos(pasta, &busca, window, cx)
+        });
         // Com texto na busca e o cursor nela, o resultado marcado aparece mesmo sem o foco na lista:
         // é o que o Enter abre (rodada de uso, item 4.1).
         let busca_ativa = !busca.is_empty() && self.busca.read(cx).focus_handle(cx).is_focused(window);
@@ -1007,7 +1020,7 @@ impl Janela {
             janela: cx.entity().downgrade(),
         };
 
-        let abas = self.abas_da_lista(motor, &ctx, conversas);
+        let abas = self.abas_da_lista(motor, &ctx, conversas, window, cx);
         let montagem = if conversas { self.lista_conversas(motor, &ctx, window, cx) } else { Montagem::default() };
         // Com a busca ativa, o primeiro resultado já vem marcado: o realce que saiu da lista (o
         // termo mudou) volta ao primeiro, no quadro seguinte.
@@ -1021,9 +1034,8 @@ impl Janela {
         }
         let linha_busca = self.linha_da_busca(&montagem, &ctx, window, cx);
         let escopo = self.linha_escopo(motor, arquivos.as_ref(), &ctx, window, cx);
-        let rodape = self.rodape(motor, arquivos.as_ref(), window, cx);
         let conteudo = match &arquivos {
-            Some(a) => self.conteudo_arquivos(a, &ctx, window, cx),
+            Some(a) => self.conteudo_arquivos(a, &ctx, &self.busca.clone(), None, window, cx),
             None => {
                 let navegaveis = Rc::new(montagem.navegaveis);
                 let lista = v_flex()
@@ -1047,22 +1059,9 @@ impl Janela {
                     .min_h_0()
                     .mr(r(-8.))
                     .pr(esp::PECA)
+                    // Sem o degradê no pé (dono, 25/11/2026: "tá com uma sombra aqui embaixo"):
+                    // no protótipo Linear a lista corta seca em cima da barra de baixo.
                     .child(lista)
-                    // O pé esmaece no tom da lista: a última linha não fica cortada a seco na
-                    // linha do rodapé (revisão de design, 23/11/2026).
-                    .child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .right(esp::PECA)
-                            .bottom_0()
-                            .h(esp::E24)
-                            .bg(linear_gradient(
-                                180.,
-                                linear_color_stop(Cores::vidro_leitura().opacity(0.), 0.),
-                                linear_color_stop(Cores::vidro_leitura(), 1.),
-                            )),
-                    )
                     .child(barra_de_rolagem("barra-lista", &self.rolagem_lista))
                     .into_any_element()
             }
@@ -1076,7 +1075,8 @@ impl Janela {
         v_flex()
             .size_full()
             .min_w_0()
-            .px(esp::PECA)
+            .pl(linear::LISTA_ESQUERDA)
+            .pr(linear::LISTA_DIREITA)
             .rounded(crate::tema::raio_da_peca())
             .on_prepaint(move |limites, window, _| {
                 let nova = limites.size.width.as_f32() / super::escala(window);
@@ -1089,50 +1089,70 @@ impl Janela {
                     });
                 }
             })
-            // Uma linha só no alto: o logo (o menu do Vitral, também na gaveta) e as abas. A busca e
-            // o "+" moram no pé da lista (pedido do dono, 12/11/2026).
-            .child(self.topo_enxuto(motor_entidade, Some(abas), window, cx))
-            .child(div().flex_none().h(esp::E4))
+            // Linear (25/11/2026): a busca e o "+" no alto, na fileira de cima; logo abaixo,
+            // Conversas, Arquivos e Quadro de ideias. O logo, as Arquivadas e o sino foram para a
+            // barra de baixo da janela.
+            .child(self.topo_da_lista(linha_busca))
+            .child(abas)
             .children(escopo)
             .child(conteudo)
-            .children(rodape)
-            // Embaixo, o mesmo respiro da caixa de mensagem até a beirada da janela.
-            .child(linha_busca.mt(esp::E4).mb(esp::E16))
+            .child(div().flex_none().h(esp::E8))
             // Sem fundo nem aresta: a lista é a própria base da janela (duas camadas: a base com
             // a lista e a borda, e os cartões por cima). Na gaveta, a superfície é a da gaveta.
     }
 
-    /// As abas Conversas · Arquivos, num segmentado (o ponto âmbar na de Conversas quando algo
-    /// espera você e você está nos arquivos).
-    fn abas_da_lista(&self, motor: &Motor, ctx: &Contexto, conversas: bool) -> Div {
+    /// Conversas, Arquivos e Quadro de ideias, um embaixo do outro, no jeito do Linear (25/11/2026),
+    /// no lugar do segmentado Conversas · Arquivos: o escolhido na cor cheia, o Quadro abre o quadro
+    /// (Ctrl+I). O ponto âmbar na de Conversas quando algo espera você e você está nos arquivos.
+    fn abas_da_lista(&self, motor: &Motor, ctx: &Contexto, conversas: bool, window: &Window, cx: &Context<Self>) -> Div {
         let pendentes = motor.precisa_de_voce().numero();
-        let mut aba_conversas = Segmento::new("Conversas").icone(Lucide::MessagesSquare);
-        if !conversas && pendentes > 0 {
-            let dica = format!("{} você", contagem(pendentes, "chat esperando", "chats esperando"));
-            aba_conversas = aba_conversas.ponto(Cores::espera()).dica(dica);
-        }
-        let aba_arquivos = Segmento::new("Arquivos").icone(Lucide::Folder);
-        let janela = ctx.janela.clone();
-        let abas = ControleSegmentado::new(
-            "abas-da-lista",
-            [aba_conversas, aba_arquivos],
-            if conversas { 0 } else { 1 },
-            move |i, window, cx| {
+        // 32 de altura, 9 dos lados e entre o ícone e o nome, texto de 13,5 (protótipo Linear).
+        let linha = |id: &'static str, simbolo: Lucide, nome: &'static str, escolhido: bool| {
+            div()
+                .id(id)
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(linear::ITEM_LADO)
+                .h(r(32.))
+                .px(linear::ITEM_LADO)
+                .rounded(raio::CONTROLE)
+                .text_size(r(13.5))
+                .font_weight(FontWeight::MEDIUM)
+                .cursor_pointer()
+                .text_color(Cores::texto())
+                .when(escolhido, |d| d.bg(Cores::selecao_da_lista()))
+                .when(!escolhido, |d| d.hover(|s| s.bg(Cores::hover())))
+                .child(div().flex_none().text_color(if escolhido { Cores::texto() } else { Cores::tenue_da_lista() }).child(icone(simbolo, 16., window)))
+                .child(div().flex_1().min_w_0().truncate().child(nome))
+        };
+        let trocar = |aba: AbaLateral| {
+            let janela = ctx.janela.clone();
+            move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                 let _ = janela.update(cx, |this, cx| {
                     this.rolagem_lista.set_offset(point(px(0.), px(0.)));
                     this.realce_lista = None;
-                    let aba = if i == 0 { AbaLateral::Conversas } else { AbaLateral::Arquivos };
                     this.trocar_aba(aba, window, cx);
                 });
-            },
-        )
-        // Largura total, com as duas abas do mesmo tamanho e o rótulo no meio de cada uma.
-        .solto(true)
-        .largura_total(true)
-        .so_icone(ctx.aperto.estreita);
-        // 34 de altura, a do medalhão do logo: os dois dividem a fileira do alto.
-        let abas = gpui_kit::component::Sizable::with_size(abas, gpui_kit::component::Size::Size(px(34.)));
-        div().flex_none().mb(esp::E8).child(abas)
+            }
+        };
+        let ponto = (!conversas && pendentes > 0).then(|| div().flex_none().size(r(7.)).rounded_full().bg(Cores::espera()));
+        let atalho = (!ctx.aperto.estreita).then(|| div().flex_none().text_size(r(11.)).text_color(Cores::tenue_da_lista()).child("Ctrl I"));
+        let _ = cx;
+        v_flex()
+            .flex_none()
+            .mt(linear::ANTES_DA_SECAO)
+            .gap(esp::E2)
+            .mb(esp::E4)
+            .child(linha("lista-conversas", Lucide::MessagesSquare, "Conversas", conversas).children(ponto).on_click(trocar(AbaLateral::Conversas)))
+            // Os arquivos moram na direita (protótipo Linear, 25/11/2026): o item abre a aba deles,
+            // com o cursor na busca; a lista continua nas conversas.
+            .child(linha("lista-arquivos", Lucide::Folder, "Arquivos", false).on_click(cx.listener(|this, _, window, cx| this.abrir_aba_arquivos(window, cx))))
+            .child(
+                linha("lista-quadro", Lucide::Kanban, "Quadro de ideias", false)
+                    .children(atalho)
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(super::AbrirQuadroDeIdeias), cx)),
+            )
     }
 
     /// Busca (↓ entra na lista, Esc limpa e depois volta à caixa) e o + de nova conversa.
@@ -1225,11 +1245,11 @@ impl Janela {
         let nova = conversas.then(|| {
             BotaoRedondo::new("nova-conversa", Some(Lucide::Plus.into()), "Novo chat")
                 .dica_acao(Box::new(NovaConversa), None)
-                .variante(VarianteRedonda::Metal)
-                .diametro(40.)
+                .variante(VarianteRedonda::Primario)
+                .diametro(30.)
                 .on_click(cx.listener(|this, _, window, cx| this.novo_chat_direto(window, cx)))
         });
-        h_flex().flex_none().gap(esp::E8).mb(esp::E8).child(campo).children(nova)
+        h_flex().flex_none().gap(esp::E6).child(campo).children(nova)
     }
 
     /// Linha de escopo (36): nos Arquivos, de qual pasta (ou da cópia do chat aberto) e o ↻; nas
@@ -1330,90 +1350,32 @@ impl Janela {
         )
     }
 
-    /// Rodapé (36), só quando há o que mostrar: as Arquivadas (o ícone com o número, na guia) e
-    /// os agentes rodando no Vitral inteiro ("2 rodando"); em Arquivos, quantos arquivos a pasta
-    /// tem.
-    fn rodape(&self, motor: &Motor, arquivos: Option<&Arquivos>, window: &Window, cx: &Context<Self>) -> Option<Div> {
-        let rodando = motor.chats.iter().filter(|c| motor.execucao(&c.id).rodando()).count();
-        let agentes = texto_agentes(rodando).map(|texto| {
-            Button::new("rodape-agentes")
+    /// As Arquivadas na barra de baixo (Linear, 25/11/2026; antes no rodapé da lista): o ícone,
+    /// com o número na dica; o clique mostra as arquivadas na lista, e de novo volta às conversas.
+    /// Some sem nenhuma arquivada (a não ser vendo-as).
+    pub(super) fn botao_arquivadas(&self, motor: &Motor, window: &Window, cx: &Context<Self>) -> Option<Button> {
+        let n = motor.chats_da_lista().filter(|c| c.arquivado).count();
+        let vendo = self.filtro == Filtro::Arquivados;
+        (n > 0 || vendo).then(|| {
+            Button::new("barra-arquivadas")
                 .custom(variante_fantasma(cx))
-                .h(altura::BARRA)
-                .min_w_0()
-                .px(esp::E8)
-                .gap(esp::E6)
-                .rounded(raio::PILULA)
-                // O aro do rodando, o mesmo da lista: o disco cheio é dos avisos (revisão de design,
-                // 23/11/2026).
-                .child(Sinal::Rodando.ponto(8.))
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .metadado()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(Cores::tenue())
-                        .child(texto),
-                )
-                .on_click(cx.listener(|this, _, window, cx| {
+                .h(r(24.))
+                .flex_none()
+                .px(esp::E6)
+                .rounded(raio::de(24.))
+                .selected(vendo)
+                .child(div().flex_none().text_color(Cores::tenue()).child(icone(Lucide::Archive, 14., window)))
+                .tooltip(if vendo { "Voltar às conversas".to_string() } else { format!("Arquivadas: {}", milhar(n)) })
+                .on_click(cx.listener(move |this, _, window, cx| {
                     if this.aba != AbaLateral::Conversas {
                         this.trocar_aba(AbaLateral::Conversas, window, cx);
                     }
+                    this.filtro = if vendo { Filtro::Todos } else { Filtro::Arquivados };
                     this.rolagem_lista.set_offset(point(px(0.), px(0.)));
+                    this.realce_lista = None;
                     cx.notify();
                 }))
-        });
-        let arquivadas = arquivos.is_none().then(|| {
-            let n = motor.chats_da_lista().filter(|c| c.arquivado).count();
-            let vendo = self.filtro == Filtro::Arquivados;
-            (n > 0 || vendo).then(|| {
-                Button::new("rodape-arquivadas")
-                    .custom(variante_fantasma(cx))
-                    .h(altura::BARRA)
-                    .flex_none()
-                    .px(esp::E8)
-                    .gap(esp::E6)
-                    .rounded(raio::de(28.))
-                    .selected(vendo)
-                    .child(div().flex_none().text_color(Cores::tenue()).child(icone(Lucide::Archive, 14., window)))
-                    // O número vai na dica: o "99+" em pílula era a terceira forma de contagem na
-                    // tela, e se lia como não lidas (relatório de design, 16/11/2026).
-                    .tooltip(if vendo { "Voltar às conversas".to_string() } else { format!("Arquivadas: {}", milhar(n)) })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.filtro = if vendo { Filtro::Todos } else { Filtro::Arquivados };
-                        this.rolagem_lista.set_offset(point(px(0.), px(0.)));
-                        this.realce_lista = None;
-                        cx.notify();
-                    }))
-            })
-        });
-        let total = arquivos.filter(|a| !a.lista.is_empty()).map(|a| {
-            let palavra = if a.lista.len() == 1 { "arquivo" } else { "arquivos" };
-            div()
-                .flex_none()
-                .pr(esp::E8)
-                .metadado()
-                .text_color(Cores::apagado())
-                .child(format!("{} {palavra}", milhar(a.lista.len())))
-        });
-        let arquivadas = arquivadas.flatten();
-        // O sino desceu do trilho para cá; os anéis de uso ficam no cabeçalho da conversa.
-        let sino = self.botao_sino(super::resumo::precisa_em_tudo(motor), cx);
-        // Um fio em cima e 4 de respiro: sem eles a fileira começava colada na última conversa, e
-        // o selo do sino ficava a uns 5 px da hora dela (relatório de design, 16/11/2026).
-        Some(
-            div().flex_none().mx(r(-8.)).border_t_1().border_color(Cores::traco()).pt(esp::E4).child(
-                h_flex()
-                    .h(r(36.))
-                    .px(esp::PECA)
-                    .gap(esp::E4)
-                    .children(arquivadas)
-                    .children(agentes)
-                    .child(div().flex_1())
-                    .children(total)
-                    .child(sino),
-            ),
-        )
+        })
     }
 
     fn lista_conversas(&self, motor: &Motor, ctx: &Contexto, window: &Window, cx: &Context<Self>) -> Montagem {
@@ -1454,42 +1416,52 @@ impl Janela {
             }
         };
         let da_secao = |secao: Secao| linhas.iter().filter(|f| secao_de(f) == secao).collect::<Vec<_>>();
-        let mut m = Montagem { corrida: geral, ..Montagem::default() };
+        let mut m = Montagem::default();
         // Só na lista corrida e sem busca: é onde todos os cartões têm uma linha, da mesma altura.
         if geral && busca.is_empty() {
             let px_de = |rems: Rems| rems.to_pixels(window.rem_size()).as_f32();
             let rolado = -self.rolagem_lista.offset().y.as_f32();
             let visivel = self.rolagem_lista.bounds().size.height.as_f32();
-            m.a_vista = linhas_a_vista(rolado, visivel, px_de(r(ALTURA_DA_LINHA_DE_CHAT)), px_de(esp::E2));
+            m.a_vista = linhas_a_vista(rolado, visivel, px_de(r(ALTURA_DA_LINHA_DE_CHAT)), 0.);
         }
 
-        // "Enquanto você esteve fora", no topo da lista.
-        if geral && busca.is_empty()
-            && let Some(faixa) = self.faixa_do_resumo(motor, "lista", window, cx)
-        {
-            m.itens.push(div().pt(esp::E4).px(esp::E2).child(faixa).into_any_element());
+        // Linear (25/11/2026): cada seção com o título à vista (nome, contagem e a seta de recolher
+        // à direita do nome), na ordem do protótipo: Rodando, Esperando você, Fixadas e as faixas
+        // de data (Hoje, Esta semana, Mais antigas). Na busca, nada recolhe.
+        let secao = |nome: &'static str, n: usize, com_aberta: bool| {
+            let mut sec = SecaoDaLista::new(nome).contagem(n);
+            let recolhida = busca.is_empty() && !com_aberta && self.secoes_recolhidas.contains(nome);
+            if busca.is_empty() {
+                sec = sec.recolhivel(!recolhida, alternar_secao(ctx.janela.clone(), nome));
+            }
+            (sec, !recolhida)
+        };
+        let com_aberta = |membros: &[&DaLista]| membros.iter().any(|f| self.aberta_em_painel(&f.0.id));
+
+        let rodando_agora = da_secao(Secao::Rodando);
+        if !rodando_agora.is_empty() {
+            let (sec, aberta) = secao("Rodando", rodando_agora.len(), com_aberta(&rodando_agora));
+            m.secao(sec);
+            if aberta {
+                for f in rodando_agora {
+                    self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
+                }
+            }
         }
+
         // Pedidos, paradas e erros primeiro; as respostas novas depois (cada grupo por data).
         let mut esperando = da_secao(Secao::EsperandoVoce);
         esperando.sort_by_key(|f| f.1 == Some(Motivo::Nova));
         // Os chats parados no freio de ciclo vêm primeiro.
         let de_ciclo = if geral && busca.is_empty() { super::resumo::esperas_de_ciclo(motor) } else { Vec::new() };
         if !esperando.is_empty() || !de_ciclo.is_empty() {
-            let numero = if busca.is_empty() {
-                super::resumo::precisa_em_tudo(motor).numero()
-            } else {
-                esperando.iter().filter(|f| f.1.is_some_and(|m| m != Motivo::Nova)).count()
-            };
             let paradas: Vec<&&DaLista> = esperando.iter().filter(|f| f.1 == Some(Motivo::Parada)).collect();
-            let mut cabecalho = CabecalhoDeSecao::new("Esperando você");
-            if numero > 0 {
-                cabecalho = cabecalho.contagem(numero).tingida(Cores::espera());
-            }
+            let (mut sec, aberta) = secao("Esperando você", esperando.len() + de_ciclo.len(), com_aberta(&esperando));
             if paradas.len() >= 2 {
                 let retomar: Vec<String> =
                     paradas.iter().map(|f| f.0).filter(|c| motor.precisa_retomar(&c.id)).map(|c| c.id.clone()).collect();
                 let botao = botao_de_secao("retomar-tudo", "Retomar tudo", Lucide::Play, ctx.aperto.apertada, window, cx);
-                cabecalho = cabecalho.acao(botao.on_click(cx.listener(
+                sec = sec.acao(botao.on_click(cx.listener(
                     move |this, _, _, cx| {
                         if let Some(entidade) = &this.motor {
                             entidade.update(cx, |motor, cx| {
@@ -1501,77 +1473,37 @@ impl Janela {
                     },
                 )));
             }
-            m.cabecalho(cabecalho);
-            m.itens.extend(self.linhas_de_ciclo(motor, de_ciclo, window, cx));
-            for f in esperando {
-                self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
-            }
-        }
-
-        let rodando_agora = da_secao(Secao::Rodando);
-        if !rodando_agora.is_empty() {
-            let cabecalho = CabecalhoDeSecao::new("Rodando agora")
-                .contagem(rodando_agora.len())
-                .tingida(Cores::destaque_texto());
-            m.cabecalho(cabecalho);
-            for f in rodando_agora {
-                self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
+            m.secao(sec);
+            if aberta {
+                m.itens.extend(self.linhas_de_ciclo(motor, de_ciclo, window, cx));
+                for f in esperando {
+                    self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
+                }
             }
         }
 
         let fixadas = da_secao(Secao::Fixadas);
         if !fixadas.is_empty() {
-            // Na lista corrida não há título para abrir a seção de novo: as fixadas ficam à vista.
-            let recolhida = !m.corrida && busca.is_empty() && self.secoes_recolhidas.contains("Fixadas");
-            let mut cabecalho = CabecalhoDeSecao::new("Fixadas").contagem(fixadas.len());
-            if busca.is_empty() {
-                cabecalho = cabecalho.recolhivel(!recolhida, alternar_secao(ctx.janela.clone(), "Fixadas"));
-            }
-            m.cabecalho(cabecalho);
-            if !recolhida {
+            let (sec, aberta) = secao("Fixadas", fixadas.len(), com_aberta(&fixadas));
+            m.secao(sec);
+            if aberta {
                 for f in fixadas {
                     self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
                 }
             }
         }
 
-        // Os outros, do mais recente ao mais antigo, todos; nas Arquivadas, por faixa de data.
+        // Os outros, do mais recente ao mais antigo, por faixa de data (também nas Arquivadas).
         let paradas = da_secao(Secao::Conversas);
-        if geral {
-            if !paradas.is_empty() {
-                m.cabecalho(CabecalhoDeSecao::new(if busca.is_empty() { "Recentes" } else { "Conversas" }));
-                for f in &paradas {
-                    self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
-                }
-            }
-        }
-        // As arquivadas por data. "Mais antigas" começa recolhida, menos na busca, quando é a
-        // única faixa ou quando tem uma conversa aberta.
-        let paradas = if geral { Vec::new() } else { paradas };
         let hoje = meia_noite_local(agora());
-        let faixas: Vec<(Faixa, Vec<&DaLista>)> = Faixa::TODAS
-            .into_iter()
-            .map(|faixa| {
-                let membros = paradas.iter().copied().filter(|f| Faixa::de(f.0.atualizado_em, hoje) == faixa);
-                (faixa, membros.collect::<Vec<_>>())
-            })
-            .filter(|(_, membros)| !membros.is_empty())
-            .collect();
-        let so_uma = faixas.len() == 1;
-        for (faixa, membros) in faixas {
-            let antigas = faixa == Faixa::Antigas;
-            let com_aberta = membros.iter().any(|f| self.aberta_em_painel(&f.0.id));
-            let pode_recolher = busca.is_empty() && (!antigas || (!mostrar_arquivados && !so_uma && !com_aberta));
-            let recolhida = pode_recolher && self.secoes_recolhidas.contains(faixa.nome());
-            let mut cabecalho = CabecalhoDeSecao::new(faixa.nome());
-            if antigas {
-                cabecalho = cabecalho.contagem(membros.len());
+        for faixa in Faixa::TODAS {
+            let membros: Vec<&DaLista> = paradas.iter().copied().filter(|f| Faixa::de(f.0.atualizado_em, hoje) == faixa).collect();
+            if membros.is_empty() {
+                continue;
             }
-            if pode_recolher {
-                cabecalho = cabecalho.recolhivel(!recolhida, alternar_secao(ctx.janela.clone(), faixa.nome()));
-            }
-            m.cabecalho(cabecalho);
-            if !recolhida {
+            let (sec, aberta) = secao(faixa.nome(), membros.len(), com_aberta(&membros));
+            m.secao(sec);
+            if aberta {
                 for f in membros {
                     self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
                 }
@@ -1582,7 +1514,7 @@ impl Janela {
         if !mostrar_arquivados {
             let arquivadas = arquivadas_que_casam(motor.chats_da_lista(), &self.busca_preparada, &palavras);
             if !arquivadas.is_empty() {
-                m.cabecalho(CabecalhoDeSecao::new("Arquivadas").contagem(arquivadas.len()));
+                m.secao(SecaoDaLista::new("Arquivadas").contagem(arquivadas.len()));
                 for c in arquivadas {
                     let aberta = self.selecionado.as_deref() == Some(c.id.as_str());
                     let cartao = self.cartao_conversa(motor, c, None, ctx, window, cx);
@@ -1646,7 +1578,7 @@ impl Janela {
         if let Some(faixa) = &m.a_vista
             && !faixa.contains(&m.itens.len())
         {
-            let espaco = div().flex_none().mt(esp::E2).h(r(ALTURA_DA_LINHA_DE_CHAT)).into_any_element();
+            let espaco = div().flex_none().h(r(ALTURA_DA_LINHA_DE_CHAT)).into_any_element();
             m.navegavel(espaco, &chat.id, pendencia.is_some());
             return;
         }
@@ -1664,7 +1596,7 @@ impl Janela {
         let pasta_da_dica = (!ctx.motor.read(cx).sem_pasta(chat)).then(|| chat.cwd.clone());
         div()
             .id(SharedString::from(format!("linha-{}", chat.id)))
-            .mt(esp::E2)
+            // Sem vão entre as linhas, como no protótipo Linear (25/11/2026).
             .child(cartao)
             .when_some(pasta_da_dica, |s, pasta| {
                 s.dica_no_ponteiro(move |window, cx| Tooltip::new(super::ramo::com_ramo(&com_til(&pasta), &pasta)).build(window, cx))
@@ -1784,8 +1716,8 @@ impl Janela {
                 // (relatório de design, 16/11/2026). Com a janela transparente, o tênue sobre o
                 // papel de parede ficava entre 3,1 e 3,8:1; vai o texto a 70% (revisão de design,
                 // 23/11/2026).
-                let repouso = if crate::tema::transparencia() > 0 { Cores::texto().opacity(0.7) } else { Cores::tenue() };
-                (hora_do_cartao().text_color(if selecionado { Cores::texto() } else { repouso }).child(quando), dica)
+                let repouso = if crate::tema::transparencia() > 0 { Cores::texto().opacity(0.7) } else { Cores::tenue_da_lista() };
+                (hora_do_cartao().text_color(repouso).child(quando), dica)
             }
         };
         // Chat aberto num painel: só o número, e a hora vai para a dica do avatar. Com 3 painéis a
@@ -1804,6 +1736,7 @@ impl Janela {
             _ => s.ponto(8.).into_any_element(),
         });
         let indicadores = linha_meta(16.)
+            .gap(linear::CHAT_VAO)
             .children(estado)
             .when(nao_lido && sinal != Some(Sinal::Nova), |d| d.child(Sinal::Nova.ponto(8.)))
             // Sem o título "Fixadas", é o alfinete que diz por que ela está em cima.
@@ -1820,7 +1753,7 @@ impl Janela {
         let titulo_do_cartao: SharedString = chat.titulo.clone().into();
         let mut cartao = CartaoDeLista::new(SharedString::from(format!("cartao-{}", chat.id)), titulo_do_cartao)
             .map(|c| match subtitulo {
-                None => c.uma_linha().meta(h_flex().gap(esp::E4).child(indicadores).children(quando)),
+                None => c.uma_linha().meta(h_flex().gap(linear::CHAT_VAO).child(indicadores).children(quando)),
                 Some(subtitulo) => match quando {
                     Some(quando) => c.subtitulo(subtitulo).meta(quando).meta_inferior(indicadores),
                     None => c.subtitulo(subtitulo).meta_inferior(indicadores),
@@ -1938,6 +1871,11 @@ impl Janela {
     }
 
     pub(super) fn abrir_arquivo(&mut self, pasta: PathBuf, caminho: String, window: &mut Window, cx: &mut Context<Self>) {
+        // Outro arquivo: o de agora guarda o estado na aba dele, e o novo ganha a sua.
+        if self.arquivo_aberto.as_ref().is_none_or(|(p, c)| *p != pasta || *c != caminho) {
+            self.guardar_aba_de_arquivo();
+        }
+        self.aba_para_o_arquivo(&pasta, &caminho);
         // O editor é do arquivo que estava aberto: grava o que falta e sai.
         self.largar_editor(window, cx);
         // A marca de linha é do link que a pediu: outro arquivo (ou o mesmo, pela árvore) abre sem ela.
@@ -1947,6 +1885,9 @@ impl Janela {
         // A edição é do clique na trilha que a pediu (`abrir_edicao`): abrir de outro jeito mostra o
         // arquivo como está. A escolha de linhas não passa de uma abertura para a outra.
         self.arquivo_edicao = self.edicao_pedida.take();
+        self.edicao_fora = None;
+        self.dobras_abertas.borrow_mut().clear();
+        self.selecao_no_codigo = None;
         self.esquecer_vista();
         self.lugar_no_turno.set(None);
         self.edicao_atual = 0;
@@ -1968,7 +1909,7 @@ impl Janela {
     /// a busca.
     fn preparar_arquivos(
         &mut self,
-        motor_entidade: &Entity<Motor>,
+        pasta: Option<PathBuf>,
         busca: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1977,8 +1918,7 @@ impl Janela {
             .use_keyed_state("rolagem-dos-arquivos", cx, |_, _| UniformListScrollHandle::new())
             .read(cx)
             .clone();
-        let motor = motor_entidade.read(cx);
-        let pasta = self.selecionado.as_ref().and_then(|id| motor.chat(id)).map(|c| c.cwd.clone()).filter(|p| p.is_dir());
+        let pasta = pasta.filter(|p| p.is_dir());
         let lista = match &pasta {
             Some(p) => self.arquivos_da_pasta(p, cx),
             None => Rc::new(Vec::new()),
@@ -2058,7 +1998,15 @@ impl Janela {
     }
 
     /// Aba Arquivos: a árvore da pasta escolhida ou os resultados da busca.
-    fn conteudo_arquivos(&self, a: &Arquivos, ctx: &Contexto, window: &Window, cx: &Context<Self>) -> AnyElement {
+    fn conteudo_arquivos(
+        &self,
+        a: &Arquivos,
+        ctx: &Contexto,
+        busca: &Entity<InputState>,
+        marcas: Option<Rc<super::git_da_pasta::MarcasDoGit>>,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let Some(pasta) = a.pasta.clone() else {
             let texto = if self.selecionado.is_some() {
                 "A pasta deste chat não foi encontrada no disco."
@@ -2092,9 +2040,11 @@ impl Janela {
         let aberto = self.arquivo_aberto.clone().filter(|(p, _)| *p == pasta).map(|(_, c)| c);
         if let Some(achados) = &a.achados {
             if achados.is_empty() {
-                let digitado = self.busca.read(cx).value().trim().to_string();
-                let vazio = EstadoVazio::new(Lucide::Search, format!("Nenhum arquivo com “{digitado}”"))
-                    .acao(self.botao_limpar_busca(window, cx));
+                let digitado = busca.read(cx).value().trim().to_string();
+                let campo = busca.clone();
+                let limpar = botao_fantasma("vazio-limpar-busca", None, "Limpar busca", TamanhoBotao::Controle, window, cx)
+                    .on_click(move |_, window, cx| campo.update(cx, |b, cx| b.set_value("", window, cx)));
+                let vazio = EstadoVazio::new(Lucide::Search, format!("Nenhum arquivo com “{digitado}”")).acao(limpar);
                 return div().flex_1().px(esp::E8).child(vazio).into_any_element();
             }
             let termo = ctx.busca.split_whitespace().next().unwrap_or_default().to_string();
@@ -2130,7 +2080,7 @@ impl Janela {
         let pasta_menu = pasta.clone();
         let ignorados = a.ignorados.clone();
         let arvore = tree(arvore, move |ix, entrada, _, window, cx| {
-            linha_da_arvore(ix, entrada, &pasta, aberto.as_deref(), ignorados.as_deref(), &janela, window, cx)
+            linha_da_arvore(ix, entrada, &pasta, aberto.as_deref(), ignorados.as_deref(), marcas.as_deref(), &janela, window, cx)
         })
         .context_menu(move |_, entrada, menu, _, _| {
             // A linha que só avisa ("Lendo…") não tem o que fazer.
@@ -2140,6 +2090,131 @@ impl Janela {
             menu_do_arquivo(menu, janela_menu.clone(), pasta_menu.clone(), entrada.item().id.to_string(), entrada.is_folder())
         });
         div().flex_1().min_h_0().pb(esp::E8).child(arvore).into_any_element()
+    }
+}
+
+impl Janela {
+    /// Abre a aba Arquivos da direita com o cursor na busca (o item Arquivos da lista).
+    pub(super) fn abrir_aba_arquivos(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.aba_direita = super::abas_direita::AbaDireita::Arquivos;
+        self.mostrar_direita(window, cx);
+        let foco = self.busca_arquivos.read(cx).focus_handle(cx);
+        window.focus(&foco, cx);
+        cx.notify();
+    }
+
+    /// A aba Arquivos da direita (protótipo Linear, 25/11/2026): a busca de 28, a pasta de
+    /// trabalho (ou, sem ela, a do chat aberto) e a árvore, com as marcas do git do chat.
+    pub(super) fn painel_de_arquivos(&mut self, motor_entidade: &Entity<Motor>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let (raiz, pasta_do_chat) = {
+            let motor = motor_entidade.read(cx);
+            let do_chat = self.selecionado.as_ref().and_then(|id| motor.chat(id)).map(|c| c.cwd.clone()).filter(|p| p.is_dir());
+            let raiz = motor.config.pasta_de_trabalho.clone().filter(|p| p.is_dir()).or_else(|| do_chat.clone());
+            (raiz, do_chat)
+        };
+        let termo = self.busca_arquivos.read(cx).value().to_lowercase();
+        let marcas = match (&raiz, &pasta_do_chat) {
+            (Some(raiz), Some(chat)) => self.marcas_do_git(raiz, chat, cx),
+            _ => None,
+        };
+        let arquivos = self.preparar_arquivos(raiz.clone(), &termo, window, cx);
+        let ctx = Contexto {
+            busca: termo,
+            aperto: Aperto::de(self.direita_largura * 15.),
+            teclado: false,
+            motor: motor_entidade.clone(),
+            janela: cx.entity().downgrade(),
+        };
+        let busca_e = self.busca_arquivos.clone();
+        let conteudo = self.conteudo_arquivos(&arquivos, &ctx, &busca_e, marcas, window, cx);
+        let cabecalho = self.barra_de_abas(motor_entidade.read(cx), super::abas_direita::AbaDireita::Arquivos, false, "arrastar-arquivos", window, cx);
+        // A busca a 2 da coluna das linhas, com 4 em cima e 6 embaixo.
+        let busca = div()
+            .flex_none()
+            .mx(esp::E2)
+            .mt(esp::E4)
+            .mb(esp::E6)
+            .on_action(cx.listener(|this, _: &Escape, window, cx| {
+                if this.busca_arquivos.read(cx).value().is_empty() {
+                    this.focar_composer(window, cx);
+                } else {
+                    this.busca_arquivos.update(cx, |b, cx| b.set_value("", window, cx));
+                }
+            }))
+            .child(campo_de_busca_pequeno("busca-arquivos-direita", &busca_e, window, cx));
+        // A pasta de cima, em mono; no hover, o mostrar ignorados e o recarregar.
+        let topo = raiz.as_ref().map(|raiz| {
+            let (r_ign, r_rec) = (raiz.clone(), raiz.clone());
+            let ligado = self.mostrar_ignorados;
+            let (simbolo, dica) = if ligado {
+                (Lucide::Eye, "Esconder os ignorados")
+            } else {
+                (Lucide::EyeOff, "Mostrar ignorados\nO que o git deixa de fora, como prints e exports")
+            };
+            h_flex()
+                .id("raiz-dos-arquivos")
+                .group("raiz-dos-arquivos")
+                .flex_none()
+                .h(r(19.))
+                .px(esp::E8)
+                .gap(esp::E4)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis_start()
+                        .font_family(crate::tema::FONTE_MONO)
+                        .text_size(r(11.5))
+                        .text_color(Cores::tenue())
+                        .child(com_til(raiz)),
+                )
+                .child(
+                    sem_arrastar()
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .gap(esp::E2)
+                        .when(!ligado, |s| s.invisible().group_hover("raiz-dos-arquivos", |s| s.visible()))
+                        .child(
+                            botao_icone("arquivos-ignorados", simbolo, dica, TamanhoBotao::Linha, window, cx)
+                                .size(r(18.))
+                                .when(ligado, |b| b.text_color(Cores::destaque_texto()))
+                                .on_click(cx.listener(move |this, _, _, cx| this.alternar_ignorados(&r_ign, cx))),
+                        )
+                        .child(
+                            botao_icone("arquivos-recarregar", Lucide::RefreshCw, "Recarregar a lista de arquivos", TamanhoBotao::Linha, window, cx)
+                                .size(r(18.))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.reler_arquivos(&r_rec);
+                                    cx.notify();
+                                })),
+                        ),
+                )
+        });
+        div()
+            .relative()
+            .size_full()
+            .flex()
+            .flex_col()
+            .when(self.gaveta == Some(super::Gaveta::Direita), |s| s.rounded(crate::tema::raio_da_peca()))
+            .when(self.gaveta != Some(super::Gaveta::Direita), |s| s.bg(Cores::cartao()).rounded_r(crate::tema::raio_da_peca()))
+            .when_some(crate::tema::bordas_finas().filter(|_| self.gaveta != Some(super::Gaveta::Direita)), |s, anel| s.shadow(vec![anel]))
+            .overflow_hidden()
+            .child(cabecalho)
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .px(esp::E6)
+                    .child(busca)
+                    .children(topo)
+                    .child(div().flex_1().min_h_0().flex().flex_col().child(conteudo)),
+            )
+            .when(self.gaveta != Some(super::Gaveta::Direita), |s| s.aresta_encostada(crate::tema::Esquerda::Emendada))
+            .on_prepaint(self.medir_direita(cx))
+            .into_any_element()
     }
 }
 
@@ -2203,8 +2278,8 @@ pub(super) fn avisar_arquivadas(motor: Entity<Motor>, ids: Vec<String>, texto: S
 #[cfg(test)]
 mod testes {
     use super::{
-        AbaLateral, Aperto, Causa, Faixa, Motivo, MotivoDaPrevia, No, PendenciaDoMotor, achado_na_conversa,
-        arquivadas_que_casam, dica_da_busca, meia_noite_local, milhar, montar_arvore,
+        Aperto, Causa, Faixa, Motivo, MotivoDaPrevia, No, PendenciaDoMotor, achado_na_conversa,
+        arquivadas_que_casam, meia_noite_local, milhar, montar_arvore,
         motivo, partes_da_previa, posicao_do_realce, texto_agentes, trecho,
     };
     use crate::modelo::{Chat, Execucao, Item};
@@ -2286,15 +2361,18 @@ mod testes {
     fn faixas_de_data() {
         const DIA: u64 = 86_400;
         let hoje = 1_000 * DIA;
-        // Até 7 dias contados da meia-noite de hoje: "Recentes"; antes disso, "Mais antigas".
-        assert_eq!(Faixa::de(hoje + 5, hoje), Faixa::Recentes);
-        assert_eq!(Faixa::de(hoje - DIA, hoje), Faixa::Recentes);
-        assert_eq!(Faixa::de(hoje - 7 * DIA, hoje), Faixa::Recentes);
+        // Desde a meia-noite de hoje: "Hoje"; até 7 dias antes dela: "Esta semana"; antes disso,
+        // "Mais antigas" (Linear, 25/11/2026).
+        assert_eq!(Faixa::de(hoje + 5, hoje), Faixa::Hoje);
+        assert_eq!(Faixa::de(hoje, hoje), Faixa::Hoje);
+        assert_eq!(Faixa::de(hoje - 1, hoje), Faixa::EstaSemana);
+        assert_eq!(Faixa::de(hoje - DIA, hoje), Faixa::EstaSemana);
+        assert_eq!(Faixa::de(hoje - 7 * DIA, hoje), Faixa::EstaSemana);
         assert_eq!(Faixa::de(hoje - 7 * DIA - 1, hoje), Faixa::Antigas);
         assert_eq!(Faixa::de(hoje - 30 * DIA - 1, hoje), Faixa::Antigas);
         // Conversa antiga gravada sem data não quebra a conta.
         assert_eq!(Faixa::de(0, hoje), Faixa::Antigas);
-        assert_eq!(Faixa::TODAS.map(Faixa::nome), ["Recentes", "Mais antigas"]);
+        assert_eq!(Faixa::TODAS.map(Faixa::nome), ["Hoje", "Esta semana", "Mais antigas"]);
     }
 
     #[test]
@@ -2478,14 +2556,6 @@ mod testes {
         // px a 150% (a do z01, com a Equipe ao lado) é a de 200, apertada.
         assert_eq!(Aperto::de(468. / 1.5), Aperto::de(312.));
         assert_eq!(Aperto::de(300. / 1.5), Aperto { sem_rotulos: true, estreita: true, apertada: true });
-    }
-
-    #[test]
-    fn a_busca_diz_so_buscar() {
-        assert_eq!(dica_da_busca(AbaLateral::Conversas, false), "Buscar");
-        assert_eq!(dica_da_busca(AbaLateral::Conversas, true), "Buscar");
-        assert_eq!(dica_da_busca(AbaLateral::Arquivos, false), "Buscar arquivos");
-        assert_eq!(dica_da_busca(AbaLateral::Arquivos, true), "Buscar");
     }
 
     #[test]

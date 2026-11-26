@@ -151,13 +151,16 @@ tabela! {
     "ctrl-z", super::DesfazerArquivar, Some("Vitral && !Input"), Grupo::Lista, "Desfazer o arquivar (fora da caixa de mensagem)", "";
     "ctrl-n", super::NovaConversa, None, Grupo::Lista, "Nova conversa", "";
     "ctrl-k", super::Buscar, None, Grupo::Lista, "Buscar conversas", "";
-    "ctrl-b", super::AlternarLista, None, Grupo::Lista, "Mostrar ou recolher a lista", "";
+    // Sem contexto, a tecla valeria como a do contexto mais fundo e ganharia do negrito da página
+    // do .md; no da janela, a página (mais funda) fica com ela enquanto um bloco está em edição.
+    "ctrl-b", super::AlternarLista, Some("Vitral && !PaginaMd"), Grupo::Lista, "Mostrar ou recolher a lista", "";
     "ctrl-g", super::ProximaPendencia, None, Grupo::Lista, "Ir à próxima pendência (dá a volta)", "";
     "ctrl-shift-g", super::PendenciaAnterior, None, Grupo::Lista, "Ir à pendência anterior", "";
-    "ctrl-i", super::AbrirQuadroDeIdeias, None, Grupo::Lista, "Quadro de ideias", "";
+    "ctrl-i", super::AbrirQuadroDeIdeias, Some("Vitral && !PaginaMd"), Grupo::Lista, "Quadro de ideias", "";
 
     // ---------- painéis ----------
     "ctrl-j", super::AlternarPainel, None, Grupo::Paineis, "Mostrar ou fechar o painel da direita", "";
+    "ctrl-.", super::AlternarFoco, None, Grupo::Paineis, "Modo foco: só as conversas", "";
     "alt-1", super::IrParaPainel1, None, Grupo::Paineis, "Ir ao painel 1 a 4", "Alt+1…4";
     "alt-2", super::IrParaPainel2, None, Grupo::Paineis, "", "";
     "alt-3", super::IrParaPainel3, None, Grupo::Paineis, "", "";
@@ -177,6 +180,10 @@ tabela! {
     "escape", super::painel_arquivo::FecharBuscaNoArquivo, Some("Arquivo"), Grupo::Paineis, "", "";
     // Um clique no texto do arquivo abre o editor: ele grava sozinho, e o Ctrl+S grava na hora.
     "ctrl-s", super::painel_arquivo::SalvarArquivo, Some("Arquivo"), Grupo::Paineis, "Salvar o arquivo que você está editando (ele também se salva sozinho)", "";
+    // Na página do .md, com um bloco em edição: negrito, itálico e código em volta da seleção.
+    "ctrl-b", super::pagina::NegritoNaPagina, Some("PaginaMd"), Grupo::Paineis, "", "";
+    "ctrl-i", super::pagina::ItalicoNaPagina, Some("PaginaMd"), Grupo::Paineis, "", "";
+    "ctrl-e", super::pagina::CodigoNaPagina, Some("PaginaMd"), Grupo::Paineis, "", "";
     "ctrl-pageup", super::PainelAnterior, None, Grupo::Paineis, "Painel anterior", "";
     "ctrl-pagedown", super::PainelSeguinte, None, Grupo::Paineis, "Painel seguinte", "";
     // Ctrl+Shift+Enter: o campo não liga essa combinação (o Enter dele é o do envio).

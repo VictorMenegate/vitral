@@ -436,6 +436,67 @@ pub enum Fileira {
     Solta(Marca, String),
     /// Uma nota no meio ("… mais 12 linhas saíram", "Não está mais no arquivo").
     Nota(String),
+    /// Linhas iguais longe das mudanças, dobradas (de `de` a `ate`, as do arquivo, 0 é a
+    /// primeira): o clique abre (protótipo Linear, 25/11/2026: "5 linhas iguais").
+    Dobra { de: usize, ate: usize },
+}
+
+/// As linhas de contexto em volta de cada mudança, que nunca dobram.
+const CONTEXTO_DA_DOBRA: usize = 3;
+/// Menos que isto não dobra: a fileira da dobra ocuparia quase o mesmo lugar.
+const MINIMO_DA_DOBRA: usize = 3;
+
+/// A vista com as linhas iguais longe das mudanças dobradas, menos as dobras `abertas` (pela
+/// primeira linha delas). As mudanças continuam apontando para a fileira delas.
+pub fn dobrar(vista: &Vista, abertas: &std::collections::HashSet<usize>) -> Vista {
+    let fileiras = &vista.fileiras;
+    let n = fileiras.len();
+    let mudou: Vec<bool> = fileiras.iter().map(|f| !matches!(f, Fileira::Arquivo { entrou: false, .. })).collect();
+    if !mudou.iter().any(|m| *m) {
+        return vista.clone();
+    }
+    let mut perto = vec![false; n];
+    for i in (0..n).filter(|&i| mudou[i]) {
+        for marca in perto.iter_mut().take((i + CONTEXTO_DA_DOBRA).min(n - 1) + 1).skip(i.saturating_sub(CONTEXTO_DA_DOBRA)) {
+            *marca = true;
+        }
+    }
+    let linha_de = |f: &Fileira| match f {
+        Fileira::Arquivo { linha, .. } => *linha,
+        _ => 0,
+    };
+    let mut novas: Vec<Fileira> = Vec::with_capacity(n);
+    let mut mapa = vec![0usize; n];
+    let mut i = 0;
+    while i < n {
+        if perto[i] {
+            mapa[i] = novas.len();
+            novas.push(fileiras[i].clone());
+            i += 1;
+            continue;
+        }
+        let inicio = i;
+        while i < n && !perto[i] {
+            i += 1;
+        }
+        let de = linha_de(&fileiras[inicio]);
+        if i - inicio >= MINIMO_DA_DOBRA && !abertas.contains(&de) {
+            for m in mapa.iter_mut().take(i).skip(inicio) {
+                *m = novas.len();
+            }
+            novas.push(Fileira::Dobra { de, ate: linha_de(&fileiras[i - 1]) });
+        } else {
+            for k in inicio..i {
+                mapa[k] = novas.len();
+                novas.push(fileiras[k].clone());
+            }
+        }
+    }
+    Vista {
+        fileiras: novas,
+        mudancas: vista.mudancas.iter().map(|m| Mudanca { fileira: mapa[m.fileira], linhas: m.linhas }).collect(),
+        perdidos: vista.perdidos,
+    }
 }
 
 /// O começo de uma mudança (as linhas seguidas que entraram ou saíram): a fileira dela e as
@@ -690,6 +751,35 @@ impl super::Janela {
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    /// Um arquivo de 20 linhas com a linha 10 (índice 9) entrando: 3 de contexto de cada lado,
+    /// e o resto dobrado em "N linhas iguais". A dobra aberta volta inteira, e a mudança continua
+    /// apontando para a fileira dela.
+    #[test]
+    fn dobra_as_linhas_iguais_longe_das_mudancas() {
+        let fileiras: Vec<Fileira> = (0..20).map(|linha| Fileira::Arquivo { linha, entrou: linha == 9 }).collect();
+        let vista = Vista { fileiras, mudancas: vec![Mudanca { fileira: 9, linhas: Some((10, 10)) }], perdidos: 0 };
+        let dobrada = dobrar(&vista, &std::collections::HashSet::new());
+        assert_eq!(dobrada.fileiras.first(), Some(&Fileira::Dobra { de: 0, ate: 5 }));
+        assert_eq!(dobrada.fileiras[1], Fileira::Arquivo { linha: 6, entrou: false });
+        assert_eq!(dobrada.fileiras[4], Fileira::Arquivo { linha: 9, entrou: true });
+        assert_eq!(dobrada.fileiras.last(), Some(&Fileira::Dobra { de: 13, ate: 19 }));
+        assert_eq!(dobrada.fileiras.len(), 1 + 7 + 1);
+        assert_eq!(dobrada.mudancas[0].fileira, 4);
+        // Aberta a de cima, as 6 linhas voltam; a de baixo continua dobrada.
+        let abertas: std::collections::HashSet<usize> = [0].into_iter().collect();
+        let meio_aberta = dobrar(&vista, &abertas);
+        assert_eq!(meio_aberta.fileiras.len(), 6 + 7 + 1);
+        assert_eq!(meio_aberta.mudancas[0].fileira, 9);
+        // Menos de 3 linhas iguais entre duas mudanças não dobram: a dobra ocuparia o mesmo lugar.
+        let perto: Vec<Fileira> = (0..10).map(|linha| Fileira::Arquivo { linha, entrou: linha == 1 || linha == 8 }).collect();
+        let vista = Vista { fileiras: perto, mudancas: Vec::new(), perdidos: 0 };
+        assert!(dobrar(&vista, &std::collections::HashSet::new()).fileiras.iter().all(|f| !matches!(f, Fileira::Dobra { .. })));
+        // Sem mudança nenhuma, nada dobra.
+        let igual: Vec<Fileira> = (0..30).map(|linha| Fileira::Arquivo { linha, entrou: false }).collect();
+        let vista = Vista { fileiras: igual, mudancas: Vec::new(), perdidos: 0 };
+        assert_eq!(dobrar(&vista, &std::collections::HashSet::new()).fileiras.len(), 30);
+    }
 
     fn igual(t: &str) -> (Marca, String) {
         (Marca::Igual, t.into())

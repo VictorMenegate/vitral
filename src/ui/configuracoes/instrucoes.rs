@@ -20,13 +20,58 @@ use crate::{
     },
 };
 
+/// As instruções de qual lugar o diálogo edita: as de todos os chats ou as do revisor.
+#[derive(Clone, Copy)]
+struct Alvo {
+    titulo: &'static str,
+    subtitulo: &'static str,
+    explicacao: &'static str,
+    exemplo: &'static str,
+    ler: fn(&crate::modelo::Config) -> String,
+    gravar: fn(&mut crate::modelo::Config, String),
+}
+
 pub(super) fn abrir(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
-    let atual = motor.read(cx).config.instrucoes.clone();
+    abrir_alvo(
+        motor,
+        Alvo {
+            titulo: "Suas instruções",
+            subtitulo: "Para todos os chats",
+            explicacao: "Entram no fim do prompt de sistema de cada chat, do Claude e do Codex, depois do que o Vitral já \
+                         manda. Valem a partir da próxima mensagem.",
+            exemplo: "Rode os testes antes de dizer que terminou.\nMensagens de commit em português.",
+            ler: |c| c.instrucoes.clone(),
+            gravar: |c, v| c.instrucoes = v,
+        },
+        window,
+        cx,
+    );
+}
+
+/// As instruções do revisor (Configurações › Revisão): entram no fim do pedido de revisão.
+pub(super) fn abrir_da_revisao(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
+    abrir_alvo(
+        motor,
+        Alvo {
+            titulo: "Instruções do revisor",
+            subtitulo: "Na revisão automática e no botão",
+            explicacao: "Entram no fim do pedido que o revisor recebe. Valem a partir da próxima revisão.",
+            exemplo: "Confira as migrações do banco.\nNão comente estilo.",
+            ler: |c| c.revisao_instrucoes.clone(),
+            gravar: |c, v| c.revisao_instrucoes = v,
+        },
+        window,
+        cx,
+    );
+}
+
+fn abrir_alvo(motor: Entity<Motor>, alvo: Alvo, window: &mut Window, cx: &mut App) {
+    let atual = (alvo.ler)(&motor.read(cx).config);
     let tinha = !atual.trim().is_empty();
     let campo = cx.new(|cx| {
         TextareaState::new(window, cx)
             .auto_grow(8, 16)
-            .placeholder("Rode os testes antes de dizer que terminou.\nMensagens de commit em português.")
+            .placeholder(alvo.exemplo)
             .default_value(atual)
     });
     // A contagem embaixo do campo acompanha o que se digita.
@@ -39,21 +84,18 @@ pub(super) fn abrir(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
             let motor = motor.clone();
             move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                 let novo = texto.as_ref().map(|campo| campo.read(cx).value().trim().to_string()).unwrap_or_default();
-                motor.update(cx, |m, cx| m.mudar_config(|c| c.instrucoes = novo, cx));
+                motor.update(cx, |m, cx| m.mudar_config(|c| (alvo.gravar)(c, novo), cx));
                 window.close_dialog(cx);
             }
         };
         dialogos::moldura(dialogo, largura::M, window)
             .title(dialogos::topo(
-                CabecalhoDialogo::new("Suas instruções").subtitulo(div().font_weight(FontWeight::NORMAL).child("Para todos os chats")),
+                CabecalhoDialogo::new(alvo.titulo).subtitulo(div().font_weight(FontWeight::NORMAL).child(alvo.subtitulo)),
             ))
             .child(
                 v_flex()
                     .gap(esp::E12)
-                    .child(div().corpo_ui().text_color(Cores::tenue()).child(
-                        "Entram no fim do prompt de sistema de cada chat, do Claude e do Codex, depois do que o Vitral já \
-                         manda. Valem a partir da próxima mensagem.",
-                    ))
+                    .child(div().corpo_ui().text_color(Cores::tenue()).child(alvo.explicacao))
                     .child(Textarea::new(&campo))
                     .child(
                         div()

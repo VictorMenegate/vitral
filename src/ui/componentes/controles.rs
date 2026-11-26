@@ -4,7 +4,7 @@
 use std::{cell::RefCell, ops::RangeInclusive, rc::Rc};
 
 use gpui_kit::component::{
-    Disableable, Icon, Selectable, Sizable, Size, StyledExt as _,
+    Disableable, Icon, Selectable, Sizable, Size,
     button::{Button, ButtonCustomVariant, ButtonVariants as _},
     input::{Input, InputState},
     kbd::Kbd,
@@ -16,9 +16,8 @@ use gpui_kit::*;
 
 use super::base::{Marca, Simbolo, texto_arco_iris};
 use super::estado::Selo;
-use super::metal::{Encaixe, abertura, aro_de_metal};
-use super::superficies::desenho_teclas;
-use crate::tema::{Cores, Lucide, Tipo as _, aresta_de_poco, aresta_de_tecla, esp, halo_foco, r, raio, tam};
+use super::metal::{Encaixe, abertura};
+use crate::tema::{Cores, Lucide, Tipo as _, aresta_de_poco, aresta_de_tecla, esp, halo_foco, linear, r, raio, tam};
 use crate::ui::movimento::{self, Curva};
 
 /// O Copiar: um botão de linha (24, ícone de 14 tênue, como os outros botões de linha), que troca
@@ -91,28 +90,33 @@ const QUADRADO_PARAR: &[u8] =
 /// perguntar, e vermelho sem perguntar fora de uma cópia isolada.
 pub fn icone_do_modo(valor: &str) -> (Icon, Hsla) {
     match valor {
-        // Os modos comuns são neutros; a cor fica para o que pede cuidado (o "Sem perguntar").
+        // Cada modo com a sua cor (Linear, 25/11/2026: "melhora esse menu"; antes os comuns eram
+        // neutros): o Manual neutro, editar em verde, planejar em azul, automático em violeta e o
+        // "Sem perguntar" em âmbar.
         "manual" => (Icon::empty().data(ESCUDO_CHEIO), Cores::tenue()),
-        "plan" => (Lucide::Map.into(), Cores::tenue()),
-        "acceptEdits" => (Lucide::FilePen.into(), Cores::tenue()),
-        "auto" => (Lucide::WandSparkles.into(), Cores::tenue()),
+        "plan" => (Lucide::Map.into(), Cores::destaque_texto()),
+        "acceptEdits" => (Lucide::FilePen.into(), Cores::verde()),
+        "auto" => (Lucide::WandSparkles.into(), Cores::violeta()),
         _ => (Lucide::ShieldOff.into(), Cores::ambar()),
     }
 }
 
-/// Altura do chip: Pequeno 24 (rótulo 12), Médio 28, Grande 32 (caixa).
+/// Altura do chip: Pequeno 24 (rótulo 12), Médio 28, Grande 32, e o da caixa de mensagem, 26
+/// com 5 dos lados e o símbolo de 16 (protótipo Linear, 25/11/2026).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum TamanhoChip {
     Pequeno,
     Medio,
     #[default]
     Grande,
+    Caixa,
 }
 
 impl TamanhoChip {
     fn altura(self) -> f32 {
         match self {
             TamanhoChip::Pequeno => 24.,
+            TamanhoChip::Caixa => 26.,
             TamanhoChip::Medio => 28.,
             TamanhoChip::Grande => 32.,
         }
@@ -252,6 +256,8 @@ impl Chip {
     pub fn construir(self, window: &Window, cx: &App) -> Button {
         let altura = self.tamanho.altura();
         let pequeno = self.tamanho == TamanhoChip::Pequeno;
+        let da_caixa = self.tamanho == TamanhoChip::Caixa;
+        let lado_simbolo = if da_caixa { 16. } else { 14. };
         let marcado = self.alternavel == Some(true);
         let cor_texto = self
             .alerta
@@ -274,14 +280,18 @@ impl Chip {
             .rounded(raio::de(altura))
             .border_1()
             .border_color(transparent_black())
-            .map(|b| if self.so_icone { b.w(r(altura)).px_0() } else { b.px(r(8.)) })
+            .map(|b| match (self.so_icone, da_caixa) {
+                (true, _) => b.w(r(altura)).px_0(),
+                (false, true) => b.px(linear::CONTROLE_LADO).gap(esp::E6),
+                (false, false) => b.px(r(8.)),
+            })
             // A marca no chip é o glifo solto, sem o disco cheio: o disco coral a 24 px do escudo
             // âmbar era a mancha mais forte da faixa de caixas (relatório de aparência,
             // 16/11/2026, V9). Nas listas, popovers, na dupla e no anel de uso o disco fica.
             .when_some(self.simbolo, |b, s| {
                 b.child(match s {
-                    Simbolo::Marca(marca) => marca.glifo(14.),
-                    outro => outro.desenhar(14., window),
+                    Simbolo::Marca(marca) => marca.glifo(lado_simbolo),
+                    outro => outro.desenhar(lado_simbolo, window),
                 })
             })
             .when(!self.so_icone, |b| {
@@ -403,6 +413,8 @@ pub fn variante_perigo(cx: &App) -> ButtonCustomVariant {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TamanhoBotao {
     Linha,
+    /// O controle da caixa de mensagem, 26 (protótipo Linear, 25/11/2026).
+    Caixa,
     Barra,
     Controle,
 }
@@ -411,6 +423,7 @@ impl TamanhoBotao {
     fn altura(self) -> f32 {
         match self {
             TamanhoBotao::Linha => 24.,
+            TamanhoBotao::Caixa => 26.,
             TamanhoBotao::Barra => 28.,
             TamanhoBotao::Controle => 32.,
         }
@@ -449,7 +462,10 @@ fn montar(
                     .child(icone.with_size(tam(window, t.icone()))),
             )
         })
-        .when_some(rotulo, |b, rotulo| b.child(div().min_w_0().truncate().rotulo().child(rotulo)))
+        // O da caixa (e das Configurações) com o texto em 11,5 (protótipo Linear, 25/11/2026).
+        .when_some(rotulo, |b, rotulo| {
+            b.child(div().min_w_0().truncate().rotulo().when(t == TamanhoBotao::Caixa, |d| d.text_size(r(11.5))).child(rotulo))
+        })
 }
 
 pub fn botao_fantasma(
@@ -657,11 +673,13 @@ impl Selectable for BotaoRedondo {
 impl RenderOnce for BotaoRedondo {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let (fundo, hover, ativo, cor) = match self.variante {
+            // No Linear (25/11/2026), o azul-marinho do escolhido com o ícone branco; o ponteiro
+            // clareia 6% (o novo chat, o enviar e o parar do protótipo).
             VarianteRedonda::Primario => (
-                Cores::destaque(),
-                Cores::destaque_hover(),
-                Cores::destaque_ativo(),
-                Cores::sobre_destaque(),
+                Cores::selecao(),
+                Cores::selecao().blend(Cores::forte().opacity(0.06)),
+                Cores::selecao().blend(Cores::forte().opacity(0.10)),
+                Cores::forte(),
             ),
             VarianteRedonda::Claro => (Cores::claro(), Cores::forte(), Cores::texto(), Cores::sobre_cor()),
             VarianteRedonda::Neutro => (Cores::hover(), Cores::pressionado(), Cores::borda_forte(), Cores::texto()),
@@ -745,7 +763,8 @@ impl RenderOnce for BotaoRedondo {
                 (None, Some(icone)) => s.child(icone.with_size(tam(window, lado_icone))),
                 // Só o quadrado, sem anel girando em volta: quem diz que o chat trabalha é a
                 // conversa e a linha de estado (dono, 13/11/2026: "já tem nos outros lugares").
-                (None, None) => s.child(Icon::empty().data(QUADRADO_PARAR).with_size(tam(window, 10.))),
+                // 8 (Linear, 25/11/2026: o quadrado do protótipo).
+                (None, None) => s.child(Icon::empty().data(QUADRADO_PARAR).with_size(tam(window, 8.))),
             })
             .when_some(pulso, |s, t| s.child(anel_do_pulso(cor_pulso, t)))
             .when(interativo, |s| {
@@ -855,6 +874,7 @@ pub struct ControleSegmentado {
     compacto: bool,
     no_flutuante: bool,
     solto: bool,
+    chapado: bool,
     desabilitado: bool,
     ao_mudar: Rc<dyn Fn(usize, &mut Window, &mut App)>,
 }
@@ -877,9 +897,17 @@ impl ControleSegmentado {
             compacto: false,
             no_flutuante: false,
             solto: false,
+            chapado: false,
             desabilitado: false,
             ao_mudar: Rc::new(ao_mudar),
         }
+    }
+
+    /// O das Configurações no jeito do protótipo Linear (25/11/2026): 26 de altura, no preto, sem
+    /// fio nem poço, as opções em 11,5 e a escolhida no azul do escolhido.
+    pub fn chapado(mut self, sim: bool) -> Self {
+        self.chapado = sim;
+        self
     }
 
     /// O segmentado do alto da lista: o trilho é um poço sem fio (o mesmo desenho da busca) e a
@@ -983,7 +1011,9 @@ impl RenderOnce for ControleSegmentado {
             .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle().tab_stop(true))
             .read(cx)
             .clone();
+        let chapado = self.chapado;
         let altura = match self.tamanho {
+            _ if chapado => 26.,
             Size::Small | Size::XSmall => 28.,
             Size::Large => 36.,
             // Uma altura sob medida (as abas do alto da lista têm a do logo).
@@ -1063,14 +1093,16 @@ impl RenderOnce for ControleSegmentado {
             .h(r(altura))
             .rounded(raio::de(altura))
             .map(|s| {
-                if no_flutuante {
+                if chapado {
+                    s.bg(Cores::preto())
+                } else if no_flutuante {
                     s.bg(Cores::recuo_no_flutuante())
                 } else {
                     s.bg(Cores::recuo()).shadow(aresta_de_poco())
                 }
             })
             .border_1()
-            .border_color(if solto { transparent_black() } else { Cores::borda() })
+            .border_color(if solto || chapado { transparent_black() } else { Cores::borda() })
             .focus_visible(|s| s.border_color(Cores::destaque()).shadow(halo_foco()))
             .when(self.largura_total, |s| s.w_full())
             .when(ativo, |s| {
@@ -1098,7 +1130,7 @@ impl RenderOnce for ControleSegmentado {
                     .justify_center()
                     .gap(esp::E6)
                     .h_full()
-                    .px(if self.so_icone {
+                    .px(if self.so_icone || chapado {
                         esp::E8
                     } else if self.compacto {
                         esp::E4
@@ -1110,10 +1142,10 @@ impl RenderOnce for ControleSegmentado {
                     .border_1()
                     .border_color(if escolhido && !tem_pilula && !em_ficha { borda_escolhida } else { transparent_black() })
                     .when(escolhido && !tem_pilula && !em_ficha, |s| s.bg(fundo_escolhido).shadow(aresta_de_tecla()))
-                    .text_size(r(13.))
+                    .text_size(r(if chapado { 11.5 } else { 13. }))
                     .whitespace_nowrap()
-                    .font_weight(if escolhido { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
-                    .text_color(if escolhido { cor_texto } else { Cores::tenue() })
+                    .font_weight(if escolhido && !chapado { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
+                    .text_color(if escolhido { cor_texto } else if chapado { Cores::texto_da_fala() } else { Cores::tenue() })
                     .when(seg.desabilitado, |s| s.opacity(0.45))
                     .when(!escolhido && ativo && !seg.desabilitado, |s| {
                         s.cursor_pointer()
@@ -1178,7 +1210,7 @@ impl RenderOnce for Contador {
                 dica,
             )
             .variante(VarianteRedonda::Plano)
-            .diametro(24.)
+            .diametro(22.)
             .disabled(novo.is_none())
             .on_click(move |_, window, cx| {
                 if let Some(novo) = novo {
@@ -1191,20 +1223,19 @@ impl RenderOnce for Contador {
             .flex_none()
             .items_center()
             .gap(r(2.))
-            .h(r(28.))
+            .h(r(26.))
             .px(r(2.))
-            .rounded(raio::de(28.))
-            // Cavado: o número mora num poço.
-            .bg(Cores::recuo())
-            .shadow(aresta_de_poco())
+            .rounded(raio::de(26.))
+            // No preto, como os outros controles das Configurações (protótipo Linear, 25/11/2026).
+            .bg(Cores::preto())
             .child(botao("menos", Lucide::Minus, "Diminuir", (valor > min).then(|| valor - 1)))
             .child(
                 div()
                     // Com unidade, a largura do maior número: o − e o + não andam de 90% para 100%.
-                    .min_w(r(if self.sufixo.is_some() { 44. } else { 24. }))
+                    .min_w(r(if self.sufixo.is_some() { 44. } else { 36. }))
                     .text_center()
-                    .text_size(r(13.))
-                    .font_semibold()
+                    .text_size(r(12.5))
+                    .font_weight(FontWeight::MEDIUM)
                     .tabular()
                     .text_color(Cores::texto())
                     .child(format!("{valor}{}", self.sufixo.unwrap_or_default())),
@@ -1278,13 +1309,7 @@ impl RenderOnce for Campo {
     }
 }
 
-/// Da borda de fora do campo de busca à caixa da lupa. Fora da escala de propósito: com a folga do
-/// desenho da lupa, a tinta fica a 8 da borda, na coluna do ícone de arquivar logo acima. Era 8,
-/// sobra da época do contorno de 1, e a tinta ficava 1 px depois (folha dimensional, 23/11/2026).
-const RECUO_DA_LUPA: f32 = 7.;
-
-/// Busca de 32 em recuo, com a lupa e o atalho do keymap enquanto está vazia e sem foco. A tinta
-/// da lupa fica a 8 da borda de fora (`RECUO_DA_LUPA`).
+/// Busca de 32 no preto, com a lupa e o atalho do keymap enquanto está vazia e sem foco.
 pub fn campo_de_busca(
     id: impl Into<ElementId>,
     estado: &Entity<InputState>,
@@ -1304,42 +1329,62 @@ pub fn campo_de_busca_de(
     window: &Window,
     cx: &App,
 ) -> Stateful<Div> {
+    campo_de_busca_com(id, estado, atalho, altura, (linear::BUSCA_ESQUERDA, linear::BUSCA_DIREITA), esp::E6, 13.5, window, cx)
+}
+
+/// A busca de 28 da aba Arquivos da direita: 9 dos lados, 7 entre a lupa e o texto, em 12,5.
+pub fn campo_de_busca_pequeno(id: impl Into<ElementId>, estado: &Entity<InputState>, window: &Window, cx: &App) -> Stateful<Div> {
+    campo_de_busca_com(id, estado, None, 28., (linear::ITEM_LADO, linear::ITEM_LADO), linear::PASSO_VAO, 12.5, window, cx)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn campo_de_busca_com(
+    id: impl Into<ElementId>,
+    estado: &Entity<InputState>,
+    atalho: Option<Box<dyn Action>>,
+    altura: f32,
+    (esquerda, direita): (Rems, Rems),
+    vao: Rems,
+    letra: f32,
+    window: &Window,
+    cx: &App,
+) -> Stateful<Div> {
     let focado = estado.read(cx).focus_handle(cx).is_focused(window);
     let vazio = estado.read(cx).value().is_empty();
+    // O atalho em texto simples ("Ctrl K"), sem as teclas em caixa, como no Linear (25/11/2026).
     let teclas = atalho
         .filter(|_| vazio && !focado)
         .and_then(|acao| Kbd::binding_for_action(acao.as_ref(), None, window))
-        .map(|kbd| desenho_teclas(kbd.partes()));
-    let canto = raio::de(altura);
+        .map(|kbd| {
+            div()
+                .flex_none()
+                .text_size(r(11.))
+                .text_color(Cores::tenue_da_lista())
+                .child(kbd.partes().join(" "))
+        });
     div()
         .id(id)
         .relative()
         .flex()
         .items_center()
         .h(r(altura))
-        .pl(r(RECUO_DA_LUPA))
-        .pr(esp::E6)
-        // Um poço de canto arredondado, sem fio: quem o desenha é a sombra que cai de cima para
-        // dentro e o 1 px de luz na quina de baixo. Com o foco, um aro de metal de 2 px em volta
-        // de um miolo opaco ("é aqui"), sem azul chapado nem halo.
-        .rounded(canto)
-        .bg(Cores::recuo())
-        .shadow(aresta_de_poco())
-        .when(focado, |s| {
-            s.child(aro_de_metal(canto, px(2.), 1.))
-                .child(div().absolute().inset_0().rounded(canto).bg(Cores::preto()).shadow(aresta_de_poco()))
-        })
+        .pl(esquerda)
+        .pr(direita)
+        // Chapada no preto, sem fio nem poço (protótipo Linear, 25/11/2026).
+        .rounded(raio::de(altura))
+        .bg(Cores::preto())
         .child(
             Input::new(estado)
                 .appearance(false)
                 .cleanable(true)
                 .px_0()
+                .gap(vao)
                 .prefix(
                     div()
-                        .text_color(Cores::fantasma())
+                        .text_color(Cores::tenue())
                         .child(Icon::new(Lucide::Search).with_size(tam(window, 14.))),
                 )
-                .text_size(r(14.)),
+                .text_size(r(letra)),
         )
         .children(teclas)
 }

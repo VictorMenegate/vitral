@@ -195,21 +195,22 @@ impl RenderOnce for Switch {
         // Em px fixos, a 1,6 o interruptor ficava com 36×20 ao lado de controles de 44 de altura.
         let rem = window.rem_size();
         let z = move |v: f32| rem * (v / 15.);
+        // Vitral: o padrão é o do protótipo Linear (25/11/2026), 30×18 com o canto de 8 e o pino
+        // de 14 com o de 6 (não redondo, como os outros controles).
         let (bg_width, bg_height) = match self.size {
             Size::XSmall | Size::Small => (z(28.), z(16.)),
             Size::Large => (z(44.), z(24.)),
-            _ => (z(36.), z(20.)),
+            _ => (z(30.), z(18.)),
         };
         let bar_width = match self.size {
             Size::XSmall | Size::Small => z(12.),
             Size::Large => z(20.),
-            _ => z(16.),
+            _ => z(14.),
         };
         let inset = z(2.);
-        let radius = if cx.theme().radius >= px(4.) {
-            bg_height
-        } else {
-            cx.theme().radius
+        let (radius, radius_thumb) = match self.size {
+            Size::XSmall | Size::Small | Size::Large => (bg_height, bg_height),
+            _ => (z(8.), z(6.)),
         };
 
         // The thumb's position is geometry, not a semantic state style: a
@@ -289,7 +290,7 @@ impl RenderOnce for Switch {
                         .child(
                             // Switch Toggle
                             SwitchThumb::new(checked)
-                                .rounded(radius)
+                                .rounded(radius_thumb)
                                 .size(bar_width)
                                 .left(thumb_x)
                                 .bg(toggle_bg),

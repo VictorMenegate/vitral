@@ -42,6 +42,8 @@ pub mod movimento;
 mod painel_contas;
 mod pilulas;
 mod fechar;
+mod pagina;
+mod pagina_md;
 mod painel_arquivo;
 mod paleta;
 mod pergunta;
@@ -72,7 +74,7 @@ use std::{
 
 use gpui_kit::component::{
     ActiveTheme as _, Icon, IconName, ResizableState, WindowExt as _, h_resizable, resizable_panel,
-    h_flex,
+    h_flex, v_flex,
     input::{InputEvent, InputState},
     spinner::compasso_recente,
 };
@@ -102,6 +104,8 @@ actions!(vitral, [EditarUltima, CorrigirUltima, RecordarAnterior, RecordarSeguin
 actions!(vitral, [AbrirMenuDoPainel]);
 // Ctrl+I: o quadro de ideias.
 actions!(vitral, [AbrirQuadroDeIdeias]);
+// Linear (25/11/2026): Ctrl+. deixa só as conversas na janela.
+actions!(vitral, [AlternarFoco]);
 // Teclado e organização (24/11/2026): Alt+↑/↓ pulam de mensagem sua em mensagem sua; PgUp/PgDn
 // rolam a conversa; Ctrl+Shift+Enter maximiza o painel; Alt+PgUp/PgDn levam a aba ao painel
 // vizinho e Alt+Shift+PgUp/PgDn abrem um painel ao lado com ela; Ctrl+Alt+A arquiva o chat do
@@ -131,16 +135,21 @@ const ESC_ARMADO: Duration = Duration::from_secs(3);
 const RECOLHIDAS_DE_INICIO: [&str; 1] = ["Mais antigas"];
 
 /// Larguras normais da lista e do painel da direita, e o mínimo de cada conversa. Todas as
-/// medidas das partes são a 100% e crescem com o zoom (a 150%, a lista normal tem 468 px).
-const LATERAL: f32 = 312.;
-const DIREITA: f32 = 380.;
+/// medidas das partes são a 100% e crescem com o zoom (a 150%, a lista normal tem 375 px). As do
+/// protótipo Linear (`PADRAO` de lá: lista 250, Este chat 232, arquivo 560; dono, 26/11/2026:
+/// "faz os tamanhos padrão das telas ser igual tá no protótipo").
+const LATERAL: f32 = 250.;
+const DIREITA: f32 = 232.;
+/// A largura da direita com um arquivo aberto, guardada à parte (protótipo Linear, 25/11/2026):
+/// o código pede mais lugar que o Este chat.
+const ARQUIVO: f32 = 560.;
 const MIN_CONVERSA: f32 = 280.;
 /// Menos que isso a conversa não se lê: é o mínimo mesmo com a janela apertada.
 const MIN_APERTADO: f32 = 200.;
 /// Largura que um painel novo precisa ter para valer a pena abrir.
 const MIN_NOVO_PAINEL: f32 = 240.;
 /// Até onde a lista e o painel da direita vão no arrasto.
-const FAIXA_LISTA: (f32, f32) = (200., 560.);
+const FAIXA_LISTA: (f32, f32) = (200., 400.);
 /// Arrastando a divisória da lista para a esquerda, ela ainda encolhe um pouco além do mínimo;
 /// passando deste ponto, recolhe de vez, como a barra lateral do VS Code (dono, 13/11/2026:
 /// "quando arrastar bastante pra diminuir a parte da esquerda, ela minimizar").
@@ -151,7 +160,9 @@ const RECOLHER_ABAIXO_DE: f32 = 160.;
 /// divisória das conversas ou na volta do Ctrl+B, crescia sozinha (dono, 17/11/2026: "deixei o
 /// painel lateral menor e quando clico pra deixar o tamanho dos chats igual ela cresce").
 const LISTA_MINIMA: f32 = RECOLHER_ABAIXO_DE;
-const FAIXA_DIREITA: (f32, f32) = (280., 900.);
+const FAIXA_DIREITA: (f32, f32) = (200., 380.);
+/// A faixa da direita com um arquivo aberto (a do protótipo).
+const FAIXA_ARQUIVO: (f32, f32) = (380., 960.);
 /// O que a gaveta deixa da conversa à mostra, para o clique fora fechá-la.
 const FRESTA_GAVETA: f32 = 40.;
 
@@ -211,6 +222,8 @@ pub struct Orcamento {
     /// Até onde a lista e o painel da direita podem ser alargados sem empurrar as conversas.
     max_lista: f32,
     max_direita: f32,
+    /// O mesmo, com um arquivo aberto à direita.
+    max_arquivo: f32,
     /// Quantas conversas cabem lado a lado nesta largura.
     cabem: usize,
 }
@@ -264,6 +277,7 @@ fn orcamento(util: f32, escala: f32, n: usize, lista: bool, direita: bool) -> Or
         min_conversa,
         max_lista: maximo(LATERAL, FAIXA_LISTA),
         max_direita: maximo(DIREITA, FAIXA_DIREITA),
+        max_arquivo: maximo(ARQUIVO, FAIXA_ARQUIVO),
         cabem: ((util / u(MIN_NOVO_PAINEL)).floor() as usize).clamp(1, paineis::MAX_PAINEIS),
     }
 }
@@ -274,6 +288,8 @@ fn orcamento(util: f32, escala: f32, n: usize, lista: bool, direita: bool) -> Or
 struct Larguras {
     lista: f32,
     direita: f32,
+    /// A da direita com um arquivo aberto.
+    arquivo: f32,
     /// A divisão das conversas lado a lado (a fração de cada uma no espaço delas), uma por
     /// quantidade de conversas: fechar um painel e abrir de novo volta à divisão que aquela
     /// quantidade tinha (dono, 16/11/2026: "falta lembrar como deixei"). Sem a da quantidade de
@@ -283,7 +299,7 @@ struct Larguras {
 
 impl Default for Larguras {
     fn default() -> Self {
-        Larguras { lista: LATERAL, direita: DIREITA, divisoes: Vec::new() }
+        Larguras { lista: LATERAL, direita: DIREITA, arquivo: ARQUIVO, divisoes: Vec::new() }
     }
 }
 
@@ -314,7 +330,7 @@ impl Larguras {
     /// larguras com que as partes foram montadas (a lista e a direita, se ancoradas). A lista e a
     /// direita só mudam se o arrasto as mexeu: arrastar a divisória entre duas conversas não troca
     /// a largura pedida da lista pela que o orçamento apertou nesta janela.
-    fn guardar(&mut self, tamanhos: &[f32], antes: &LargurasPx, escala: f32) {
+    fn guardar(&mut self, tamanhos: &[f32], antes: &LargurasPx, escala: f32, com_arquivo: bool) {
         let mexeu = |agora: f32, antes: f32| (agora - antes).abs() >= 1.;
         let mut resto = tamanhos;
         if let Some(lista) = antes.lista
@@ -329,7 +345,11 @@ impl Larguras {
             && let Some((d, antes)) = resto.split_last()
         {
             if mexeu(*d, direita) {
-                self.direita = (d / escala).clamp(FAIXA_DIREITA.0, FAIXA_DIREITA.1);
+                if com_arquivo {
+                    self.arquivo = (d / escala).clamp(FAIXA_ARQUIVO.0, FAIXA_ARQUIVO.1);
+                } else {
+                    self.direita = (d / escala).clamp(FAIXA_DIREITA.0, FAIXA_DIREITA.1);
+                }
             }
             resto = antes;
         }
@@ -342,11 +362,17 @@ impl Larguras {
     /// As larguras guardadas neste orçamento, com `n` conversas: a lista e a direita dentro da
     /// faixa que cabe, e as conversas dividindo o resto.
     fn em_px(&self, o: &Orcamento, n: usize) -> LargurasPx {
+        self.em_px_com(o, n, false)
+    }
+
+    /// O mesmo, com a direita na largura e na faixa do arquivo quando `com_arquivo`.
+    fn em_px_com(&self, o: &Orcamento, n: usize, com_arquivo: bool) -> LargurasPx {
         let n = n.max(1);
         let u = |medida: f32| medida * o.escala;
         let lista = o.lista.then(|| u(self.lista).min(o.max_lista).max(u(LISTA_MINIMA)).floor());
-        let direita = (o.direita == Direita::Ancorada)
-            .then(|| u(self.direita).min(o.max_direita).max(u(FAIXA_DIREITA.0)).floor());
+        let (largura, minima, maxima) =
+            if com_arquivo { (self.arquivo, FAIXA_ARQUIVO.0, o.max_arquivo) } else { (self.direita, FAIXA_DIREITA.0, o.max_direita) };
+        let direita = (o.direita == Direita::Ancorada).then(|| u(largura).min(maxima).max(u(minima)).floor());
         let livre = o.util - lista.unwrap_or(0.) - direita.unwrap_or(0.);
         let conversas = if let Some(divisao) = self.divisao(n) {
             divisao.iter().map(|f| (livre * f).floor().max(o.min_conversa)).collect()
@@ -382,30 +408,13 @@ fn na_faixa_de_redimensionar(ponto: Point<Pixels>, window: &Window) -> bool {
         || perto(folga.bottom, tamanho.height - ponto.y)
 }
 
-/// A sombra que a fileira das conversas projeta na lista, do lado de fora dos cantos redondos:
-/// a fileira parece um degrau acima da base (dono, 17/11/2026: "uma sombra ou outra coisa que dê
-/// sensação de profundidade aqui"). Vai num recorte à esquerda da peça, com a forma dela: por
-/// baixo do cartão translúcido, a sombra o escureceria. `meio_vao` é onde o cartão começa no
-/// painel.
-///
-/// Três recortes: o do meio para na borda da peça; os dos cantos vão até o fim da curva, para a
-/// sombra acompanhar o arco (dono, 17/11/2026: "a sombra não acompanhou a curva"). Ali ela também
-/// passa por baixo do canto do cartão, num quadrado do tamanho do raio: embaixo o pé do cartão é
-/// opaco, e em cima o escurecido some no cartão quase opaco.
-fn sombra_da_fileira(meio_vao: Pixels) -> Div {
-    // Até onde a sombra larga chega (o deslocamento e o desfoque): recortada antes, ela acabava
-    // numa beirada dura em vez de sumir.
-    let alcance = px(60.);
-    let raio = crate::tema::raio_encostado(crate::tema::Esquerda::Solta);
-    // A peça, com a sombra, posta onde o cartão está no painel.
-    let peca = || div().absolute().left(alcance + meio_vao).w(px(4000.)).rounded_l(raio).shadow(crate::tema::sombra_da_fileira());
-    let recorte = || div().absolute().left(-alcance).overflow_hidden();
-    div()
-        .absolute()
-        .inset_0()
-        .child(recorte().top(raio).bottom(raio).w(alcance + meio_vao).child(peca().top(-raio).bottom(-raio)))
-        .child(recorte().top_0().h(raio).w(alcance + meio_vao + raio).child(peca().top_0().h(px(4000.))))
-        .child(recorte().bottom_0().h(raio).w(alcance + meio_vao + raio).child(peca().bottom_0().h(px(4000.))))
+/// A margem do cartão das conversas na peça dela: 8 em cima; 8 à direita na última; e, sem a
+/// lista (que leva junto a barra de baixo), 8 embaixo e 8 à esquerda na primeira.
+fn margem_do_cartao(d: Div, primeira: bool, ultima: bool, lista: bool) -> Div {
+    d.pt(esp::E8)
+        .when(ultima, |d| d.pr(esp::E8))
+        .when(!lista, |d| d.pb(esp::E8))
+        .when(!lista && primeira, |d| d.pl(esp::E8))
 }
 
 /// O orçamento desta janela. A margem da esquerda só existe com a lista ancorada (dono,
@@ -442,7 +451,6 @@ struct ArquivosLidos {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AbaLateral {
     Conversas,
-    Arquivos,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -456,6 +464,8 @@ pub struct Janela {
     selecionado: Option<String>,
     filtro: Filtro,
     busca: Entity<InputState>,
+    /// A busca da aba Arquivos da direita.
+    busca_arquivos: Entity<InputState>,
     /// Conversas abertas lado a lado e qual delas está ativa.
     paineis: Vec<paineis::Painel>,
     ativo: usize,
@@ -500,6 +510,9 @@ pub struct Janela {
     /// arquivo aberto mostra (dono, 16/11/2026: "ver a edição"); `None`, o arquivo como está.
     edicao_pedida: Option<std::rc::Rc<edicao::Edicao>>,
     arquivo_edicao: Option<std::rc::Rc<edicao::Edicao>>,
+    /// A edição do arquivo aberto quando você passa para "Arquivo" (ou entra no editor): o
+    /// "Mudanças" volta a ela.
+    edicao_fora: Option<std::rc::Rc<edicao::Edicao>>,
     /// A mudança à vista na edição (as setas passam de uma à outra) e se o painel rola até ela no
     /// próximo quadro.
     edicao_atual: usize,
@@ -521,6 +534,14 @@ pub struct Janela {
     /// entra na árvore. Desligado ao abrir o Vitral.
     mostrar_ignorados: bool,
     arquivo_lido: std::cell::RefCell<Option<painel_arquivo::ArquivoLido>>,
+    /// A página do .md aberta (`pagina.rs`): os blocos e o que está em edição.
+    pagina: std::cell::RefCell<Option<pagina::PaginaAberta>>,
+    /// O trecho selecionado por arrasto no código do arquivo aberto.
+    selecao_no_codigo: Option<painel_arquivo::SelecaoNoCodigo>,
+    /// Os arquivos abertos nas abas da direita, na ordem delas.
+    abas_de_arquivo: Vec<abas_direita::AbaDeArquivo>,
+    /// As dobras de linhas iguais abertas no arquivo aberto (pela primeira linha delas).
+    dobras_abertas: std::cell::RefCell<std::collections::HashSet<usize>>,
     /// O editor aberto sobre o arquivo (um clique no texto): grava sozinho e pergunta quando o
     /// agente muda o mesmo arquivo. `None`, o arquivo está só para ler.
     editor_arquivo: Option<editor_arquivo::Editor>,
@@ -556,6 +577,14 @@ pub struct Janela {
     painel: bool,
     /// Lista da esquerda (conversas/arquivos) aberta ou recolhida.
     lista: bool,
+    /// Modo foco (Linear, 25/11/2026, Ctrl+.): só as conversas, sem a lista, a barra de baixo e o
+    /// painel da direita. Guarda como a lista e o painel estavam, para voltar igual.
+    antes_do_foco: Option<(bool, bool)>,
+    /// O trilho de uso (os anéis do canto, à vista no modo foco) pode ser arrastado: quanto ele
+    /// andou do lugar de sempre, em px, guardado no interface.json, e o arrasto em curso (onde o
+    /// ponteiro desceu e o deslocamento de então).
+    deslocamento_trilho: Point<Pixels>,
+    arrasto_trilho: Option<(Point<Pixels>, Point<Pixels>)>,
     /// Divisão da largura no último quadro (lista e direita podem estar em gaveta).
     orcamento: Orcamento,
     /// Larguras dadas no arrasto das divisórias, a 100%.
@@ -563,7 +592,7 @@ pub struct Janela {
     /// Estado das divisórias, recomeçado quando muda a composição, o zoom ou a largura: as partes
     /// voltam às `larguras` na escala nova.
     estado_partes: Entity<ResizableState>,
-    chave_partes: Option<(usize, bool, bool, u32, u32)>,
+    chave_partes: Option<(usize, bool, bool, u32, u32, Option<u64>, bool)>,
     gaveta: Option<Gaveta>,
     /// Sobe a cada abertura da gaveta: a entrada dela toca uma vez por abertura.
     geracao_gaveta: u64,
@@ -597,9 +626,16 @@ pub struct Janela {
     ilha_fechada: Option<(PathBuf, std::time::Instant)>,
     /// A tela de boas-vindas da primeira abertura, enquanto está aberta.
     boas_vindas: Option<boas_vindas::BoasVindas>,
+    /// A tela de boas-vindas acabou de fechar: ela some num fade por cima do app.
+    saida_boas_vindas: bool,
     /// O trecho de texto selecionado na janela agora (uma parte de uma resposta, por exemplo):
     /// com ele, o painel ativo mostra o "Responder a este trecho", que o cita na caixa.
     trecho: Option<String>,
+    /// Onde o botão esquerdo soltou por último numa conversa: a barra do trecho (Responder e
+    /// Copiar) aparece embaixo dele. `None` na seleção pelo teclado; enquanto o botão está
+    /// apertado (`segurando_trecho`), a barra não aparece.
+    ponto_do_trecho: Option<Point<Pixels>>,
+    segurando_trecho: bool,
     /// Há texto selecionado na janela (ou uma seleção em curso), conferido a cada desenho: com
     /// ele, as conversas montam todos os blocos, para a seleção alcançar o que saiu da vista.
     selecionando: bool,
@@ -633,6 +669,9 @@ pub struct Janela {
     sempre_marcado: HashSet<String>,
     /// "Nova conversa ao lado": a próxima conversa criada abre num painel novo.
     nova_ao_lado: bool,
+    /// As mensagens com o ponteiro em cima (o grupo de cada uma): elas desenham a barra de ações,
+    /// por cima da mensagem de baixo.
+    falas_sob_ponteiro: Vec<SharedString>,
     /// Painel cuja aba está sendo arrastada.
     arrastando_aba: Option<u64>,
     /// Árvore de arquivos de cada pasta (aba Arquivos).
@@ -824,6 +863,13 @@ impl Janela {
                 cx.notify();
             }
         })];
+        // A busca da aba Arquivos da direita: filtra a árvore enquanto se digita.
+        let busca_arquivos = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar arquivo"));
+        assinaturas.push(cx.subscribe_in(&busca_arquivos, window, |_, _, evento, _, cx| {
+            if matches!(evento, InputEvent::Change) {
+                cx.notify();
+            }
+        }));
         // A busca dentro do arquivo aberto à direita: o Enter anda pelos achados.
         let busca_no_arquivo = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar no arquivo"));
         assinaturas.push(cx.subscribe_in(&busca_no_arquivo, window, |this, _, evento, _, cx| match evento {
@@ -840,13 +886,11 @@ impl Janela {
             if ativa {
                 this.atualizacao_mudou(window, cx);
             }
-            // Sair grava a hora; voltar depois de um tempo fora monta o "Enquanto você esteve fora".
+            // Sair grava a hora.
             if let Some(motor) = &this.motor {
-                motor.update(cx, |m, cx| {
+                motor.update(cx, |m, _| {
                     m.janela_ativa = ativa;
-                    if ativa {
-                        m.usuario_voltou(cx);
-                    } else {
+                    if !ativa {
                         m.usuario_saiu();
                     }
                 });
@@ -934,6 +978,7 @@ impl Janela {
             selecionado: None,
             filtro: Filtro::Todos,
             busca,
+            busca_arquivos,
             paineis: Vec::new(),
             ativo: 0,
             ativo_antes_do_clique: None,
@@ -957,6 +1002,7 @@ impl Janela {
             arquivo_marcada: Default::default(),
             edicao_pedida: None,
             arquivo_edicao: None,
+            edicao_fora: None,
             edicao_atual: 0,
             edicao_rolar: Default::default(),
             lugar_no_turno: Default::default(),
@@ -966,6 +1012,10 @@ impl Janela {
             cache_arquivos: Default::default(),
             mostrar_ignorados: false,
             arquivo_lido: Default::default(),
+            pagina: Default::default(),
+            dobras_abertas: Default::default(),
+            abas_de_arquivo: Vec::new(),
+            selecao_no_codigo: None,
             editor_arquivo: None,
             arquivo_fonte: false,
             codigo_esquerda: Default::default(),
@@ -985,6 +1035,9 @@ impl Janela {
             // largura toda. O que você escolheu fica lembrado no interface.json.
             painel: false,
             lista: true,
+            antes_do_foco: None,
+            deslocamento_trilho: Point::default(),
+            arrasto_trilho: None,
             orcamento: orcamento_da_janela(window, 1, true, false),
             larguras: Larguras::default(),
             estado_partes: cx.new(|_| ResizableState::default()),
@@ -1004,7 +1057,10 @@ impl Janela {
             ilha: None,
             ilha_fechada: None,
             boas_vindas: None,
+            saida_boas_vindas: false,
             trecho: None,
+            ponto_do_trecho: None,
+            segurando_trecho: false,
             selecionando: false,
             citacoes: HashMap::new(),
             arranjo: None,
@@ -1023,6 +1079,7 @@ impl Janela {
             pedido_aberto: None,
             sempre_marcado: HashSet::new(),
             nova_ao_lado: false,
+            falas_sob_ponteiro: Vec::new(),
             arrastando_aba: None,
             arvores: HashMap::new(),
             foco_lista: cx.focus_handle(),
@@ -1191,6 +1248,32 @@ impl Janela {
             }
         }
         cx.notify();
+    }
+
+    /// Modo foco (Linear, 25/11/2026, Ctrl+.): só as conversas, sem a lista, a barra de baixo e o
+    /// painel da direita; o uso dos agentes flutua no canto. De novo, volta como estava.
+    pub(super) fn alternar_foco(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((lista, painel)) = self.antes_do_foco.take() {
+            if lista {
+                self.mostrar_lista(window, cx);
+            }
+            if painel {
+                self.mostrar_direita(window, cx);
+            }
+        } else {
+            self.antes_do_foco = Some((self.lista, self.painel));
+            if self.gaveta.is_some() {
+                self.fechar_gaveta(window, cx);
+            }
+            self.lista = false;
+            self.painel = false;
+        }
+        cx.notify();
+    }
+
+    /// Se o modo foco está ligado.
+    pub(super) fn em_foco(&self) -> bool {
+        self.antes_do_foco.is_some()
     }
 
     /// Ctrl+J e o botão do painel: o mesmo para o painel da direita.
@@ -1565,6 +1648,13 @@ impl Janela {
             .map(|c| c.id.clone())
             .collect();
         self.painel = interface.as_ref().and_then(|i| i.get("painel")?.as_bool()).unwrap_or(false);
+        // Onde o trilho de uso foi deixado (Linear, 25/11/2026).
+        if let Some([x, y]) = interface.as_ref().and_then(|i| {
+            let v = i.get("trilho")?.as_array()?;
+            Some([v.first()?.as_f64()? as f32, v.get(1)?.as_f64()? as f32])
+        }) {
+            self.deslocamento_trilho = point(px(x), px(y));
+        }
         // Os rascunhos antes do `selecionar`: é ele que leva o do chat que abre para a caixa.
         let rascunhos_lidos = rascunhos::ler(interface.as_ref(), |id| m.chat(id).is_some());
         self.restaurar_rascunhos(rascunhos_lidos);
@@ -1573,8 +1663,6 @@ impl Janela {
         self.ultimo_destino = lido("ultimo_destino").map(PathBuf::from).filter(|p| p.is_absolute());
         let avisos = motor.update(cx, |m, _| std::mem::take(&mut m.avisos_ao_abrir));
         let aberturas = motor.update(cx, |m, _| std::mem::take(&mut m.aberturas));
-        // Uma vez na abertura: com uma saída gravada, o resumo do que aconteceu com o Vitral fechado.
-        motor.update(cx, |m, cx| m.usuario_voltou(cx));
         self.motor = Some(motor);
         // A janela volta como estava (as conversas lado a lado, as abas, as larguras); sem nada
         // guardado, abre no último chat.
@@ -1807,34 +1895,22 @@ impl Janela {
     fn botoes_janela_separados(&self, cx: &Context<Self>) -> Div {
         // Sem folga a mais: o traço do grupo já separa o × do "+" do painel (dono, 17/11/2026:
         // "tá muito distante o + do x").
-        grupo_botoes_janela(botoes_do_layout(cx.button_layout()), true)
+        grupo_botoes_janela(botoes_do_layout(cx.button_layout()), false)
     }
 
-    /// Canto de cima do painel da direita: os botões da janela quando ele está ao lado das
-    /// conversas; na gaveta, o botão de recolhê-la, com o Esc tirado do keymap (os da janela
-    /// ficam na última conversa).
+    /// Canto de cima do painel da direita: o recolher (Ctrl+J; na gaveta, o de recolhê-la). Os
+    /// botões da janela ficam sempre na última conversa (protótipo Linear, 25/11/2026).
     fn botoes_da_direita(&self, separar: bool, window: &Window, cx: &Context<Self>) -> Div {
+        let _ = separar;
         if self.gaveta != Some(Gaveta::Direita) {
-            // O × daqui é o da JANELA, e ao lado do título do painel ele parecia fechar só o
-            // painel. Por isso o painel ganha o botão dele (o ícone de recolher) e um traço o
-            // separa dos botões da janela.
-            let _ = separar;
-            return div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap(esp::E4)
-                .child(
-                    sem_arrastar().flex_none().child(
-                        botao_icone("recolher-painel", Lucide::PanelRightClose, "Fechar o painel", TamanhoBotao::Barra, window, cx)
-                            .tooltip_with_action("Fechar o painel", &AlternarPainel, None)
-                            .on_click(cx.listener(|this, _, window, cx| this.alternar_painel(window, cx))),
-                    ),
-                )
-                .child(grupo_botoes_janela(botoes_do_layout(cx.button_layout()), true));
+            return sem_arrastar().flex_none().child(
+                botao_icone("recolher-painel", Lucide::PanelRightClose, "Fechar o painel", TamanhoBotao::Linha, window, cx)
+                    .tooltip_with_action("Fechar o painel", &AlternarPainel, None)
+                    .on_click(cx.listener(|this, _, window, cx| this.alternar_painel(window, cx))),
+            );
         }
         sem_arrastar().flex_none().child(
-            botao_icone("recolher-gaveta", Lucide::PanelRightClose, "Recolher o painel", TamanhoBotao::Barra, window, cx)
+            botao_icone("recolher-gaveta", Lucide::PanelRightClose, "Recolher o painel", TamanhoBotao::Linha, window, cx)
                 .tooltip_with_action("Recolher o painel", &FecharGaveta, Some("Gaveta"))
                 .on_click(cx.listener(|this, _, window, cx| this.fechar_gaveta(window, cx))),
         )
@@ -1846,6 +1922,7 @@ impl Janela {
         self.painel
             && match self.aba_direita {
                 abas_direita::AbaDireita::Arquivo(_) => self.arquivo_aberto.is_some() || self.selecionado.is_some(),
+                abas_direita::AbaDireita::Arquivos => true,
                 abas_direita::AbaDireita::Chat => {
                     self.selecionado.is_some() || self.arquivo_aberto.is_some()
                 }
@@ -1872,7 +1949,12 @@ impl Janela {
                 (self.larguras.lista, FAIXA_LISTA.0, div().size_full().child(lista).into_any_element())
             }
             // A aba da direita escolhe o conteúdo (o arquivo, o PR ou "Este chat"), na gaveta também.
-            Gaveta::Direita => (self.larguras.direita, FAIXA_DIREITA.0, self.conteudo_da_direita(motor, window, cx)),
+            Gaveta::Direita => {
+                let com_arquivo = matches!(self.aba_visivel(motor.read(cx)), abas_direita::AbaDireita::Arquivo(_));
+                let (largura, minima) =
+                    if com_arquivo { (self.larguras.arquivo, FAIXA_ARQUIVO.0) } else { (self.larguras.direita, FAIXA_DIREITA.0) };
+                (largura, minima, self.conteudo_da_direita(motor, window, cx))
+            }
         };
         let largura = px(largura_da_gaveta(largura, minima, &self.orcamento));
         // Entra deslizando 24 px da borda, com o véu em fade junto (uma vez por abertura).
@@ -1926,7 +2008,7 @@ impl Janela {
                         // direita).
                         .rounded(crate::tema::raio_da_peca())
                         .map(|s| {
-                            let reto = crate::tema::raio_encostado(crate::tema::Esquerda::Beirada);
+                            let reto = px(0.);
                             match gaveta {
                                 Gaveta::Lista => s.rounded_l(reto),
                                 Gaveta::Direita => s.rounded_r(reto),
@@ -1987,6 +2069,14 @@ impl Janela {
         if let Some(motor) = &self.motor {
             crate::tema::definir_transparencia(motor.read(cx).config.transparencia);
             crate::tema::definir_letra_da_conversa(motor.read(cx).config.letra_da_conversa);
+            // As cores da Aparência: este desenho já sai com elas; o tema do kit (menus, campos) e
+            // as vistas guardadas (a lista, as mensagens) acompanham no seguinte.
+            if crate::tema::definir_paleta(&motor.read(cx).config.paleta) {
+                cx.defer(|cx| {
+                    crate::tema::reaplicar_cores(cx);
+                    cx.refresh_windows();
+                });
+            }
         }
         // O desfoque do sistema acompanha o nível (sem desfoque no Opaco).
         crate::acompanhar_o_fundo(window, crate::tema::transparencia());
@@ -2003,12 +2093,29 @@ impl Janela {
         // só ela, e não avisa a Janela (que avisaria as mensagens; ver `vista_mensagens`).
         componentes::vista_viva::novo_quadro(cx);
         let vivo = trabalhando || boas_vindas;
+        // O fundo animado da Aparência (Smoke ou Mesh drift) cobre a chapa, nas cores do tema ou
+        // nas da receita. Anda junto com ela: só com um chat à vista trabalhando (a política do
+        // metal; o protótipo anda sempre).
+        let fundo_vivo = self.motor.as_ref().and_then(|motor| {
+            use crate::paleta::{CoresDoFundo, FundoVivo};
+            use componentes::fundo_vivo::{CORES_DO_SMOKE, MESH, SMOKE};
+            let paleta = &motor.read(cx).config.paleta;
+            let receita = match paleta.fundo_vivo {
+                FundoVivo::Smoke => SMOKE,
+                FundoVivo::Mesh => MESH,
+                FundoVivo::Desligado => return None,
+            };
+            // Só o Smoke tem cores próprias na receita; o Mesh do protótipo segue sempre o tema.
+            let da_receita = paleta.cores_do_fundo == CoresDoFundo::Receita && paleta.fundo_vivo == FundoVivo::Smoke;
+            Some((receita, if da_receita { CORES_DO_SMOKE } else { paleta.cores_do_tema_no_fundo() }))
+        });
+        let com_fundo_vivo = fundo_vivo.is_some();
         let chapa = componentes::vista_viva::em_vista_propria(
             "chapa-da-janela".into(),
             StyleRefinement::default().size_full(),
-            u64::from(vivo),
+            u64::from(vivo) ^ metal::assinatura_do_vivo(&fundo_vivo).wrapping_shl(1),
             cx,
-            move |window, cx| metal::fundo(vivo, Corners::default(), window, cx).into_any_element(),
+            move |window, cx| metal::fundo(vivo, Corners::default(), fundo_vivo, window, cx).into_any_element(),
         );
         let tema = cx.theme();
         let mut base = div()
@@ -2029,11 +2136,17 @@ impl Janela {
             )
             // O véu da base: a janela inteira é uma camada só (a lista mora direto nela, junto
             // com a borda), e os cartões flutuam por cima.
-            .child(div().absolute().top_0().left_0().size_full().bg(if boas_vindas {
-                Cores::vidro_leitura().opacity(0.52)
-            } else {
-                Cores::vidro_leitura()
-            }))
+            // Com o fundo animado, a lista fica sem véu: o fundo é ele (no protótipo, a lista e a
+            // janela ficam transparentes por cima dele). Sem, no Opaco, a cor da lista é chapada.
+            .when(!com_fundo_vivo, |base| {
+                base.child(div().absolute().top_0().left_0().size_full().bg(if boas_vindas {
+                    Cores::vidro_leitura().opacity(0.52)
+                } else if crate::tema::transparencia() == 0 {
+                    Cores::vidro()
+                } else {
+                    Cores::vidro_leitura()
+                }))
+            })
             // O grão que faz o transparente ler como fosco; no opaco não há o que foscar.
             .when(crate::tema::transparencia() > 0, |base| base.child(metal::fosco(Corners::default())))
             .child(zoom::captura_roda())
@@ -2259,6 +2372,7 @@ impl Janela {
             .on_action(cx.listener(|this, _: &AlternarLista, window, cx| {
                 this.alternar_lista(window, cx)
             }))
+            .on_action(cx.listener(|this, _: &AlternarFoco, window, cx| this.alternar_foco(window, cx)))
             .on_action(cx.listener(|this, _: &IrParaPainel1, window, cx| this.focar_painel(0, window, cx)))
             .on_action(cx.listener(|this, _: &IrParaPainel2, window, cx| this.focar_painel(1, window, cx)))
             .on_action(cx.listener(|this, _: &IrParaPainel3, window, cx| this.focar_painel(2, window, cx)))
@@ -2311,8 +2425,13 @@ impl Janela {
             .on_action(cx.listener(|this, acao: &links_arquivo::AbrirLinkVitral, window, cx| this.abrir_link_vitral(&acao.0, window, cx)))
             .on_action(cx.listener(|this, acao: &edicao::AbrirEdicao, window, cx| this.abrir_edicao(acao, window, cx)))
             .child(
-                h_flex()
+                v_flex()
                     .size_full()
+                    .child(
+                h_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
                     // Margem só à esquerda, e só com a lista ancorada: a fileira das conversas
                     // encosta no topo, na direita e embaixo da janela, e sem a lista também na
                     // esquerda (dono, 16/11/2026: "não tenha em cima, na direita e no meio dos
@@ -2366,12 +2485,93 @@ impl Janela {
                             .child(self.partes(&motor, window, cx))
                             .children(gaveta),
                     ),
+                    )
+                    // Linear (25/11/2026): a barra de baixo da janela, com o logo, o uso, o contexto,
+                    // a Revisão, as Arquivadas e os Avisos. Some junto com a lista (Ctrl+B).
+                    .when(self.lista, |d| d.child(self.barra_de_baixo(&motor, window, cx))),
             )
             .children(self.faixa_de_gravacao(&motor, cx))
-            // O uso do plano flutua no canto de cima, à direita, embaixo do × (dono, 16/11/2026).
-            .children(self.uso_no_canto(cx))
+            // O uso do plano flutua no canto de cima, à direita, embaixo do × (dono, 16/11/2026), só
+            // sem a barra de baixo, que já o mostra (Linear, 25/11/2026).
+            .children(self.uso_no_canto(cx).filter(|_| !self.lista))
+            // O arrasto no código do arquivo: a janela inteira escuta onde o botão solta (mesmo fora
+            // da linha em que começou).
+            .children(self.selecao_no_codigo.filter(|s| s.arrastando).map(|_| {
+                let janela = cx.entity().downgrade();
+                canvas(|_, _, _| {}, move |_, _, window, _| {
+                    window.on_mouse_event(move |ev: &MouseUpEvent, fase, window, cx| {
+                        if fase != DispatchPhase::Capture || ev.button != MouseButton::Left {
+                            return;
+                        }
+                        let _ = janela.update(cx, |this, cx| this.soltou_no_codigo(ev.position, window, cx));
+                    });
+                })
+                .absolute()
+                .size_full()
+            }))
+            // A seleção na conversa: enquanto o botão está apertado, a janela inteira escuta onde
+            // ele solta (mesmo fora do cartão), e a barra do trecho aparece embaixo desse ponto.
+            .children(self.segurando_trecho.then(|| {
+                let janela = cx.entity().downgrade();
+                canvas(|_, _, _| {}, move |_, _, window, _| {
+                    window.on_mouse_event(move |ev: &MouseUpEvent, fase, _, cx| {
+                        if fase != DispatchPhase::Capture || ev.button != MouseButton::Left {
+                            return;
+                        }
+                        let _ = janela.update(cx, |this, cx| {
+                            this.segurando_trecho = false;
+                            this.ponto_do_trecho = Some(ev.position);
+                            cx.notify();
+                        });
+                    });
+                })
+                .absolute()
+                .size_full()
+            }))
+            // O arrasto do trilho de uso: enquanto o botão está apertado, a janela inteira escuta o
+            // ponteiro (na captura, para nenhum filho segurar o movimento) e o solta no fim.
+            .children(self.arrasto_trilho.map(|_| {
+                let janela = cx.entity().downgrade();
+                canvas(|_, _, _| {}, move |_, _, window, _| {
+                    let mover = janela.clone();
+                    window.on_mouse_event(move |ev: &MouseMoveEvent, fase, window, cx| {
+                        if fase != DispatchPhase::Capture {
+                            return;
+                        }
+                        let tela = window.viewport_size();
+                        let _ = mover.update(cx, |this, cx| {
+                            let Some((ini, base)) = this.arrasto_trilho else { return };
+                            let novo = base + (ev.position - ini);
+                            this.deslocamento_trilho = point(
+                                novo.x.clamp(-(tela.width - px(80.)), px(0.)),
+                                novo.y.clamp(px(-40.), tela.height - px(200.)),
+                            );
+                            cx.notify();
+                        });
+                    });
+                    let soltar = janela.clone();
+                    window.on_mouse_event(move |_: &MouseUpEvent, fase, _, cx| {
+                        if fase != DispatchPhase::Capture {
+                            return;
+                        }
+                        let _ = soltar.update(cx, |this, cx| {
+                            if this.arrasto_trilho.take().is_some() {
+                                let p = this.deslocamento_trilho;
+                                gravar_interface("trilho", serde_json::json!([p.x.as_f32(), p.y.as_f32()]), cx);
+                                cx.notify();
+                            }
+                        });
+                    });
+                })
+                .absolute()
+                .size_full()
+            }))
             // Quem espera você, fora de vista: o aviso no canto de baixo (rodada de uso, item 3.1).
             .children(self.avisos_no_canto(window, cx))
+            // A tela de boas-vindas que acabou de fechar some por cima do app.
+            .when(self.saida_boas_vindas, |s| {
+                s.child(movimento::sair(div().absolute().top_0().left_0().size_full().bg(Cores::vidro()), "bv-saida"))
+            })
             .children(fora)
             .into_any_element();
         self.lembrar_ultimo_chat(cx);
@@ -2421,24 +2621,31 @@ impl Janela {
         // do que já estava: na abertura o primeiro quadro sai na janela ainda não maximizada, com
         // as conversas presas no mínimo, e essa conta torta ficava (dono, 16/11/2026: "falta
         // lembrar como deixei quando fecho e abro"; a divisão de 455/280/420 voltava 432/324/399).
-        let chave = (n, painel, lista, (o.escala * 100.).round() as u32, o.util.round() as u32);
+        let maximizado = self.maximizado.filter(|_| self.paineis.len() > 1);
+        // Com um arquivo aberto à direita, a largura dela é a do arquivo (guardada à parte).
+        let com_arquivo = painel && matches!(self.aba_visivel(motor.read(cx)), abas_direita::AbaDireita::Arquivo(_));
+        let chave = (n, painel, lista, (o.escala * 100.).round() as u32, o.util.round() as u32, maximizado, com_arquivo);
         if self.chave_partes != Some(chave) {
             self.chave_partes = Some(chave);
             self.estado_partes.update(cx, |estado, _| estado.clear());
         }
-        let larguras = self.larguras.em_px(&o, n);
+        let mut larguras = self.larguras.em_px_com(&o, n, com_arquivo);
+        // Maximizada no jeito do VS Code: as outras estreitas, a escolhida com o resto. Isso não
+        // vira arranjo guardado (o `on_resize` não grava com uma maximizada).
+        let espremidas = maximizado.and_then(|m| visiveis.iter().position(|&ix| self.paineis[ix].id == m));
+        if let Some(k) = espremidas {
+            let total: f32 = larguras.conversas.iter().sum();
+            larguras.conversas = paineis::larguras_maximizadas(total, n, k, paineis::LARGURA_ESPREMIDA * o.escala, o.min_conversa);
+        }
         let antes = larguras.clone();
         let min_conversa = px(o.min_conversa);
         let u = |medida: f32| px(medida * o.escala);
         let janela = cx.entity().downgrade();
-        // Meio vão de cada lado da divisória entre a lista e a 1ª conversa (o mesmo da margem da
-        // janela, em px da tela). Entre as conversas, e entre a última e a direita, não há vão: a
-        // fileira é uma peça só, emendada por divisórias de 1 px (dono, 16/11/2026: "no meio dos
-        // chats quero uma divisão simples e moderna"); o fio é da própria peça
-        // (`aresta_encostada`), e a faixa de pegar do kit fica em cima dele.
-        let meio_vao = crate::tema::vao_entre_pecas() / 2.;
+        // A fileira (as conversas e a direita) é um cartão só, como no Linear (25/11/2026): 8 de
+        // margem em cima e à direita, e na esquerda e embaixo sem a lista e a barra de baixo. Entre
+        // as peças não há vão, só a divisória de 1 px da própria peça (`aresta_encostada`).
         // O id muda com a composição, para o estado de dentro de cada parte não passar a outra.
-        let mut grupo = h_resizable(SharedString::from(format!("partes-{n}-{painel}-{lista}")))
+        let mut grupo = h_resizable(SharedString::from(format!("partes-{n}-{painel}-{lista}-{}", espremidas.map_or(-1, |k| k as i64))))
             .with_state(&self.estado_partes)
             .on_resize(move |estado, _, cx| {
                 let tamanhos: Vec<f32> = estado.read(cx).sizes().iter().map(|t| t.as_f32()).collect();
@@ -2452,7 +2659,9 @@ impl Janela {
                         cx.notify();
                         return;
                     }
-                    this.larguras.guardar(&tamanhos, &antes, o.escala)
+                    if espremidas.is_none() {
+                        this.larguras.guardar(&tamanhos, &antes, o.escala, com_arquivo)
+                    }
                 });
             });
         if let Some(largura) = larguras.lista {
@@ -2461,12 +2670,7 @@ impl Janela {
                     .size(px(largura))
                     .size_range(u(LISTA_NO_ARRASTO)..px(o.max_lista))
                     .fixed()
-                    .child(
-                        div()
-                            .size_full()
-                            .pr(meio_vao)
-                            .child(AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full())),
-                    ),
+                    .child(div().size_full().child(AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full()))),
             );
         }
         if self.paineis.is_empty() {
@@ -2479,7 +2683,7 @@ impl Janela {
                         div()
                             .size_full()
                             .relative()
-                            .when(larguras.lista.is_some(), |d| d.pl(meio_vao).child(sombra_da_fileira(meio_vao)))
+                            .map(|d| margem_do_cartao(d, true, !painel, lista))
                             .child(self.zona_de_soltura(0, conteudo, cx)),
                     ),
             );
@@ -2487,15 +2691,17 @@ impl Janela {
             for (k, &ix) in visiveis.iter().enumerate() {
                 let id = self.paineis[ix].id;
                 let conteudo = self.conversa(motor, Some(ix), window, cx).into_any_element();
-                // Só a 1ª conversa, com a lista ao lado, guarda o meio vão da esquerda; sem a lista
-                // vale a margem da janela.
-                let depois_da_lista = k == 0 && larguras.lista.is_some();
+                // A estreita ao lado da maximizada tem a largura fixa.
+                let faixa = match espremidas {
+                    Some(m) if m != k => px(larguras.conversas[k])..px(larguras.conversas[k]),
+                    _ => min_conversa.min(px(larguras.conversas[k]))..Pixels::MAX,
+                };
                 grupo = grupo.child(
-                    resizable_panel().size(px(larguras.conversas[k])).size_range(min_conversa..Pixels::MAX).child(
+                    resizable_panel().size(px(larguras.conversas[k])).size_range(faixa).child(
                         div()
                             .size_full()
                             .relative()
-                            .when(depois_da_lista, |d| d.pl(meio_vao).child(sombra_da_fileira(meio_vao)))
+                            .map(|d| margem_do_cartao(d, k == 0, k + 1 == visiveis.len() && !painel, lista))
                             .child(self.zona_de_soltura(id, conteudo, cx)),
                     ),
                 );
@@ -2505,6 +2711,7 @@ impl Janela {
             // Aberta (Ctrl+J) ou trocada entre o arquivo e Este chat, entra com fade, uma vez.
             let qual = match self.aba_visivel(motor.read(cx)) {
                 abas_direita::AbaDireita::Arquivo(_) => "arquivo",
+                abas_direita::AbaDireita::Arquivos => "arquivos",
                 abas_direita::AbaDireita::Chat => "chat",
             };
             let antes = self.direita_vista.replace(qual);
@@ -2512,12 +2719,13 @@ impl Janela {
             self.direita_ja_vista = true;
             let conteudo = self.conteudo_da_direita(motor, window, cx);
             let conteudo = movimento::entrada(SharedString::from(format!("direita-entra-{qual}")), nova, movimento::De::Parado, div().size_full().child(conteudo));
+            let (minima, maxima) = if com_arquivo { (FAIXA_ARQUIVO.0, o.max_arquivo) } else { (FAIXA_DIREITA.0, o.max_direita) };
             grupo = grupo.child(
                 resizable_panel()
-                    .size(px(larguras.direita.unwrap_or(o.max_direita)))
-                    .size_range(u(FAIXA_DIREITA.0)..px(o.max_direita))
+                    .size(px(larguras.direita.unwrap_or(maxima)))
+                    .size_range(u(minima)..px(maxima))
                     .fixed()
-                    .child(conteudo),
+                    .child(div().size_full().map(|d| margem_do_cartao(d, false, true, lista)).child(conteudo)),
             );
         } else {
             self.direita_vista = None;
@@ -2607,7 +2815,7 @@ fn grupo_botoes_janela(botoes: Vec<WindowButton>, separar: bool) -> Div {
         .flex()
         .flex_none()
         .items_center()
-        .gap(esp::E8)
+        .gap(esp::E2)
         // O traço fica a 4 do "+" do painel (o vão de 8 do cabeçalho menos 4) e a 4 do ×: com 4 + 8
         // de um lado e 8 do outro, o × parecia de outro lugar (dono, 17/11/2026: "ainda tá muito
         // grande o espaço").
@@ -2731,7 +2939,7 @@ mod testes_botoes_janela {
 
 #[cfg(test)]
 mod testes_orcamento {
-    use super::{Direita, Gaveta, Larguras, LargurasPx, gaveta_fecha_sozinha, largura_da_gaveta, orcamento};
+    use super::{DIREITA, Direita, FAIXA_LISTA, Gaveta, LATERAL, Larguras, LargurasPx, gaveta_fecha_sozinha, largura_da_gaveta, orcamento};
 
     // Área das partes na janela mínima (960), no tamanho inicial (1440) e em meia tela de
     // 2560 a 100% (1280) e a 125% (1024), com a sombra de 20 px dos dois lados.
@@ -2750,17 +2958,17 @@ mod testes_orcamento {
 
     #[test]
     fn a_direita_vira_gaveta_antes_da_lista() {
-        // Na janela mínima, 312 + 380 + 280 não cabem: a direita sai, a lista fica.
-        let o = orcamento(MINIMA, 1., 1, true, true);
+        // Em 700, 250 + 232 + 280 não cabem: a direita sai, a lista fica.
+        let o = orcamento(700., 1., 1, true, true);
         assert!(o.lista);
         assert_eq!(o.direita, Direita::Gaveta);
         assert!(!o.cabe_direita);
-        // Com 3 conversas no tamanho inicial, idem.
-        let o = orcamento(INICIAL, 1., 3, true, true);
+        // Com 3 conversas em 1200, idem.
+        let o = orcamento(1200., 1., 3, true, true);
         assert!(o.lista);
         assert_eq!(o.direita, Direita::Gaveta);
         // Com a lista recolhida, a direita volta para o lado.
-        let o = orcamento(MINIMA, 1., 1, false, true);
+        let o = orcamento(700., 1., 1, false, true);
         assert_eq!(o.direita, Direita::Ancorada);
         assert!(o.cabe_lista);
     }
@@ -2794,14 +3002,14 @@ mod testes_orcamento {
         // Sem a lista pedida, a gaveta ficaria por cima mesmo com espaço ao lado.
         assert!(!gaveta_fecha_sozinha(Gaveta::Lista, &orcamento(INICIAL, 1., 3, false, true)));
         // A da direita fecha quando cabe ao lado ou não há mais o que mostrar.
-        assert!(!gaveta_fecha_sozinha(Gaveta::Direita, &orcamento(MINIMA, 1., 1, true, true)));
+        assert!(!gaveta_fecha_sozinha(Gaveta::Direita, &orcamento(700., 1., 1, true, true)));
         assert!(gaveta_fecha_sozinha(Gaveta::Direita, &orcamento(MINIMA, 1., 1, false, true)));
         assert!(gaveta_fecha_sozinha(Gaveta::Direita, &orcamento(MINIMA, 1., 1, true, false)));
     }
 
     #[test]
     fn direita_fechada_nao_vira_gaveta() {
-        let o = orcamento(MINIMA, 1., 1, true, false);
+        let o = orcamento(700., 1., 1, true, false);
         assert_eq!(o.direita, Direita::Fechada);
         assert!(!o.cabe_direita);
     }
@@ -2821,11 +3029,11 @@ mod testes_orcamento {
             let o = orcamento(util, 1., n, true, true);
             let mut ocupado = n as f32 * o.min_conversa;
             if o.lista {
-                assert!(o.max_lista >= 312.);
+                assert!(o.max_lista >= LATERAL);
                 ocupado += o.max_lista;
             }
             if o.direita == Direita::Ancorada {
-                assert!(o.max_direita >= 380.);
+                assert!(o.max_direita >= DIREITA);
                 ocupado += o.max_direita;
             }
             assert!(ocupado <= util, "{util} com {n}: {ocupado}");
@@ -2840,10 +3048,10 @@ mod testes_orcamento {
         assert_eq!(o.direita, Direita::Ancorada);
         assert_eq!(o.min_conversa, 420.);
         let px = Larguras::default().em_px(&o, 2);
-        assert_eq!(px.lista, Some(468.));
-        assert_eq!(px.direita, Some(570.));
-        // Na janela inicial de 1440, a 150%, a direita vira gaveta (468 + 570 + 420 > 1286).
-        let o = orcamento(1286., 1.5, 1, true, true);
+        assert_eq!(px.lista, Some(375.));
+        assert_eq!(px.direita, Some(348.));
+        // Numa janela de 1100 de área a 150%, a direita vira gaveta (375 + 348 + 420 > 1100).
+        let o = orcamento(1100., 1.5, 1, true, true);
         assert!(o.lista);
         assert_eq!(o.direita, Direita::Gaveta);
         // O mesmo orçamento a 100% numa janela 1,5× menor dá as mesmas decisões.
@@ -2865,7 +3073,7 @@ mod testes_orcamento {
     fn o_que_foi_arrastado_cresce_com_o_zoom() {
         // A 100%, a lista foi a 400 e as duas conversas ficaram em 60/40.
         let mut l = Larguras::default();
-        l.guardar(&[400., 480., 320., 380.], &mexeu_em_tudo(true, true), 1.);
+        l.guardar(&[400., 480., 320., 380.], &mexeu_em_tudo(true, true), 1., false);
         assert_eq!(l.lista, 400.);
         assert_eq!(l.direita, 380.);
         assert_eq!(l.divisao(2), Some(&[0.6, 0.4][..]));
@@ -2878,7 +3086,7 @@ mod testes_orcamento {
         assert_eq!(px.conversas, vec![(livre * 0.6f32).floor(), (livre * 0.4f32).floor()]);
         // Guardar a 150% e voltar a 100% devolve o que era.
         let mut de_volta = Larguras::default();
-        de_volta.guardar(&[600., 745., 497., 570.], &mexeu_em_tudo(true, true), 1.5);
+        de_volta.guardar(&[600., 745., 497., 570.], &mexeu_em_tudo(true, true), 1.5, false);
         assert_eq!(de_volta.lista, 400.);
         assert_eq!(de_volta.direita, 380.);
         // Outra quantidade de conversas divide por igual.
@@ -2892,11 +3100,11 @@ mod testes_orcamento {
         // Solta em 180 (abaixo dos 200 da faixa, acima do ponto de recolher): guarda 180, e a
         // montagem seguinte (clique duplo, Ctrl+B) devolve os mesmos 180.
         let mut l = Larguras::default();
-        l.guardar(&[180., 820.], &mexeu_em_tudo(true, false), 1.);
+        l.guardar(&[180., 820.], &mexeu_em_tudo(true, false), 1., false);
         assert_eq!(l.lista, 180.);
         assert_eq!(l.em_px(&orcamento(1000., 1., 1, true, false), 1).lista, Some(180.));
         // Abaixo do ponto de recolher não fica (quem recolhe é o arrasto, antes de guardar).
-        l.guardar(&[120., 880.], &mexeu_em_tudo(true, false), 1.);
+        l.guardar(&[120., 880.], &mexeu_em_tudo(true, false), 1., false);
         assert_eq!(l.lista, super::LISTA_MINIMA);
     }
 
@@ -2904,8 +3112,8 @@ mod testes_orcamento {
     fn cada_quantidade_de_conversas_lembra_a_sua_divisao() {
         // Duas conversas em 60/40; depois três em 50/25/25; fechar uma volta aos 60/40.
         let mut l = Larguras::default();
-        l.guardar(&[600., 400.], &mexeu_em_tudo(false, false), 1.);
-        l.guardar(&[500., 250., 250.], &mexeu_em_tudo(false, false), 1.);
+        l.guardar(&[600., 400.], &mexeu_em_tudo(false, false), 1., false);
+        l.guardar(&[500., 250., 250.], &mexeu_em_tudo(false, false), 1., false);
         assert_eq!(l.divisao(2), Some(&[0.6, 0.4][..]));
         assert_eq!(l.divisao(3), Some(&[0.5, 0.25, 0.25][..]));
         let o = orcamento(1000., 1., 2, false, false);
@@ -2923,11 +3131,11 @@ mod testes_orcamento {
         // guardados para quando couberem.
         let mut l = Larguras { lista: 500., ..Larguras::default() };
         let antes = LargurasPx { lista: Some(340.), conversas: vec![400., 400.], direita: None };
-        l.guardar(&[340., 500., 300.], &antes, 1.);
+        l.guardar(&[340., 500., 300.], &antes, 1., false);
         assert_eq!(l.lista, 500.);
         assert_eq!(l.divisao(2), Some(&[0.625, 0.375][..]));
         // Arrastada de fato, a lista guarda a nova.
-        l.guardar(&[380., 460., 300.], &antes, 1.);
+        l.guardar(&[380., 460., 300.], &antes, 1., false);
         assert_eq!(l.lista, 380.);
     }
 
@@ -2935,13 +3143,13 @@ mod testes_orcamento {
     fn larguras_guardadas_ficam_na_faixa_e_no_que_cabe() {
         let mut l = Larguras::default();
         // Sem a direita e sem a lista ancoradas, só as conversas contam.
-        l.guardar(&[500., 500.], &mexeu_em_tudo(false, false), 1.);
-        assert_eq!((l.lista, l.direita), (312., 380.));
+        l.guardar(&[500., 500.], &mexeu_em_tudo(false, false), 1., false);
+        assert_eq!((l.lista, l.direita), (LATERAL, DIREITA));
         assert_eq!(l.divisao(2), Some(&[0.5, 0.5][..]));
         // Arrastada além da faixa, fica no limite; na janela pequena, no máximo que cabe. Uma
         // conversa só não mexe na divisão das duas.
-        l.guardar(&[900., 600.], &mexeu_em_tudo(true, false), 1.);
-        assert_eq!(l.lista, 560.);
+        l.guardar(&[900., 600.], &mexeu_em_tudo(true, false), 1., false);
+        assert_eq!(l.lista, FAIXA_LISTA.1);
         assert_eq!(l.divisao(2), Some(&[0.5, 0.5][..]));
         let o = orcamento(MINIMA, 1., 1, true, false);
         let px = l.em_px(&o, 1);

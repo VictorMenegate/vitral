@@ -23,6 +23,7 @@ mod memoria_equipe;
 mod migracao;
 mod modelo;
 mod opcoes;
+mod paleta;
 mod motor;
 mod perfis;
 mod processos;
@@ -155,6 +156,10 @@ fn main() {
             // Procura versão nova em segundo plano; na versão instalada, o reinício vai para o link `atual`.
             atualizacao::iniciar(aviso, dados.pasta.clone(), cx);
             let motor = cx.new(|cx| motor::Motor::new(dados, aberto, cx));
+            // As cores escolhidas na Aparência, antes da primeira janela.
+            if tema::definir_paleta(&motor.read(cx).config.paleta) {
+                tema::reaplicar_cores(cx);
+            }
             let opcoes = WindowOptions {
                 // O tamanho de quando fechou (e maximizada, se estava); na primeira vez, 1440 por 920.
                 window_bounds: Some(ui::arranjo::limites_da_janela(cx)),

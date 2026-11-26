@@ -22,26 +22,20 @@
 
 use super::*;
 
-/// Quantas linhas o turno tem de mudar (as que entram mais as que saem) para a revisão automática.
+/// Quantas linhas o turno tem de mudar (as que entram mais as que saem) para a revisão automática,
+/// de fábrica (`Config.revisao_minimo`).
 pub const LINHAS_PARA_REVISAR: usize = 20;
 
 /// O nome de quem entrega a revisão ao agente do chat ("Revisão do Codex"): é por ele que o turno
 /// seguinte se reconhece como vindo de uma revisão.
 const ENTREGA_DA_REVISAO: &str = "Revisão do ";
 
-/// A revisão em curso num chat.
-#[derive(Clone, Debug, PartialEq)]
-pub struct EmCurso {
-    /// Onde a conversa estava quando a revisão começou: o que o revisor fizer entra daí em
-    /// diante, e sai no fim.
-    pub desde_item: usize,
-    /// O agente do chat, a quem ele volta.
-    pub principal: Agente,
-    /// O parceiro nasceu só para esta revisão (o chat não era uma dupla): sai no fim.
-    pub criou_o_parceiro: bool,
-    /// O `atualizado_em` de antes: a revisão sem achado não deixa o chat como não lido.
-    pub atualizado_antes: u64,
-}
+/// A revisão em curso num chat. Mora no modelo porque vai gravada no chat também
+/// (`Chat.revisao_do_par`): o Vitral fechado no meio dela a desfaz na abertura seguinte.
+pub use crate::modelo::RevisaoEmCurso as EmCurso;
+
+/// O que a revisão cortada pelo Vitral fechado deixa na conversa (depois de "não terminou: ").
+const CORTADA_AO_FECHAR: &str = "o Vitral foi fechado no meio dela";
 
 /// Por que a revisão não roda.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,6 +59,8 @@ pub enum SemRevisao {
 pub struct Turno {
     pub ligada: bool,
     pub linhas: usize,
+    /// O mínimo de linhas (`Config.revisao_minimo`; zero com "todo turno").
+    pub minimo: usize,
     pub outro_instalado: bool,
     pub outro_no_limite: bool,
     pub planejando: bool,
@@ -79,7 +75,7 @@ pub fn motivo_sem_revisao(turno: &Turno) -> Option<SemRevisao> {
         Some(SemRevisao::Planejando)
     } else if turno.veio_de_revisao {
         Some(SemRevisao::VeioDeRevisao)
-    } else if turno.linhas < LINHAS_PARA_REVISAR {
+    } else if turno.linhas < turno.minimo {
         Some(SemRevisao::PoucasLinhas)
     } else {
         motivo_sem_revisao_pedida(turno)
@@ -121,8 +117,8 @@ pub fn nada_a_dizer(texto: &str) -> bool {
 }
 
 /// O pedido que o revisor recebe.
-pub fn pedido_de_revisao(principal: Agente) -> String {
-    format!(
+pub fn pedido_de_revisao(principal: Agente, foco: &[String], instrucoes: &str) -> String {
+    let mut pedido = format!(
         "[Vitral] Revisão do turno. O {nome} acabou de trabalhar neste chat (o que ele fez está acima, e o que mudou nos \
          arquivos já está na pasta). Você só lê: não mude arquivo nenhum nem rode comando que escreva. Confira o que ele \
          mudou (o diff da pasta, os arquivos que ele editou) e o que ele respondeu, e aponte o que está errado, o que \
@@ -130,7 +126,17 @@ pub fn pedido_de_revisao(principal: Agente) -> String {
          o que vale o usuário ler. Não repita o que ele fez nem elogie. Se estiver tudo certo e você não tiver nada a \
          acrescentar, responda só: {NADA_A_ACRESCENTAR}.",
         nome = principal.nome()
-    )
+    );
+    // O foco escolhido nas Configurações, em minúsculas e com o "e" antes do último.
+    let foco: Vec<String> = foco.iter().map(|f| f.trim().to_lowercase()).filter(|f| !f.is_empty()).collect();
+    if let Some((ultimo, antes)) = foco.split_last() {
+        let lista = if antes.is_empty() { ultimo.clone() } else { format!("{} e {ultimo}", antes.join(", ")) };
+        pedido.push_str(&format!(" Dê atenção especial a: {lista}."));
+    }
+    if !instrucoes.trim().is_empty() {
+        pedido.push_str(&format!(" Do usuário: {}", instrucoes.trim()));
+    }
+    pedido
 }
 
 /// Põe o revisor na vez: o parceiro do chat (criado agora, se o chat era de um agente só).
@@ -146,6 +152,7 @@ pub fn abrir(chat: &mut Chat) -> EmCurso {
     } else {
         chat.trocar_vez();
     }
+    chat.revisao_do_par = Some(em_curso.clone());
     em_curso
 }
 
@@ -159,7 +166,40 @@ pub fn fechar(chat: &mut Chat, em_curso: &EmCurso, resultado: Option<Item>) {
     if em_curso.criou_o_parceiro {
         chat.parceiro = None;
     }
+    chat.revisao_do_par = None;
     chat.itens.extend(resultado);
+}
+
+/// Na abertura: a revisão que o Vitral fechado (ou uma queda) cortou no meio é desfeita como a
+/// cancelada (o chat volta ao agente dele e o turno do revisor sai), com a linha de que ela não
+/// terminou no lugar. O turno de trabalho já tinha terminado: não há o que retomar, e o
+/// "Revisar com o Codex" continua à mão. Devolve os chats mexidos.
+///
+/// O estado (com a revisão em curso) e a conversa são arquivos gravados um depois do outro, e o
+/// estado pode voltar do `.anterior`: a marca pode ser mais velha que a conversa. Por isso só se
+/// corta o que vem depois de `desde_item` quando é mesmo o turno do revisor (marcas de vez,
+/// ferramentas, falas). Com mensagem sua, entrega ou o resultado de uma revisão ali, a revisão já
+/// tinha acabado: só o agente volta, e a conversa fica inteira.
+pub fn desfazer_as_cortadas(chats: &mut [Chat]) -> Vec<String> {
+    let mut mexidos = Vec::new();
+    for chat in chats.iter_mut() {
+        let Some(mut em_curso) = chat.revisao_do_par.clone() else {
+            continue;
+        };
+        let depois = &chat.itens[em_curso.desde_item.min(chat.itens.len())..];
+        let acabou = depois.iter().any(|i| matches!(i, Item::Usuario { .. } | Item::Entrega { .. }) || e_resultado_de_revisao(i));
+        if acabou {
+            em_curso.desde_item = chat.itens.len();
+            fechar(chat, &em_curso, None);
+        } else {
+            let aviso = resultado(em_curso.principal.outro(), &[], CORTADA_AO_FECHAR, true);
+            fechar(chat, &em_curso, Some(aviso));
+            chat.turno_aberto = false;
+            chat.atualizado_em = chat.atualizado_em.min(em_curso.atualizado_antes.max(chat.lido_em));
+        }
+        mexidos.push(chat.id.clone());
+    }
+    mexidos
 }
 
 /// O que fica na conversa: a linha "Codex revisou: nada a acrescentar", o cartão com o achado, ou
@@ -266,7 +306,7 @@ impl Motor {
             return None;
         }
         let (revisor, instalado, no_limite) = self.revisor_do_chat(chat);
-        let turno = Turno { ligada: true, linhas: 0, outro_instalado: instalado, outro_no_limite: no_limite, planejando: false, veio_de_revisao: false };
+        let turno = Turno { ligada: true, linhas: 0, minimo: 0, outro_instalado: instalado, outro_no_limite: no_limite, planejando: false, veio_de_revisao: false };
         motivo_sem_revisao_pedida(&turno).is_none().then_some(revisor)
     }
 
@@ -289,12 +329,15 @@ impl Motor {
             return false;
         };
         let (_, instalado, no_limite) = self.revisor_do_chat(chat);
+        // "Só no botão" desliga a automática; "Todo turno" é o mínimo zero.
+        let quando = self.config.revisao_quando.as_str();
         let turno = Turno {
-            ligada: self.config.revisar_edicoes,
+            ligada: self.config.revisar_edicoes && quando != "botao",
             linhas: linhas_mudadas_no_turno(&chat.itens),
+            minimo: if quando == "todo" { 0 } else { self.config.revisao_minimo as usize },
             outro_instalado: instalado,
             outro_no_limite: no_limite,
-            planejando: self.permissao_de(chat) == "plan",
+            planejando: self.config.revisao_pula_planejar && self.permissao_de(chat) == "plan",
             veio_de_revisao: self.ultima_entrada.get(chat_id).is_some_and(|(_, mensagens)| veio_de_revisao(mensagens)),
         };
         if motivo_sem_revisao(&turno).is_some() || !revisavel(&chat.itens) {
@@ -315,7 +358,7 @@ impl Motor {
         self.revisoes_do_par.insert(chat_id.to_string(), em_curso);
         let entrada = Entrada {
             de: Some("Vitral".into()),
-            texto: pedido_de_revisao(principal),
+            texto: pedido_de_revisao(principal, &self.config.revisao_foco, &self.config.revisao_instrucoes),
             // Fica fora da conversa: o que aparece é a linha de estado e, no fim, o resultado.
             registrada: true,
             ..Entrada::default()
@@ -353,11 +396,14 @@ impl Motor {
         let Some(em_curso) = self.revisoes_do_par.remove(chat_id) else {
             return;
         };
+        let mostrar_nada = self.config.revisao_mostra_nada;
         if let Some(c) = self.chat_mut(chat_id) {
             let desde = em_curso.desde_item.min(c.itens.len());
             let item = resultado(em_curso.principal.outro(), &c.itens[desde..], fim, erro);
             let achou = matches!(item, Item::Revisao { .. });
-            fechar(c, &em_curso, Some(item));
+            // "Mostrar 'nada a acrescentar'" desligado: a linha de quem não achou nada não entra.
+            let item = Some(item).filter(|i| mostrar_nada || !e_resultado_de_revisao(i) || matches!(i, Item::Revisao { .. }));
+            fechar(c, &em_curso, item);
             c.turno_aberto = false;
             if achou {
                 c.atualizado_em = agora();
@@ -370,7 +416,15 @@ impl Motor {
         if let Some(c) = self.chat(chat_id) {
             let _ = self.dados.salvar_chat(c);
         }
-        if self.na_fila(chat_id) > 0 {
+        // "Mandar ao agente sozinho": o achado vai ao agente do chat na hora (o cartão fica
+        // marcado como mandado, como no clique).
+        let achado = self
+            .chat(chat_id)
+            .and_then(|c| c.itens.iter().rposition(|i| matches!(i, Item::Revisao { mandada: false, .. })))
+            .filter(|i| self.config.revisao_manda_sozinha && self.chat(chat_id).is_some_and(|c| *i + 1 == c.itens.len()));
+        if let Some(indice) = achado {
+            self.mandar_revisao(chat_id, indice, cx);
+        } else if self.na_fila(chat_id) > 0 {
             self.entregar_fila(chat_id, cx);
         } else {
             self.pedir_revisao_da_memoria(chat_id, cx);
@@ -436,7 +490,29 @@ mod testes {
     }
 
     fn turno_bom() -> Turno {
-        Turno { ligada: true, linhas: LINHAS_PARA_REVISAR, outro_instalado: true, outro_no_limite: false, planejando: false, veio_de_revisao: false }
+        Turno {
+            ligada: true,
+            linhas: LINHAS_PARA_REVISAR,
+            minimo: LINHAS_PARA_REVISAR,
+            outro_instalado: true,
+            outro_no_limite: false,
+            planejando: false,
+            veio_de_revisao: false,
+        }
+    }
+
+    /// As opções da revisão (Configurações › Revisão, protótipo Linear de 25/11/2026): o mínimo de
+    /// linhas é o seu; "todo turno" é o mínimo zero; e o foco e as suas instruções vão no pedido.
+    #[test]
+    fn as_opcoes_da_revisao_mudam_o_minimo_e_o_pedido() {
+        assert_eq!(motivo_sem_revisao(&Turno { minimo: 5, linhas: 6, ..turno_bom() }), None);
+        assert_eq!(motivo_sem_revisao(&Turno { minimo: 50, linhas: 49, ..turno_bom() }), Some(SemRevisao::PoucasLinhas));
+        assert_eq!(motivo_sem_revisao(&Turno { minimo: 0, linhas: 0, ..turno_bom() }), None, "todo turno");
+        let pedido = pedido_de_revisao(Agente::Claude, &["Bugs".into(), "Segurança".into()], "Olhe as migrações.");
+        assert!(pedido.contains("Dê atenção especial a: bugs e segurança."), "{pedido}");
+        assert!(pedido.contains("Do usuário: Olhe as migrações."), "{pedido}");
+        let simples = pedido_de_revisao(Agente::Claude, &[], "  ");
+        assert!(!simples.contains("atenção especial") && !simples.contains("Do usuário"), "{simples}");
     }
 
     /// O critério do item 2: a revisão automática roda no turno que mudou 20 linhas ou mais, e a
@@ -511,7 +587,7 @@ mod testes {
         assert!(matches!(&falhou, Item::Aviso { texto, erro: false, .. } if texto == "A revisão do Codex não terminou: limite do plano"), "{falhou:?}");
         assert!(nada_a_dizer("Nada a acrescentar.") && nada_a_dizer("  nada a acrescentar  ") && !nada_a_dizer("Nada a acrescentar, mas o teste do desconto falta e isso pode quebrar a conta do carrinho inteiro no fim."));
         // O pedido diz ao revisor que ele só lê e como responder quando não tem nada.
-        let pedido = pedido_de_revisao(Agente::Claude);
+        let pedido = pedido_de_revisao(Agente::Claude, &[], "");
         assert!(pedido.contains("Claude") && pedido.contains("responda só: Nada a acrescentar"), "{pedido}");
         assert!(pedido.contains("não mude"), "{pedido}");
     }
@@ -537,6 +613,7 @@ mod testes {
         assert!(matches!(chat.itens.last(), Some(Item::Revisao { de: Agente::Codex, .. })));
         assert_eq!((chat.agente, chat.sessao.as_str(), chat.sessao_criada), (Agente::Claude, "sessao-do-claude", true));
         assert!(chat.parceiro.is_none(), "o chat continua de um agente só");
+        assert!(chat.revisao_do_par.is_none(), "a revisão fechada sai do chat gravado");
         // Num chat que já era dos dois, o parceiro fica e a vez volta a quem estava.
         let mut dupla = Chat::novo("d".into(), "t", std::env::temp_dir());
         dupla.agente = Agente::Codex;
@@ -552,6 +629,65 @@ mod testes {
         assert_eq!(dupla.itens.len(), 2);
         assert_eq!(dupla.agente, Agente::Codex);
         assert_eq!(dupla.parceiro.as_ref().map(|p| p.agente), Some(Agente::Claude));
+    }
+
+    /// O Vitral fechado no meio da revisão: o chat foi gravado com o revisor na vez e o turno dele
+    /// pela metade. A revisão em curso vai gravada junto, e a abertura seguinte a desfaz: o chat
+    /// volta ao agente dele, com a sessão dele, o turno do revisor sai e fica a linha de que a
+    /// revisão não terminou (o turno continua revisável pelo clique).
+    #[test]
+    fn a_revisao_cortada_pelo_vitral_fechado_se_desfaz_ao_abrir() {
+        let mut chat = Chat::novo("c".into(), "t", std::env::temp_dir());
+        chat.itens = vec![usuario("arruma"), edicao("Edit", 20, 5, false), fala("pronto")];
+        chat.sessao = "sessao-do-claude".into();
+        chat.sessao_criada = true;
+        let em_curso = abrir(&mut chat);
+        assert_eq!(chat.revisao_do_par.as_ref(), Some(&em_curso), "a revisão em curso vai no chat");
+        chat.turno_aberto = true;
+        chat.itens.extend([Item::Vez { agente: Agente::Codex, em: 0 }, edicao("Read", 0, 0, false)]);
+        // O que o disco guarda e a abertura lê (as conversas vão à parte, como no `salvar_chat`).
+        let itens = chat.itens.clone();
+        let mut lido: Chat = serde_json::from_value(serde_json::to_value(&chat).unwrap()).unwrap();
+        lido.itens = itens;
+        assert_eq!(lido.revisao_do_par.as_ref(), Some(&em_curso));
+        assert_eq!(lido.agente, Agente::Codex, "gravado com o revisor na vez");
+        let mut chats = vec![lido, Chat::novo("outro".into(), "t", std::env::temp_dir())];
+        assert_eq!(desfazer_as_cortadas(&mut chats), ["c"]);
+        let c = &chats[0];
+        assert_eq!((c.agente, c.sessao.as_str(), c.sessao_criada), (Agente::Claude, "sessao-do-claude", true));
+        assert!(c.parceiro.is_none() && c.revisao_do_par.is_none() && !c.turno_aberto);
+        assert_eq!(c.itens.len(), 4, "{:?}", c.itens);
+        assert!(
+            matches!(c.itens.last(), Some(Item::Aviso { texto, erro: false, .. }) if texto == "A revisão do Codex não terminou: o Vitral foi fechado no meio dela"),
+            "{:?}",
+            c.itens.last()
+        );
+        assert!(revisavel(&c.itens), "o clique ainda revisa o turno");
+        // Sem revisão em curso nada muda, e a segunda abertura não repete.
+        assert!(desfazer_as_cortadas(&mut chats).is_empty());
+        assert_eq!(chats[0].itens.len(), 4);
+        // O chat sem revisão não grava o campo.
+        assert!(serde_json::to_value(&chats[1]).unwrap().get("revisao_do_par").is_none());
+
+        // A marca mais velha que a conversa (o estado gravado antes, ou de volta do `.anterior`):
+        // a revisão já tinha acabado e a conversa seguiu. Só o agente volta; nada sai.
+        let mut seguiu = Chat::novo("s".into(), "t", std::env::temp_dir());
+        seguiu.itens = vec![usuario("arruma"), fala("pronto")];
+        let em_curso = abrir(&mut seguiu);
+        // A conversa como a revisão fechada a gravou: o turno do revisor já saiu e o cartão entrou.
+        seguiu.itens = vec![
+            usuario("arruma"),
+            fala("pronto"),
+            Item::Revisao { de: Agente::Codex, texto: "Faltou o teste.".into(), em: 0, mandada: false },
+            usuario("e agora?"),
+            fala("feito"),
+        ];
+        let mut chats = vec![seguiu];
+        assert_eq!(desfazer_as_cortadas(&mut chats), ["s"]);
+        let s = &chats[0];
+        assert_eq!(s.itens.len(), 5, "a conversa fica inteira: {:?}", s.itens);
+        assert_eq!(s.agente, em_curso.principal);
+        assert!(s.parceiro.is_none() && s.revisao_do_par.is_none());
     }
 
     /// A ação "Revisar com o Codex" só faz sentido com um turno pronto do agente do chat que

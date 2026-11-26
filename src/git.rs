@@ -240,16 +240,26 @@ fn mudancas_do_status(status: &str) -> Vec<MudancaNaPasta> {
     let mut campos = status.split('\0').filter(|c| !c.is_empty());
     let mut saida = Vec::new();
     while let Some(campo) = campos.next() {
-        if campo.len() < 4 {
+        // "XY caminho": os dois códigos são ASCII; um campo que não começa assim (o nome antigo
+        // de um renomeado fora de lugar, por exemplo) não é cortado no meio de um caractere.
+        let (Some(xy), Some(caminho)) = (campo.get(..2), campo.get(3..)) else {
+            continue;
+        };
+        if !xy.is_ascii() || campo.as_bytes()[2] != b' ' || caminho.is_empty() {
             continue;
         }
-        let (xy, caminho) = (&campo[..2], &campo[3..]);
+        // O renomeado e o copiado trazem o nome antigo no campo seguinte, seja qual for o estado
+        // que sai daqui ("RD": renomeado e depois apagado): ele é consumido sempre, senão vira
+        // uma entrada própria.
+        let renomeado = xy.contains('R') || xy.contains('C');
+        if renomeado {
+            let _ = campos.next();
+        }
         let estado = if xy == "??" || xy.contains('A') {
             EstadoNoGit::Novo
         } else if xy.contains('D') {
             EstadoNoGit::Apagado
-        } else if xy.contains('R') || xy.contains('C') {
-            let _ = campos.next();
+        } else if renomeado {
             EstadoNoGit::Renomeado
         } else {
             EstadoNoGit::Mudado
@@ -422,6 +432,24 @@ mod testes {
             linhas_do_numstat(numstat),
             [("src/a.rs".to_string(), 3, 1), ("imagem.png".to_string(), 0, 0), ("b2.rs".to_string(), 0, 0)]
         );
+    }
+
+    #[test]
+    fn renomeado_e_apagado_consome_o_nome_antigo() {
+        // `git mv ação.txt nova.txt` e depois apagar `nova.txt`: o nome antigo vem no campo
+        // seguinte e não pode virar entrada (nem ser cortado no meio do "ç").
+        let status = "RD nova.txt\0ação.txt\0 M depois.rs\0CM copia.rs\0original.rs\0";
+        let lidas: Vec<(String, EstadoNoGit)> = mudancas_do_status(status).into_iter().map(|m| (m.caminho, m.estado)).collect();
+        assert_eq!(
+            lidas,
+            [
+                ("nova.txt".to_string(), EstadoNoGit::Apagado),
+                ("depois.rs".to_string(), EstadoNoGit::Mudado),
+                ("copia.rs".to_string(), EstadoNoGit::Renomeado),
+            ]
+        );
+        // Um campo solto com acento logo no começo é ignorado, sem pânico.
+        assert!(mudancas_do_status("ção.txt\0").is_empty());
     }
 
     #[test]

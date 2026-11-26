@@ -6,11 +6,13 @@ use std::rc::Rc;
 use gpui_kit::base::actions::{Confirm, SelectFirst, SelectLast, SelectLeft, SelectRight};
 use gpui_kit::component::{
     Icon, Sizable as _,
-    input::{Paste, TextareaState},
+    input::TextareaState,
     menu::{DropdownMenu, PopupMenu, PopupMenuItem},
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use gpui_kit::component::tooltip::{ManagedTooltipExt as _, Tooltip};
+use gpui_kit::component::{h_flex, v_flex};
 
 use super::{
     AbrirEsforco, AbrirModelo, AlternarModo, AlternarUltracode, DESCRICOES_DE_MODELO, ESFORCOS,
@@ -23,7 +25,7 @@ use crate::ui::componentes::{
     BarrinhasDeSinal, CabecalhoPopover, Chip, ControleSegmentado, CorpoPopover, EventoEscolha,
     FaixaCaixa, GatilhoChip, GrupoDeEscolha, ItemDeEscolha, LarguraPopover, LinhaDeOpcao, ListaDeEscolha, Marca,
     Selo, OndeAtalho, Simbolo, TamanhoBotao, TamanhoChip, botao_icone, cabecalho_escolha,
-    desenho_teclas, fio_de_pontos, icone_do_modo, item_descrito, popover, resumo_uso, rodape_menu,
+    desenho_teclas, fio_de_pontos, icone_do_modo, item_descrito, popover, resumo_uso,
 };
 use crate::{
     agente_codex::{self, ModeloDoCodex},
@@ -31,7 +33,7 @@ use crate::{
     contas,
     modelo::{Agente, Chat},
     motor::{FLUXOS_DESLIGADOS, Motor, Uso, motivo_sem_versao_exata},
-    tema::{Cores, Lucide, Tipo as _, esp, r, tam},
+    tema::{Cores, Lucide, Tipo as _, esp, r, raio, tam},
 };
 
 /// O que os controles da barra de um painel precisam saber.
@@ -57,8 +59,9 @@ impl Barra {
         self.faixa == FaixaCaixa::Larga
     }
 
+    /// Os chips da caixa: 26 em qualquer largura (protótipo Linear, 25/11/2026).
     fn tamanho(&self) -> TamanhoChip {
-        if self.estreita() { TamanhoChip::Medio } else { TamanhoChip::Grande }
+        TamanhoChip::Caixa
     }
 
     fn largura_popover(&self) -> LarguraPopover {
@@ -362,14 +365,10 @@ fn linhas_de_modelo(escolhido: Option<&str>, em_uso: Option<&str>, padrao_pasta:
     let apelido = |v: &str| MODELOS.iter().any(|(m, _)| *m == v);
     let segue_apelido = escolhido.is_none_or(apelido);
     let no_padrao = escolhido.is_none();
-    let qual = curto.clone().filter(|_| no_padrao);
-    let padrao = match (padrao_pasta.is_empty(), qual) {
-        (true, Some(m)) => format!("O do Claude Code · {m}"),
-        (true, None) => "O que o Claude Code escolher".to_string(),
-        (false, Some(m)) => format!("Padrão · {m}"),
-        (false, None) => format!("Padrão · {}", rotulo_modelo(padrao_pasta, None)),
-    };
-    let mut linhas = vec![LinhaDeModelo::new("", "Padrão", padrao)];
+    // Sem a linha "Padrão" (Linear, 25/11/2026: "tira esses padrão e deixa igual funcionava no
+    // vscode"): a lista é só dos modelos, e o que está valendo leva o visto (`chave_do_modelo`).
+    let _ = padrao_pasta;
+    let mut linhas = Vec::new();
     for ((valor, familia), descricao) in MODELOS[1..].iter().zip(DESCRICOES_DE_MODELO) {
         let rodando = curto.clone().filter(|m| segue_apelido && m.to_lowercase().starts_with(valor));
         let versao = rodando.clone().or_else(|| versao_da_familia(valor)).and_then(|nome| so_a_versao(&nome, familia));
@@ -446,9 +445,16 @@ const DO_CODEX: &str = "codex:";
 const DO_GEMINI: &str = "gemini:";
 
 /// A chave do seletor que corresponde ao que o chat usa hoje.
-fn chave_do_modelo(chat: &Chat) -> String {
+fn chave_do_modelo(chat: &Chat, padrao_pasta: &str) -> String {
     let modelo = chat.modelo.clone().unwrap_or_default();
     match chat.agente {
+        // Seguindo o padrão (sem linha "Padrão" desde o Linear), o visto vai na família que vale:
+        // a do padrão das Configurações ou, sem ele, a do modelo que está rodando.
+        Agente::Claude if modelo.is_empty() => {
+            let base = if padrao_pasta.is_empty() { chat.modelo_atual.clone().unwrap_or_default() } else { padrao_pasta.to_string() };
+            let base = base.to_lowercase();
+            MODELOS[1..].iter().map(|(v, _)| *v).find(|v| base.contains(v)).unwrap_or_default().to_string()
+        }
         Agente::Claude => modelo,
         Agente::Codex => format!("{DO_CODEX}{modelo}"),
         Agente::Gemini => format!("{DO_GEMINI}{modelo}"),
@@ -459,7 +465,7 @@ fn chave_do_modelo(chat: &Chat) -> String {
 /// também os de outras casas que o Antigravity oferece). Um escolhido que saiu da lista continua
 /// nela, para dar para ver e sair dele.
 fn linhas_do_gemini(escolhido: Option<&str>, oferecidos: &[agente_gemini::ModeloDoGemini]) -> Vec<LinhaDeModelo> {
-    let mut linhas = vec![LinhaDeModelo::new(DO_GEMINI, "Padrão", "O modelo que o Antigravity escolher")];
+    let mut linhas = Vec::new();
     linhas.extend(oferecidos.iter().map(|m| {
         let descricao = if m.valor.starts_with("gemini") { "do Google" } else { "pelo Antigravity" };
         LinhaDeModelo::new(format!("{DO_GEMINI}{}", m.valor), m.nome.clone(), descricao)
@@ -491,7 +497,7 @@ fn descricao_do_codex(original: &str) -> &'static str {
 /// As linhas do Codex: o padrão dele e os modelos que o Codex instalado oferece. Um modelo
 /// escolhido que saiu do catálogo continua na lista, para dar para ver e sair dele.
 fn linhas_do_codex(escolhido: Option<&str>, oferecidos: &[ModeloDoCodex]) -> Vec<LinhaDeModelo> {
-    let mut linhas = vec![LinhaDeModelo::new(DO_CODEX, "Padrão", "O modelo que o Codex escolher")];
+    let mut linhas = Vec::new();
     linhas.extend(
         oferecidos.iter().map(|m| LinhaDeModelo::new(format!("{DO_CODEX}{}", m.slug), m.nome.clone(), descricao_do_codex(&m.descricao))),
     );
@@ -499,24 +505,6 @@ fn linhas_do_codex(escolhido: Option<&str>, oferecidos: &[ModeloDoCodex]) -> Vec
         linhas.push(LinhaDeModelo::new(format!("{DO_CODEX}{antigo}"), antigo, "escolhido antes"));
     }
     linhas
-}
-
-/// O prefixo das chaves do grupo "Perfis" no seletor: `perfil:<id>`. Escolher uma deixa o chat
-/// como o perfil diz (`Motor::aplicar_perfil`).
-const DO_PERFIL: &str = "perfil:";
-
-/// As linhas do grupo "Perfis": os perfis de quem responde na aba `aba`, na ordem das
-/// Configurações, com a nota de quando usar (ou o resumo) embaixo do nome. O que bate com o chat
-/// leva o "em uso"; `chat` é `None` na aba que não é a do chat.
-fn linhas_de_perfil(perfis: &[crate::perfis::Perfil], aba: Agente, chat: Option<&Chat>, modo_padrao: &str) -> Vec<LinhaDeModelo> {
-    perfis
-        .iter()
-        .filter(|p| p.agente == aba)
-        .map(|p| LinhaDeModelo {
-            em_uso: chat.is_some_and(|c| p.bate_com(c, modo_padrao)),
-            ..LinhaDeModelo::new(format!("{DO_PERFIL}{}", p.id), p.nome.clone(), crate::ui::configuracoes::perfis::segunda_linha(p))
-        })
-        .collect()
 }
 
 /// O seletor tem as abas dos agentes: com o Codex ou o Gemini instalado, ou num chat que já é de
@@ -630,13 +618,9 @@ fn partes_do_seletor(motor: &Motor, chat: &Chat, aba: Agente) -> PartesDoSeletor
     let escolhido = chat.modelo.as_deref().filter(|_| do_chat);
     // Os perfis do agente da aba vão no alto: são o atalho de quem os criou. Com eles, a lista de
     // modelos embaixo ganha o rótulo, para não parecer mais um perfil.
-    let perfis = linhas_de_perfil(&motor.config.perfis, aba, Some(chat).filter(|_| do_chat), &motor.config.permissao);
-    let com_perfis = !perfis.is_empty();
+    // Sem os Perfis (Linear, 25/11/2026: "pode tirar os perfis").
     let mut partes = PartesDoSeletor::default();
-    if com_perfis {
-        partes.grupos.push((Some("Perfis".into()), perfis));
-    }
-    let titulo_dos_modelos = || com_perfis.then(|| "Modelos".to_string());
+    let titulo_dos_modelos = || None::<String>;
     match aba {
         Agente::Codex => partes.grupos.push((titulo_dos_modelos(), linhas_do_codex(escolhido, &agente_codex::modelos()))),
         Agente::Gemini => partes.grupos.push((titulo_dos_modelos(), linhas_do_gemini(escolhido, &agente_gemini::modelos()))),
@@ -719,7 +703,7 @@ pub(super) fn preparar_modelos(
         let m = motor.read(cx);
         m.chat(chat).map(|c| {
             let abertos = abertos.unwrap_or_else(|| Abertos::de_partida(c));
-            (partes_do_seletor(m, c, aba.unwrap_or(c.agente)), chave_do_modelo(c), abertos)
+            (partes_do_seletor(m, c, aba.unwrap_or(c.agente)), chave_do_modelo(c, padrao_da_pasta(m, c)), abertos)
         })
     };
     let Some((partes, escolhido, abertos)) = dados else {
@@ -994,8 +978,8 @@ impl Janela {
                 .simbolo(Simbolo::Icone(icone, Some(cor)))
                 .tamanho(b.tamanho())
                 .mudado(mudado)
-                .seta(b.larga())
-                .so_icone(b.estreita())
+                // Só o ícone, na cor do modo (protótipo Linear, 25/11/2026); o nome vai na dica.
+                .so_icone(true)
                 .aberto(aberto);
             if !aberto {
                 chip = chip.dica_acao(dica.clone(), Box::new(AlternarModo), None);
@@ -1047,36 +1031,24 @@ impl Janela {
             };
             (curto.clone(), com_claude(&curto), detalhe)
         };
-        // Na dupla, o chip diz os dois: primeiro quem trabalhou por último.
-        let nome = match &chat.parceiro {
-            Some(p) => format!("{} + {}", chat.agente.nome(), p.agente.nome()),
-            None => nome,
-        };
+        // Na dupla, o chip mostra só quem responde a uma mensagem sem "@" (`AlvoDaDupla::OsDois`
+        // vai a `chat.agente`). As duas marcas juntas liam como "a revisão do outro ainda está
+        // ligada", mesmo com o outro parado no limite do plano (dono, 25/11/2026: "deixa só o que
+        // vai sair se eu mandar uma mensagem normal"). O @ da caixa continua oferecendo os dois.
         let aberto = self.pop_caixa == Some((b.painel, PopCaixa::Modelo));
-        let marca_de = Marca::do_agente;
-        // Na dupla, as duas marcas, em toda largura (a de quem trabalhou por último na frente).
-        let simbolo = match &chat.parceiro {
-            Some(p) => Simbolo::Dupla(marca_de(chat.agente), marca_de(p.agente)),
-            None => Simbolo::Marca(marca_de(chat.agente)),
-        };
+        let simbolo = Simbolo::Marca(Marca::do_agente(chat.agente));
         // Na caixa estreita (3 painéis a 150%) o modo e o esforço viram só o ícone, e o modelo
         // guarda o nome da família ("Opus", "Fable"): é o que diz com quem se fala. Só quando a
-        // largura ainda dá (`modelo_so_icone`, medido como o esforço: `decidir_esforco`); na
-        // dupla são as duas marcas, sem nome.
-        let familia_na_estreita = b.estreita() && chat.parceiro.is_none() && self.paineis[ix].modelo_so_icone.is_none();
-        let rotulo_do_chip = if b.larga() {
-            nome.clone()
-        } else if familia_na_estreita {
-            super::nome_da_familia(&curto).to_string()
-        } else {
-            curto
-        };
+        // largura ainda dá (`modelo_so_icone`, medido como o esforço: `decidir_esforco`).
+        // Linear (25/11/2026): a marca e o nome da família ("Opus") em qualquer largura, sem a
+        // seta; o nome inteiro vai na dica.
+        let familia = self.paineis[ix].modelo_so_icone.is_none();
+        let rotulo_do_chip = if chat.agente == Agente::Claude { super::nome_da_familia(&curto).to_string() } else { curto };
         let mut chip = Chip::new(b.id("chip-modelo"), rotulo_do_chip)
             .simbolo(simbolo)
             .tamanho(b.tamanho())
-            .mudado(chat.modelo.is_some() || chat.agente != motor.config.agente_padrao)
-            .seta(b.larga())
-            .so_icone(b.estreita() && !familia_na_estreita)
+            .cor_rotulo(Cores::texto_da_fala())
+            .so_icone(!familia)
             .aberto(aberto);
         if !aberto {
             chip = chip.dica_acao(format!("Modelo: {nome}\n{detalhe}"), Box::new(AbrirModelo), Some("Vitral"));
@@ -1130,18 +1102,6 @@ impl Janela {
                                     }
                                     return;
                                 }
-                                // Uma linha do grupo dos perfis deixa o chat como o perfil diz.
-                                if let Some(perfil) = valor.strip_prefix(DO_PERFIL) {
-                                    let nome = motor_e.as_ref().and_then(|m| {
-                                        let aplicou = m.update(cx, |m, cx| m.aplicar_perfil(&chat_id, perfil, cx));
-                                        aplicou.then(|| m.read(cx).config.perfis.iter().find(|p| p.id == perfil).map(|p| p.nome.clone())).flatten()
-                                    });
-                                    if let Some(nome) = nome {
-                                        let _ = janela.update(cx, |this, cx| this.avisar_na_estreita(painel, format!("Perfil: {nome}"), window, cx));
-                                    }
-                                    abrir_ou_fechar(&janela, painel, PopCaixa::Modelo, false, cx);
-                                    return;
-                                }
                                 // Uma linha do grupo da conta troca só a conta do chat.
                                 if let Some(conta) = valor.strip_prefix(DA_CONTA) {
                                     let conta = conta.to_string();
@@ -1175,23 +1135,43 @@ impl Janela {
                 let _assinatura = window.use_keyed_state(("assinatura-modelo", painel as usize), cx, assinar);
                 let largura = (tam(window, largura) - tam(window, 12.)).min(window.viewport_size().width - px(44.));
                 // Trocar de aba só mostra os modelos do outro: quem responde muda ao escolher um.
+                // Linear (25/11/2026): os agentes só pelo ícone, numa coluna à esquerda com os
+                // ícones embaixo ("deixa só o icone e lá em baixo"); era um segmentado em cima.
                 let abas = com_abas.then(|| {
-                    let (lista, motor_e, janela, chat_id) = (lista.clone(), motor_e.clone(), janela.clone(), chat_id.clone());
-                    let agentes = agentes_das_abas.clone();
-                    let atual = agentes.iter().position(|a| *a == aba).unwrap_or(0);
-                    let nomes: Vec<&'static str> = agentes.iter().map(|a| a.nome()).collect();
-                    let controle = ControleSegmentado::new(("aba-modelo", painel as usize), nomes, atual, move |nova, window, cx| {
-                        let agente = agentes.get(nova).copied().unwrap_or(Agente::Claude);
-                        let _ = janela.update(cx, |this, cx| {
-                            (this.aba_do_modelo, this.abertos_do_modelo) = (Some((painel, agente)), None);
-                            cx.notify();
-                        });
-                        if let Some(m) = &motor_e {
-                            preparar_modelos(&lista, m, &chat_id, Some(agente), None, None, window, cx);
-                        }
-                    })
-                    .largura_total(true);
-                    div().px(esp::E2).pb(esp::E6).child(controle)
+                    let botoes = agentes_das_abas.iter().map(|&agente| {
+                        let (lista, motor_e, janela, chat_id) = (lista.clone(), motor_e.clone(), janela.clone(), chat_id.clone());
+                        let escolhido = agente == aba;
+                        div()
+                            .id(("aba-modelo", painel as usize * 8 + agente as usize))
+                            .flex_none()
+                            .size(r(28.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(raio::de(28.))
+                            .cursor_pointer()
+                            .when(escolhido, |d| d.bg(Cores::selecao()))
+                            .when(!escolhido, |d| d.hover(|s| s.bg(Cores::hover())))
+                            .child(Simbolo::Marca(Marca::do_agente(agente)).desenhar(16., window))
+                            .dica_no_ponteiro(move |window, cx| Tooltip::new(agente.nome()).build(window, cx))
+                            .on_click(move |_, window, cx| {
+                                let _ = janela.update(cx, |this, cx| {
+                                    (this.aba_do_modelo, this.abertos_do_modelo) = (Some((painel, agente)), None);
+                                    cx.notify();
+                                });
+                                if let Some(m) = &motor_e {
+                                    preparar_modelos(&lista, m, &chat_id, Some(agente), None, None, window, cx);
+                                }
+                            })
+                    });
+                    v_flex()
+                        .flex_none()
+                        .justify_end()
+                        .gap(esp::E2)
+                        .p(esp::E2)
+                        .rounded(raio::CARTAO)
+                        .bg(Cores::recuo_no_flutuante())
+                        .children(botoes)
                 });
                 // O aviso e as teclas na coluna do texto das linhas: os 8 do item mais os ~4 da lista
                 // do kit (eram 8 e ficavam 4 px fora; folha dimensional, 23/11/2026).
@@ -1199,7 +1179,8 @@ impl Janela {
                 let aviso = aviso_de_troca
                     .clone()
                     .map(|a| div().px(esp::E12).pt(esp::E4).min_w_0().truncate().metadado().text_color(Cores::tenue()).child(a));
-                div().w(largura).flex().flex_col().children(abas).child(lista.clone()).children(aviso).when(!estreita, |s| {
+                let corpo = h_flex().items_stretch().gap(esp::E6).children(abas).child(div().flex_1().min_w_0().child(lista.clone()));
+                div().w(largura).flex().flex_col().child(corpo).children(aviso).when(!estreita, |s| {
                     let [linha, teclas] = rodape_de_teclas([
                         dica_de_tecla(&["↑", "↓"], "escolhe"),
                         dica_de_tecla(&["Enter"], "usa"),
@@ -1248,14 +1229,12 @@ impl Janela {
             Chip::new(b.id("chip-esforco"), "Ultracode")
                 .simbolo(simbolo)
                 .cor_rotulo(Cores::violeta())
-                .seta(b.larga() && !compacto)
-                .so_icone(b.estreita() || compacto)
+                .so_icone(true)
         } else if armado {
             Chip::new(b.id("chip-esforco"), "Ultrathink")
                 .simbolo(barras_arco_iris())
                 .arco_iris()
-                .seta(b.larga() && !compacto)
-                .so_icone(b.estreita() || compacto)
+                .so_icone(true)
         } else {
             // No automático, as barrinhas e o rótulo dizem o nível que ele usa ("Auto · Extra").
             let no_auto = padrao.filter(|_| atual == 0);
@@ -1263,10 +1242,10 @@ impl Janela {
                 Some(p) => format!("Auto · {}", ESFORCOS[p].1).into(),
                 None => nome.into(),
             };
+            // Só as barrinhas (protótipo Linear, 25/11/2026); o nível vai na dica.
             let chip = Chip::new(b.id("chip-esforco"), rotulo)
                 .simbolo(Simbolo::Sinal { nivel: no_auto.unwrap_or(atual) as u8, total: 5 })
-                .seta(b.larga() && !compacto)
-                .so_icone(b.estreita() || compacto);
+                .so_icone(true);
             chip.mudado(atual != 0)
         };
         let mut chip = base.tamanho(b.tamanho()).aberto(aberto);
@@ -1308,20 +1287,6 @@ impl Janela {
             .into_any_element()
     }
 
-    pub(super) fn botao_anexar(&self, b: &Barra, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let dados = DadosAnexar { janela: cx.entity().downgrade(), chat: b.chat.clone(), painel: b.painel };
-        let dica = "Anexar arquivo ou contexto";
-        botao_icone(b.id("anexar"), Lucide::Paperclip, dica, TamanhoBotao::Controle, window, cx)
-            .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
-                let largura = tam(window, 360.);
-                let menu = menu.min_w(largura).max_w(largura).item(cabecalho_escolha("Adicionar à mensagem", None));
-                itens_de_anexar(menu, &dados, true)
-                    .separator()
-                    .item(rodape_menu("Cole imagens ou arquivos direto na caixa", Some((Box::new(Paste), Some("Input")))))
-            })
-            .into_any_element()
-    }
-
     /// "…": no máximo três grupos, com uma divisória entre eles (dono, 24/11/2026: "esse daqui
     /// também"; eram 11 itens e 5 divisórias, um cinza sozinho entre duas e um rótulo cortado). Na
     /// faixa estreita, **anexar**, que sai da barra; com texto na caixa, **mandar** (depois, numa
@@ -1333,7 +1298,9 @@ impl Janela {
         let caixa = b.composer.read(cx).value();
         let outro = chat.agente.outro();
         let agora = AgoraNoMais {
-            estreita: b.estreita(),
+            // O clipe não fica na barra em largura nenhuma (protótipo Linear, 25/11/2026): o
+            // anexar mora sempre aqui.
+            estreita: true,
             com_texto: !caixa.trim().is_empty(),
             comando: caixa.trim_start().starts_with('/'),
             // Com o turno rodando, o Enviar entra nele (ou responde ao pedido aberto); quem já ia
@@ -1349,8 +1316,7 @@ impl Janela {
         // Mandar numa hora marcada (`agendar.rs`): quando as 5 h renovarem, ou na hora escrita.
         let agendar = crate::ui::agendar::DadosDoMenu { janela: cx.entity().downgrade(), painel, renova: motor.renovacao_do_chat(&chat.id) };
         let rotulo_do_outro = format!("Perguntar também ao {}", outro.nome());
-        let tamanho = if agora.estreita { TamanhoBotao::Barra } else { TamanhoBotao::Controle };
-        botao_icone(b.id("mais-caixa"), Lucide::Ellipsis, "Mais opções", tamanho, window, cx)
+        botao_icone(b.id("mais-caixa"), Lucide::Ellipsis, "Mais opções", TamanhoBotao::Caixa, window, cx)
             .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
                 let largura = tam(window, 300.);
                 let mut menu = menu.min_w(largura).max_w(largura);
@@ -1532,14 +1498,14 @@ mod testes {
         assert_eq!(grupos.len(), 2, "{grupos:?}");
         assert_eq!(
             linhas_com_seta(&grupos[0].1),
-            [("Padrão", None), ("Fable", None), ("Opus", None), ("Sonnet", None), ("Haiku", None), ("Outras versões", Some(false))]
+            [("Fable", None), ("Opus", None), ("Sonnet", None), ("Haiku", None), ("Outras versões", Some(false))]
         );
-        assert_eq!(grupos[0].1[5].valor, OUTRAS_VERSOES);
+        assert_eq!(grupos[0].1[4].valor, OUTRAS_VERSOES);
         assert_eq!(linhas_com_seta(&grupos[1].1), [("Conta: tecnologia · semana 44%", Some(false))]);
         assert_eq!(grupos[1].1[0].valor, A_CONTA);
         assert_eq!(grupos[1].0, None, "a conta não tem mais o rótulo de grupo");
         // As linhas de abrir têm uma altura só (sem descrição).
-        assert!(grupos[0].1[5].descricao.is_empty() && grupos[1].1[0].descricao.is_empty());
+        assert!(grupos[0].1[4].descricao.is_empty() && grupos[1].1[0].descricao.is_empty());
     }
 
     /// "Outras versões" abre a lista no lugar, logo embaixo dela; a conta abre as contas embaixo
@@ -1551,12 +1517,12 @@ mod testes {
         let so_versoes = grupos_a_vista(&partes, Abertos { versoes: true, conta: false }, "");
         assert_eq!(
             titulos(&so_versoes[0].1),
-            ["Padrão", "Fable", "Opus", "Sonnet", "Haiku", "Outras versões", "Fable 5.2", "Fable 5.1", "Fable 5", "Opus 5.5", "Sonnet 5", "Haiku 5"]
+            ["Fable", "Opus", "Sonnet", "Haiku", "Outras versões", "Fable 5.2", "Fable 5.1", "Fable 5", "Opus 5.5", "Sonnet 5", "Haiku 5"]
         );
-        assert_eq!(so_versoes[0].1[5].seta, Some(true));
+        assert_eq!(so_versoes[0].1[4].seta, Some(true));
         assert_eq!(titulos(&so_versoes[1].1), ["Conta: tecnologia · semana 44%"]);
         let so_conta = grupos_a_vista(&partes, Abertos { versoes: false, conta: true }, "");
-        assert_eq!(so_conta[0].1.len(), 6);
+        assert_eq!(so_conta[0].1.len(), 5);
         assert_eq!(titulos(&so_conta[1].1), ["Conta: tecnologia · semana 44%", "Principal", "tecnologia", "Automática"]);
         assert_eq!(so_conta[1].1[0].seta, Some(true));
         assert!(so_conta[1].1[2].em_uso);
@@ -1612,7 +1578,7 @@ mod testes {
         use super::{Abertos, PartesDoSeletor, grupos_a_vista};
         let partes = PartesDoSeletor { grupos: vec![(Some("Perfis".into()), vec![LinhaDeModelo::new("perfil:a", "Rápido", "")]), (Some("Modelos".into()), linhas_de_modelo(None, None, ""))], ..PartesDoSeletor::default() };
         let grupos = grupos_a_vista(&partes, Abertos::default(), "");
-        assert_eq!(grupos.iter().map(|(t, l)| (t.as_deref(), l.len())).collect::<Vec<_>>(), [(Some("Perfis"), 1), (Some("Modelos"), 5)]);
+        assert_eq!(grupos.iter().map(|(t, l)| (t.as_deref(), l.len())).collect::<Vec<_>>(), [(Some("Perfis"), 1), (Some("Modelos"), 4)]);
         // Na busca, o grupo que não casa some.
         assert_eq!(grupos_a_vista(&partes, Abertos::default(), "haiku").iter().map(|(t, _)| t.as_deref()).collect::<Vec<_>>(), [Some("Modelos")]);
     }
@@ -1664,42 +1630,16 @@ mod testes {
     }
 
     #[test]
-    fn os_perfis_do_agente_da_aba_vao_no_seletor_com_a_nota_e_o_em_uso() {
-        use super::linhas_de_perfil;
-        use crate::{modelo::{Agente, Chat}, perfis::Perfil};
-        let perfis = vec![
-            Perfil { id: "a".into(), nome: "Planejar".into(), modelo: "opus".into(), modo: "plan".into(), nota: "Antes de mudança grande".into(), ..Perfil::default() },
-            Perfil { id: "b".into(), nome: "Revisor".into(), agente: Agente::Codex, ..Perfil::default() },
-            Perfil { id: "c".into(), nome: "Rápido".into(), modelo: "haiku".into(), ..Perfil::default() },
-        ];
-        let mut chat = Chat::novo("c1".into(), "Chat", std::path::PathBuf::from("/p"));
-        (chat.modelo, chat.permissao) = (Some("opus".into()), Some("plan".into()));
-        // Na aba do Claude, só os do Claude, na ordem das Configurações; a chave leva o prefixo.
-        let do_claude = linhas_de_perfil(&perfis, Agente::Claude, Some(&chat), "manual");
-        assert_eq!(titulos(&do_claude), ["Planejar", "Rápido"]);
-        assert_eq!(do_claude[0].valor, "perfil:a");
-        // Com nota, é ela que vai embaixo do nome; sem nota, o resumo do que o perfil escolhe.
-        assert_eq!(do_claude[0].descricao, "Antes de mudança grande");
-        assert_eq!(do_claude[1].descricao, "Claude · Haiku");
-        // O que bate com o chat leva o "em uso".
-        assert!(do_claude[0].em_uso && !do_claude[1].em_uso);
-        // Na aba do outro agente, os dele, e nada em uso.
-        let do_codex = linhas_de_perfil(&perfis, Agente::Codex, None, "manual");
-        assert_eq!(titulos(&do_codex), ["Revisor"]);
-        assert!(!do_codex[0].em_uso);
-        // Sem perfil daquele agente, o grupo não existe.
-        assert!(linhas_de_perfil(&perfis[..1], Agente::Codex, None, "manual").is_empty());
-    }
-
-    #[test]
     fn grupo_do_codex_com_o_padrao_o_catalogo_e_o_que_saiu_dele() {
         use super::{DO_CODEX, linhas_do_codex};
         use crate::agente_codex::ModeloDoCodex;
         let catalogo = [ModeloDoCodex { slug: "gpt-6.1-sol".into(), nome: "GPT-6.1-Sol".into(), descricao: "Latest workhorse.".into(), esforco: "low".into() }];
         let linhas = linhas_do_codex(None, &catalogo);
-        assert_eq!(linhas.iter().map(|l| (l.valor.as_str(), l.titulo.as_str())).collect::<Vec<_>>(), [(DO_CODEX, "Padrão"), ("codex:gpt-6.1-sol", "GPT-6.1-Sol")]);
+        // Sem a linha "Padrão" desde o Linear (25/11/2026): só o catálogo.
+        let _ = DO_CODEX;
+        assert_eq!(linhas.iter().map(|l| (l.valor.as_str(), l.titulo.as_str())).collect::<Vec<_>>(), [("codex:gpt-6.1-sol", "GPT-6.1-Sol")]);
         // A descrição vem em português quando a frase do catálogo é reconhecida; senão, nenhuma.
-        assert_eq!(linhas[1].descricao, "Para código e o trabalho do dia a dia");
+        assert_eq!(linhas[0].descricao, "Para código e o trabalho do dia a dia");
         use super::descricao_do_codex;
         assert_eq!(descricao_do_codex("Frontier intelligence for the most demanding work."), "O mais capaz, para o trabalho mais difícil");
         assert_eq!(descricao_do_codex("Fast and affordable model for easier tasks."), "Rápido e econômico, para tarefas fáceis");
@@ -1707,60 +1647,71 @@ mod testes {
         assert_eq!(descricao_do_codex("GPT-6.1 Terra Codex model."), "");
         // O escolhido que saiu do catálogo segue na lista; o que está nele não repete.
         assert_eq!(linhas_do_codex(Some("gpt-5-velho"), &catalogo).last().map(|l| l.valor.as_str()), Some("codex:gpt-5-velho"));
-        assert_eq!(linhas_do_codex(Some("gpt-6.1-sol"), &catalogo).len(), 2);
+        assert_eq!(linhas_do_codex(Some("gpt-6.1-sol"), &catalogo).len(), 1);
     }
 
     #[test]
     fn seletor_de_modelo_com_a_versao_em_uso() {
         let linhas = linhas_de_modelo(None, Some("claude-opus-5-5"), "");
-        // O título é o nome seco da família; a versão que está rodando vai no selo.
-        assert_eq!(titulos(&linhas), ["Padrão", "Fable", "Opus", "Sonnet", "Haiku"]);
-        assert_eq!(linhas[2].versao.as_deref(), Some("5.5"));
-        assert_eq!(linhas[2].descricao, "Para trabalho complexo e o dia a dia");
-        assert_eq!(linhas[0].descricao, "O do Claude Code · Opus 5.5");
-        // Seguindo o Padrão, é ele que diz qual está em uso: nenhum selo.
+        // O título é o nome seco da família; a versão que está rodando vai no selo. Sem a linha
+        // "Padrão" (Linear, 25/11/2026).
+        assert_eq!(titulos(&linhas), ["Fable", "Opus", "Sonnet", "Haiku"]);
+        assert_eq!(linhas[1].versao.as_deref(), Some("5.5"));
+        assert_eq!(linhas[1].descricao, "Para trabalho complexo e o dia a dia");
+        // Seguindo o padrão, o visto (a chave do chat) diz qual vale: nenhum selo.
         assert!(linhas.iter().all(|l| !l.em_uso));
-        assert_eq!(linhas[2].valor, "opus");
-        let linhas = linhas_de_modelo(None, Some("claude-opus-5-5"), "opus");
-        assert_eq!(linhas[0].descricao, "Padrão · Opus 5.5");
+        assert_eq!(linhas[1].valor, "opus");
         // Escolhido um apelido, o selo vai na família em uso (um só).
         let linhas = linhas_de_modelo(Some("opus"), Some("claude-opus-5-5"), "sonnet");
         assert_eq!(linhas.iter().filter(|l| l.em_uso).count(), 1);
-        assert!(linhas[2].em_uso);
+        assert!(linhas[1].em_uso);
     }
 
     #[test]
     fn seletor_de_modelo_sem_dado_nao_inventa_versao() {
         let linhas = linhas_de_modelo(None, None, "");
-        assert_eq!(titulos(&linhas), ["Padrão", "Fable", "Opus", "Sonnet", "Haiku"]);
+        assert_eq!(titulos(&linhas), ["Fable", "Opus", "Sonnet", "Haiku"]);
         assert!(linhas.iter().all(|l| !l.em_uso && l.versao.is_none()));
-        // Escolhido um apelido, o Padrão diz o da pasta e não o que está em uso.
         let linhas = linhas_de_modelo(Some("sonnet"), Some("claude-opus-5-5"), "opus");
-        assert_eq!(linhas[0].descricao, "Padrão · Opus");
-        assert_eq!(linhas[2].versao.as_deref(), Some("5.5"));
-        assert_eq!(linhas[3].versao, None);
+        assert_eq!(linhas[1].versao.as_deref(), Some("5.5"));
+        assert_eq!(linhas[2].versao, None);
     }
 
     #[test]
     fn conversa_antiga_ganha_a_sexta_linha() {
         let id = "claude-sonnet-4-5-20250929";
         let linhas = linhas_de_modelo(Some(id), Some(id), "");
-        assert_eq!(linhas.len(), 6);
-        let ultima = &linhas[5];
+        assert_eq!(linhas.len(), 5);
+        let ultima = &linhas[4];
         assert_eq!((ultima.valor.as_str(), ultima.titulo.as_str()), (id, "Sonnet 4.5"));
         assert_eq!(ultima.descricao, "escolhido antes");
         assert!(ultima.em_uso);
         // O apelido não toma a versão do nome completo.
-        assert_eq!(linhas[3].versao, None);
-        assert!(!linhas[3].em_uso);
+        assert_eq!(linhas[2].versao, None);
+        assert!(!linhas[2].em_uso);
     }
 
     #[test]
     fn versao_exata_escolhida_nao_vira_a_sexta_linha() {
         // Ela vive no grupo das versões, e as famílias ficam com o nome seco.
         let linhas = linhas_de_modelo(Some("claude-opus-5-5"), Some("claude-opus-5-5"), "");
-        assert_eq!(titulos(&linhas), ["Padrão", "Fable", "Opus", "Sonnet", "Haiku"]);
+        assert_eq!(titulos(&linhas), ["Fable", "Opus", "Sonnet", "Haiku"]);
         assert!(linhas.iter().all(|l| !l.em_uso && l.versao.is_none()));
+    }
+
+    /// Sem a linha "Padrão", o visto de quem segue o padrão vai na família que vale: a do padrão
+    /// das Configurações ou, sem ele, a do modelo que roda.
+    #[test]
+    fn sem_modelo_escolhido_o_visto_vai_na_familia_que_vale() {
+        use super::chave_do_modelo;
+        use crate::modelo::Chat;
+        let mut chat = Chat::novo("c".into(), "t", std::path::PathBuf::from("/p"));
+        assert_eq!(chave_do_modelo(&chat, "sonnet"), "sonnet");
+        assert_eq!(chave_do_modelo(&chat, ""), "");
+        chat.modelo_atual = Some("claude-opus-5-5".into());
+        assert_eq!(chave_do_modelo(&chat, ""), "opus");
+        chat.modelo = Some("haiku".into());
+        assert_eq!(chave_do_modelo(&chat, "sonnet"), "haiku");
     }
 
     #[test]

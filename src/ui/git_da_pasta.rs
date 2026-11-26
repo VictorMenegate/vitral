@@ -14,16 +14,36 @@ use gpui_kit::*;
 
 use super::{
     Janela,
-    componentes::{Confirmacao, Reflexo as _, Selo, TamanhoBotao, Tom, TomConfirmacao, aviso, botao_icone, confirmar},
+    componentes::{Confirmacao, TamanhoBotao, Tom, TomConfirmacao, aviso, botao_icone, confirmar},
+    este_chat::{grupo_da_direita, linha_da_direita, mais_e_menos, mono_da_linha, simbolo_da_linha},
 };
 use crate::{
     git::{EstadoNoGit, MudancaNaPasta, RamoDaPasta, RetratoDaPasta},
     modelo::Chat,
-    tema::{Cores, FONTE_MONO, Lucide, Tipo as _, dentro_da_borda, esp, r, raio},
+    tema::{Cores, FONTE_MONO, Lucide, esp, r},
 };
 
 /// De quanto em quanto tempo a seção relê o git enquanto está à vista.
 const RELER_A_CADA: Duration = Duration::from_secs(4);
+
+/// As marcas do git na árvore da aba Arquivos: a letra e a cor de cada arquivo mudado e as pastas
+/// com mudança dentro (o nome delas fica âmbar).
+#[derive(Default)]
+pub(super) struct MarcasDoGit {
+    pub arquivos: std::collections::HashMap<String, (&'static str, Hsla)>,
+    pub pastas: std::collections::HashSet<String>,
+}
+
+/// A letra do estado no git: M (mudado, âmbar), A (novo, verde), D (apagado, vermelho), R
+/// (renomeado, tênue).
+fn letra_do_estado(estado: EstadoNoGit) -> (&'static str, Hsla) {
+    match estado {
+        EstadoNoGit::Novo => ("A", Cores::verde()),
+        EstadoNoGit::Apagado => ("D", Cores::vermelho()),
+        EstadoNoGit::Renomeado => ("R", Cores::tenue()),
+        EstadoNoGit::Mudado => ("M", Cores::ambar()),
+    }
+}
 
 /// O último retrato lido e de qual pasta.
 #[derive(Default)]
@@ -74,48 +94,68 @@ impl Janela {
         .detach();
     }
 
-    /// A seção "Na pasta" do Este chat: nada fora de um repositório git.
+    /// As marcas do git na árvore da aba Arquivos (que começa em `raiz_da_arvore`): a letra de cada
+    /// arquivo mudado no repositório do chat e as pastas que têm mudança dentro. Os caminhos são os
+    /// da árvore (relativos à raiz dela); o repositório pode estar dentro dela ou contê-la.
+    pub(super) fn marcas_do_git(&mut self, raiz_da_arvore: &Path, pasta_do_chat: &Path, cx: &Context<Self>) -> Option<std::rc::Rc<MarcasDoGit>> {
+        self.reler_git_se_preciso(pasta_do_chat, cx);
+        let retrato = self.git_da_pasta.retrato.as_ref()?;
+        let repo = retrato.raiz.as_path();
+        let mut marcas = MarcasDoGit::default();
+        for m in &retrato.mudancas {
+            let no_repo = m.caminho.trim_end_matches('/');
+            let caminho = if let Ok(rel) = repo.strip_prefix(raiz_da_arvore) {
+                let rel = crate::git::caminho_em_texto(rel);
+                if rel.is_empty() { no_repo.to_string() } else { format!("{rel}/{no_repo}") }
+            } else if let Ok(rel) = raiz_da_arvore.strip_prefix(repo) {
+                let rel = crate::git::caminho_em_texto(rel);
+                match no_repo.strip_prefix(&format!("{rel}/")) {
+                    Some(dentro) => dentro.to_string(),
+                    None => continue,
+                }
+            } else {
+                continue;
+            };
+            let (letra, cor) = letra_do_estado(m.estado);
+            let mut acima = caminho.as_str();
+            while let Some((pai, _)) = acima.rsplit_once('/') {
+                marcas.pastas.insert(pai.to_string());
+                acima = pai;
+            }
+            if m.caminho.ends_with('/') {
+                marcas.pastas.insert(caminho.clone());
+            }
+            marcas.arquivos.insert(caminho, (letra, cor));
+        }
+        Some(std::rc::Rc::new(marcas))
+    }
+
+    /// O ramo da pasta do chat, para o grupo Pasta do Este chat (relê o git quando precisa).
+    pub(super) fn ramo_da_pasta(&mut self, pasta: &Path, cx: &Context<Self>) -> Option<RamoDaPasta> {
+        self.reler_git_se_preciso(pasta, cx);
+        self.git_da_pasta.retrato.as_ref()?.ramo.clone()
+    }
+
+    /// O grupo "Na pasta" do Este chat (o que o git vê desde o último commit, de qualquer chat ou
+    /// seu; o clique mostra o diff): nada fora de um repositório git.
     pub(super) fn secao_git(&mut self, chat: &Chat, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
         self.reler_git_se_preciso(&chat.cwd, cx);
         let retrato = self.git_da_pasta.retrato.as_ref()?;
         let raiz = retrato.raiz.clone();
-        // O ramo vai no cabeçalho, à direita; sem lugar na linha, desce inteiro para a de baixo.
-        let titulo = div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap_x(esp::E6)
-            .gap_y(esp::E4)
-            .child(div().rotulo().text_color(Cores::forte()).child("Na pasta"))
-            .child(div().font_family(FONTE_MONO).metadado().text_color(Cores::apagado()).child(retrato.mudancas.len().to_string()))
-            .children(retrato.ramo.as_ref().map(|ramo| selo_do_ramo(ramo, window)));
-        let corpo: Vec<AnyElement> = if retrato.mudancas.is_empty() {
-            vec![div().corpo_ui().text_color(Cores::tenue()).child("Nada mudado desde o último commit.").into_any_element()]
+        let mut linhas: Vec<AnyElement> = if retrato.mudancas.is_empty() {
+            vec![
+                linha_da_direita("git-nada")
+                    .text_color(Cores::tenue())
+                    .child("Nada mudado desde o último commit")
+                    .into_any_element(),
+            ]
         } else {
             retrato.mudancas.iter().enumerate().map(|(i, m)| linha_git(&raiz, m, i, window, cx)).collect()
         };
-        Some(
-            div()
-                .flex()
-                .flex_col()
-                .gap(esp::E8)
-                .p(dentro_da_borda(12.))
-                .rounded(raio::CARTAO)
-                .bg(Cores::cartao_elevado())
-                .border_1()
-                .border_color(Cores::linha())
-                .reflexo(raio::cartao())
-                .child(titulo)
-                .child(div().flex().flex_col().gap(esp::E2).children(corpo))
-                .when(retrato.cortado, |s| s.child(div().metadado().text_color(Cores::tenue()).child("Mostrando os primeiros 200.")))
-                .child(
-                    div()
-                        .metadado()
-                        .text_color(Cores::tenue())
-                        .child("O que o git vê desde o último commit, de qualquer chat ou de você. O clique mostra o diff."),
-                )
-                .into_any_element(),
-        )
+        if retrato.cortado {
+            linhas.push(linha_da_direita("git-cortado").text_color(Cores::tenue()).child("Mostrando os primeiros 200").into_any_element());
+        }
+        Some(grupo_da_direita("Na pasta", None, None, linhas))
     }
 
     /// Abre o arquivo com o diff do git por cima (o novo, sem diff: só o arquivo). Com o "Ignorar
@@ -185,85 +225,40 @@ impl Janela {
     }
 }
 
-/// O ramo no cabeçalho de "Na pasta": o ícone (o do commit, com a cabeça solta), o nome em mono e
-/// "worktree" quando a pasta é uma cópia; a frase inteira na dica.
-fn selo_do_ramo(ramo: &RamoDaPasta, window: &Window) -> AnyElement {
-    let icone = if ramo.solta { Lucide::GitCommitHorizontal } else { Lucide::GitBranch };
-    let dica = SharedString::from(super::ramo::onde_esta(ramo));
-    div()
-        .id("ramo-da-pasta")
-        .ml_auto()
-        .min_w_0()
-        .flex()
-        .items_center()
-        .gap(esp::E4)
-        .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(icone, 12., window)))
-        .child(div().min_w_0().truncate().font_family(FONTE_MONO).metadado().text_color(Cores::texto()).child(ramo.nome.clone()))
-        .when(ramo.solta, |s| s.child(div().flex_none().metadado().text_color(Cores::tenue()).child("cabeça solta")))
-        .when(ramo.worktree, |s| s.child(Selo::cor("worktree", Cores::tenue())))
-        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
-        .into_any_element()
-}
-
-/// Uma linha de "Na pasta": ícone, nome, pasta tênue, +N −M, o selo do estado e, no hover, o
-/// Desfazer (no que o git já conhece).
+/// Uma linha de "Na pasta": ícone, nome em mono, +N −M, a letra do estado (M, A, D, R) e, no
+/// hover, o Desfazer (no que o git já conhece). A pasta vai na dica.
 fn linha_git(raiz: &Path, m: &MudancaNaPasta, i: usize, window: &Window, cx: &Context<Janela>) -> AnyElement {
-    let (pasta, nome) = m.caminho.rsplit_once('/').unwrap_or(("", m.caminho.as_str()));
-    let (pasta, nome) = (pasta.to_string(), nome.to_string());
-    let icone = super::seletor_arquivos::icone_do_arquivo(&nome);
+    // Uma pasta nova inteira vem com a barra no fim ("capturas/").
+    let e_pasta = m.caminho.ends_with('/');
+    let sem_barra = m.caminho.trim_end_matches('/');
+    let nome = sem_barra.rsplit_once('/').map_or(sem_barra, |(_, n)| n).to_string();
+    let icone = if e_pasta { Lucide::Folder } else { super::seletor_arquivos::icone_do_arquivo(&nome) };
     let grupo = SharedString::from(format!("git-{i}"));
     let apagado = m.estado == EstadoNoGit::Apagado;
     let novo = m.estado == EstadoNoGit::Novo;
-    let selo = match m.estado {
-        EstadoNoGit::Novo => Some(("novo", Cores::verde())),
-        EstadoNoGit::Apagado => Some(("apagado", Cores::vermelho())),
-        EstadoNoGit::Renomeado => Some(("renomeado", Cores::tenue())),
-        EstadoNoGit::Mudado => None,
-    };
+    let (letra, cor) = letra_do_estado(m.estado);
     let dica = SharedString::from(m.caminho.clone());
     let (raiz_a, caminho_a) = (raiz.to_path_buf(), m.caminho.clone());
     let (raiz_d, caminho_d) = (raiz.to_path_buf(), m.caminho.clone());
     let desfazer = (!novo && m.estado != EstadoNoGit::Renomeado).then(|| {
         div().flex_none().invisible().group_hover(grupo.clone(), |s| s.visible()).child(
             botao_icone(format!("git-desfazer-{i}"), Lucide::RotateCcw, "Desfazer: volta ao último commit", TamanhoBotao::Linha, window, cx)
+                .size(r(20.))
                 .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
                     this.desfazer_no_git(raiz_d.clone(), caminho_d.clone(), window, cx);
                 })),
         )
     });
-    div()
-        .id(SharedString::from(format!("git-linha-{i}")))
+    linha_da_direita(SharedString::from(format!("git-linha-{i}")))
         .group(grupo)
-        .flex()
-        .items_center()
-        .gap(esp::E8)
-        .h(r(28.))
-        .px(esp::E6)
-        .rounded(raio::CONTROLE)
+        .gap(esp::E6)
         .when(!apagado, |s| s.cursor_pointer().hover(|s| s.bg(Cores::hover())))
-        .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(icone, 14., window)))
-        .child(
-            div()
-                .flex_shrink(1.)
-                .min_w_0()
-                .truncate()
-                .corpo_ui()
-                .text_color(if apagado { Cores::tenue() } else { Cores::texto() })
-                .child(nome),
-        )
-        .child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::tenue()).child(pasta))
-        .child(
-            div()
-                .flex()
-                .flex_none()
-                .gap(esp::E6)
-                .font_family(FONTE_MONO)
-                .metadado()
-                .when(m.entram > 0, |s| s.child(div().text_color(Cores::verde()).child(format!("+{}", m.entram))))
-                .when(m.saem > 0, |s| s.child(div().text_color(Cores::vermelho()).child(format!("−{}", m.saem)))),
-        )
-        .children(selo.map(|(t, cor)| Selo::cor(t, cor)))
+        .when(apagado, |s| s.text_color(Cores::tenue()))
+        .child(simbolo_da_linha(super::componentes::icone(icone, 15., window)).text_color(Cores::tenue()))
+        .child(mono_da_linha(nome).flex_shrink(1.))
+        .child(mais_e_menos(m.entram as usize, m.saem as usize))
+        .child(div().flex_none().w(r(10.)).font_family(FONTE_MONO).text_size(r(10.5)).font_weight(FontWeight::SEMIBOLD).text_color(cor).child(letra))
         .children(desfazer)
         .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
         .when(!apagado, |s| {

@@ -1,5 +1,4 @@
-//! O que as Configurações pedem ao motor além de gravar uma opção: pôr um perfil de agente num
-//! chat e mandar a notificação de teste.
+//! O que as Configurações pedem ao motor além de gravar uma opção: mandar a notificação de teste.
 
 use super::*;
 
@@ -15,20 +14,6 @@ pub fn argumentos_do_teste() -> Vec<String> {
 }
 
 impl Motor {
-    /// Deixa o chat como o perfil diz: quem responde e o modelo (pela `definir_agente`, que cuida
-    /// da troca de agente), o modo de permissão e o esforço. Devolve `false` se o perfil sumiu ou
-    /// se a troca de agente foi recusada (turno rodando): aí nada do perfil é aplicado.
-    pub fn aplicar_perfil(&mut self, chat_id: &str, perfil_id: &str, cx: &mut Context<Self>) -> bool {
-        let Some(perfil) = self.config.perfis.iter().find(|p| p.id == perfil_id).cloned() else {
-            return false;
-        };
-        if !self.definir_agente(chat_id, perfil.agente, perfil.modelo_do_chat(), cx) {
-            return false;
-        }
-        self.mudar_chat(chat_id, |c| perfil.aplicar(c), cx);
-        true
-    }
-
     /// Manda agora uma notificação do sistema, com a janela na frente ou não, para conferir que
     /// elas chegam. O erro é o que mostrar na linha das Configurações.
     pub fn testar_notificacao(&self) -> Result<(), String> {

@@ -30,7 +30,7 @@ use super::{
     busca_conversa, composer, menus,
     dialogos::{com_til, nome_da_pasta},
     movimento::{self, Curva, De, com_estado, entrada},
-    paineis::{ArrastoChat, FormaSoltura, Soltura, motivo_sem_lugar},
+    paineis::{ArrastoChat, FormaSoltura, Soltura},
     sem_arrastar,
 };
 use crate::{
@@ -75,10 +75,16 @@ fn linhas_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[
         } else {
             (pasta_do_painel.as_ref() != Some(&c.cwd)).then(|| nome_da_pasta(&c.cwd))
         };
+        // Textos curtos (Linear, 25/11/2026): "Aberto aqui", "No painel 2 · rodando".
+        let rodando = motor.execucao(&c.id).rodando();
         let onde = if a_vista == Some(c.id.as_str()) {
-            "à vista neste painel · ".to_string()
+            "Aberto aqui · ".to_string()
         } else {
-            noutros.iter().find(|(id, _)| *id == c.id).map(|(_, n)| format!("no painel {n} · ")).unwrap_or_default()
+            noutros
+                .iter()
+                .find(|(id, _)| *id == c.id)
+                .map(|(_, n)| if rodando { format!("No painel {n} · rodando · ") } else { format!("No painel {n} · ") })
+                .unwrap_or_default()
         };
         // O estado e o começo da última fala ("Terminou · Pronto, mandei as duas…"), com o quando.
         let fala = super::falas::estado_e_fala(motor, c);
@@ -201,13 +207,14 @@ fn largura_do_rotulo(window: &Window, texto: &str) -> Pixels {
 /// de 6) saiu das abas em 18/11/2026 e ficou nesta conta até 19/11: a peça em volta de cada aba,
 /// com o mínimo dela, guardava 22 px vazios depois de um título curto ("tá ficando bugado o
 /// espaçamento lá em cima").
-const ABA_SEM_TITULO: f32 = 26.;
+const ABA_SEM_TITULO: f32 = 24.;
 /// A aba de fundo só com o ícone: um quadrado da altura da aba.
-const ABA_SO_ICONE: f32 = 32.;
+const ABA_SO_ICONE: f32 = 30.;
 /// O lápis do rascunho numa aba de fundo: o vão de 6 e os 11 do ícone.
 const LAPIS_NA_ABA: f32 = 17.;
-/// O que a aba à vista ocupa além do título, com o número do painel (18 e o vão de 8).
-const NUMERO_NA_ABA: f32 = 26.;
+/// O que a aba à vista ocupa além do título, com o número do painel (18 e o vão de 7, menos os 5
+/// que a direita perde para os 6 de quando há número).
+const NUMERO_NA_ABA: f32 = 20.;
 /// O "+N" do fim da faixa, com as abas que saíram dela (um botão de barra com "+2").
 const BOTAO_MAIS: f32 = 40.;
 
@@ -337,22 +344,6 @@ fn na_janela(
     }
 }
 
-/// Item de menu que pode estar desligado: aí ganha uma segunda linha com o motivo.
-fn item_com_motivo(titulo: &'static str, icone: Lucide, motivo: Option<String>) -> PopupMenuItem {
-    match motivo {
-        None => PopupMenuItem::new(titulo).icon(icone),
-        Some(motivo) => PopupMenuItem::element(move |_, _| {
-            v_flex()
-                .min_w_0()
-                .py(r(4.))
-                .child(div().truncate().child(titulo))
-                .child(div().truncate().metadado().text_color(Cores::tenue()).child(motivo.clone()))
-        })
-        .icon(icone)
-        .disabled(true),
-    }
-}
-
 /// O menu do painel, o mesmo no "⋯" e no clique direito da aba: o que saiu do cabeçalho na
 /// largura estreita, abrir ao lado, mover e fechar, e o menu da conversa.
 /// O menu do painel: o botão direito no cabeçalho e nas abas, e o Shift+F10 (o "⋯" do cabeçalho
@@ -370,14 +361,11 @@ fn menu_do_painel(
 ) -> PopupMenu {
     struct Dados {
         chat: String,
+        /// O modo foco (Ctrl+.) ligado.
         foco: bool,
-        ultimo: bool,
-        /// O painel está maximizado, ou há mais de um para maximizar.
-        maximizado: Option<bool>,
         direita_aberta: bool,
         /// O que a direita mostra (o arquivo aberto ou Este chat).
         direita: Direita,
-        cheio: Option<String>,
         rotulo: Option<String>,
     }
     let dados = (|| {
@@ -397,15 +385,12 @@ fn menu_do_painel(
                 modelo
             }
         });
-        let cheio = (!j.cabe_outro_painel()).then(|| motivo_sem_lugar(j.paineis.len()));
+        let _ = ix;
         Some(Dados {
             chat: chat.id.clone(),
-            foco: j.modo_foco(cx),
-            ultimo: ix + 1 == j.paineis.len(),
-            maximizado: if j.maximizado.is_some() { Some(true) } else { (j.paineis.len() > 1).then_some(false) },
+            foco: j.em_foco(),
             direita_aberta: j.direita_visivel() || j.gaveta == Some(Gaveta::Direita),
             direita: j.o_que_a_direita_mostra(m),
-            cheio,
             rotulo,
         })
     })();
@@ -416,40 +401,23 @@ fn menu_do_painel(
     if let Some(rotulo) = d.rotulo {
         menu = menu.label(rotulo).separator();
     }
+    // Linear (25/11/2026): o Modo foco (Ctrl+.) e o painel da direita em todo painel; saíram o
+    // Maximizar (é o clique duplo na aba) e o "Nova conversa ao lado". O antigo "modo foco em todos
+    // os chats", que esconde as ferramentas, continua na paleta como "Esconder ferramentas".
     menu = menu
         .item(
-            PopupMenuItem::new("Modo foco em todos os chats")
+            PopupMenuItem::new("Modo foco")
                 .icon(Lucide::Focus)
                 .checked(d.foco)
-                .on_click(na_janela(&janela, move |this, _, cx| this.alternar_modo_foco(cx))),
-        );
-    if d.ultimo {
-        // O botão da direita saiu do cabeçalho (pedido do dono, 12/11/2026): abrir e fechar o
-        // painel fica aqui.
-        menu = menu.item(
-            PopupMenuItem::new(d.direita.no_menu())
-            .icon(Lucide::PanelRight)
-            .checked(d.direita_aberta)
-            .action(Box::new(AlternarPainel))
-            .on_click(na_janela(&janela, |this, window, cx| this.alternar_painel(window, cx))),
-        );
-    }
-    if let Some(maximizado) = d.maximizado {
-        menu = menu.item(
-            PopupMenuItem::new(if maximizado { "Voltar o painel ao arranjo" } else { "Maximizar o painel" })
-                .icon(if maximizado { Lucide::Minimize } else { Lucide::Maximize })
-                .action(Box::new(super::MaximizarPainel))
-                .on_click(na_janela(&janela, move |this, _, cx| {
-                    this.ativar_painel(painel_id, cx);
-                    this.alternar_maximizado_ativo(cx)
-                })),
-        );
-    }
-    menu = menu
-        .separator()
+                .action(Box::new(super::AlternarFoco))
+                .on_click(na_janela(&janela, move |this, window, cx| this.alternar_foco(window, cx))),
+        )
         .item(
-            item_com_motivo("Nova conversa ao lado", Lucide::Columns2, d.cheio)
-                .on_click(na_janela(&janela, |this, window, cx| this.nova_conversa_ao_lado(window, cx))),
+            PopupMenuItem::new(d.direita.no_menu())
+                .icon(Lucide::PanelRight)
+                .checked(d.direita_aberta)
+                .action(Box::new(AlternarPainel))
+                .on_click(na_janela(&janela, |this, window, cx| this.alternar_painel(window, cx))),
         )
         .separator();
     // Mover o painel, fechar os outros e fechar este saíram do menu a pedido do dono
@@ -707,13 +675,19 @@ impl Janela {
         // que vazaria por cima da vizinha na emenda.
         let esquerda = self.esquerda_do_painel(ix);
         let raio = crate::tema::raio_encostado(esquerda);
+        // A última peça da fileira (sem a direita ancorada) fecha o cartão com os cantos da direita.
+        let ultima = self.orcamento.direita != super::Direita::Ancorada && ix.is_none_or(|ix| ix + 1 == self.paineis.len());
+        let raio_direito = if ultima { crate::tema::raio_da_peca() } else { px(0.) };
         let cartao = v_flex()
             .id(id_texto("cartao-conversa"))
             .relative()
             .size_full()
             .min_w_0()
             .rounded_l(raio)
+            .rounded_r(raio_direito)
             .bg(Cores::cartao())
+            // As bordas finas da Aparência: um fio escuro de meio px em volta do cartão.
+            .when_some(crate::tema::bordas_finas(), |s, anel| s.shadow(vec![anel]))
             .overflow_hidden()
             // O cartão é meio transparente em cima e fecha até ficar opaco no pé, onde mora a
             // caixa de mensagem: 384 de degradê em curva e 200 cheios (por baixo do conteúdo).
@@ -747,15 +721,26 @@ impl Janela {
                                 .bottom_0()
                                 .h(cheio)
                                 .rounded_bl(raio)
+                                .rounded_br(raio_direito)
                                 .bg(Cores::cartao_opaco()),
                         ),
                 )
             })
             // Na captura, antes dos `sem_arrastar` do cabeçalho pararem o clique: qualquer clique
             // no cartão, até na aba, ativa o painel.
-            .capture_any_mouse_down(
-                cx.listener(move |this, _, _, cx| this.clique_no_painel(painel_id, cx)),
-            )
+            .capture_any_mouse_down(cx.listener(move |this, evento: &MouseDownEvent, _, cx| {
+                if evento.button == MouseButton::Left {
+                    this.segurando_trecho = true;
+                    this.ponto_do_trecho = None;
+                }
+                this.clique_no_painel(painel_id, cx)
+            }))
+            // A seleção pelo teclado não tem o ponto do ponteiro: a barra volta para cima da caixa.
+            .capture_key_down(cx.listener(|this, evento: &KeyDownEvent, _, _| {
+                if evento.keystroke.modifiers.shift {
+                    this.ponto_do_trecho = None;
+                }
+            }))
             .when_some(ix.map(|ix| self.paineis[ix].escopo_selecao), |s, escopo| {
                 s.capture_any_mouse_down(move |evento: &MouseDownEvent, _, _| {
                     if evento.button == MouseButton::Left {
@@ -880,43 +865,74 @@ impl Janela {
                 });
                 // Com um trecho da conversa selecionado, o painel ativo oferece citá-lo na caixa
                 // (dono, 13/11/2026: "selecionar uma parte da conversa pra responder").
-                let responder = (ativo && self.trecho.is_some()).then(|| {
-                    div()
-                        .map(|s| super::mensagens::coluna(s, caixa_estreita))
-                        .flex()
-                        .justify_end()
-                        .pb(esp::E6)
-                        .child(
+                // Linear (25/11/2026): Responder e Copiar numa barra chapada no preto, com 3 de
+                // folga, embaixo de onde a seleção terminou (o ponto em que o botão do mouse
+                // soltou), centrada nele e presa dentro da janela; pelo teclado, sem esse ponto,
+                // em cima da caixa. Os dois agem no apertar, e não no clique: o apertar fora do
+                // texto desfaz a seleção, e a barra sumiria antes.
+                let responder = (ativo && self.trecho.is_some() && !self.segurando_trecho).then(|| {
+                    let botao = |id: &'static str, simbolo: Lucide, rotulo: &'static str| {
                         h_flex()
-                            .id(("responder-trecho", painel_id as usize))
+                            .id((id, painel_id as usize))
                             .flex_none()
-                            .h(r(28.))
-                            .px(esp::E12)
+                            .h(r(26.))
+                            .pl(esp::E8)
+                            .pr(crate::tema::linear::ITEM_LADO)
                             .gap(esp::E6)
-                            .rounded(crate::tema::raio::de(28.))
-                            // Uma tecla azul em relevo: o azul do destaque bem leve, o fio do
-                            // mesmo azul e a luz em cima.
-                            .bg(Cores::tinta_solida(Cores::destaque(), 0.16))
-                            .border_1()
-                            .border_color(Cores::tinta_borda(Cores::destaque()))
-                            .shadow([crate::tema::aresta_de_tecla(), crate::tema::sombra_elevado()].concat())
-                            .metadado()
+                            .rounded(crate::tema::raio::de(24.))
+                            .text_size(r(12.5))
                             .font_weight(FontWeight::MEDIUM)
-                            .text_color(Cores::forte())
+                            .text_color(Cores::texto_da_fala())
                             .cursor_pointer()
-                            .hover(|s| s.bg(Cores::tinta_solida(Cores::destaque(), 0.26)))
-                            .child(super::mensagens::icone_de(Lucide::MessageSquareQuote, 13.).text_color(Cores::destaque_texto()))
-                            .child("Responder a este trecho")
-                            // No apertar, e não no clique: o apertar fora do texto desfaz a
-                            // seleção, e o botão sumiria antes de o clique chegar.
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, window, cx| {
-                                    this.responder_ao_trecho(painel_id, window, cx);
-                                    cx.stop_propagation();
-                                }),
-                            ),
-                    )
+                            .hover(|s| s.bg(Cores::cartao_elevado()).text_color(Cores::texto()))
+                            .child(super::mensagens::icone_de(simbolo, 14.).text_color(Cores::tenue()))
+                            .child(rotulo)
+                    };
+                    let barra = h_flex()
+                        .flex_none()
+                        .p(crate::tema::linear::MOLDURA_FOLGA)
+                        .gap(crate::tema::linear::CONTROLES_VAO)
+                        .rounded(crate::tema::raio::cartao())
+                        .bg(Cores::preto())
+                        .occlude()
+                        .child(botao("responder-trecho", Lucide::Reply, "Responder").on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, window, cx| {
+                                this.responder_ao_trecho(painel_id, window, cx);
+                                cx.stop_propagation();
+                            }),
+                        ))
+                        .child(botao("copiar-trecho", Lucide::Copy, "Copiar").on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, window, cx| {
+                                if let Some(trecho) = this.trecho.take() {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(trecho.trim().to_string()));
+                                }
+                                gpui_kit::base::TextSelection::clear(window, cx);
+                                cx.stop_propagation();
+                                cx.notify();
+                            }),
+                        ));
+                    match self.ponto_do_trecho {
+                        // 6 abaixo da linha em que o ponteiro soltou (meia linha de 22 e mais 6).
+                        Some(ponto) => deferred(
+                            anchored()
+                                .anchor(Anchor::TopCenter)
+                                .position(ponto + point(px(0.), tam(window, 17.)))
+                                .snap_to_window_with_margin(px(8.))
+                                // Entra como os menus (o `menu-entra` da barra-trecho do protótipo).
+                                .child(movimento::entrar(barra, ("entra-barra-trecho", painel_id as usize), De::Cima)),
+                        )
+                        .with_priority(1)
+                        .into_any_element(),
+                        None => div()
+                            .map(|s| super::mensagens::coluna(s, caixa_estreita))
+                            .flex()
+                            .justify_end()
+                            .pb(esp::E6)
+                            .child(barra)
+                            .into_any_element(),
+                    }
                 });
                 // O botão flutua em cima da doca, fora do fluxo: no fluxo, ele roubava altura da
                 // conversa ao aparecer e a rolagem pulava (dono, 16/11/2026: "quando selecionar o
@@ -1006,7 +1022,7 @@ impl Janela {
         let nivel = ix.map(|ix| self.paineis[ix].medida.nivel).unwrap_or_default();
         // Os botões da janela ficam no canto de cima à direita: no último painel, se o painel da
         // direita estiver fechado ou em gaveta.
-        let mostra_botoes_janela = ix.is_none_or(|ix| self.painel_na_borda_da_janela(ix));
+        let mostra_botoes_janela = ix.is_none_or(|ix| self.ultima_conversa(ix));
         let conversa = chat.zip(ix);
         let primeiro = ix.unwrap_or(0) == 0;
         // O botão direito no cabeçalho (na faixa das abas e no vazio dele) abre o menu do painel.
@@ -1016,10 +1032,10 @@ impl Janela {
             .flex_none()
             .flex()
             .items_center()
-            .h(altura::FILEIRA_DO_ALTO)
-            // 12 dos lados: as abas não encostam na divisória nem na beirada da janela.
-            .pl(esp::E12)
-            .pr(esp::E12)
+            // Protótipo Linear (25/11/2026): 44 de altura e 7 dos lados, a aba a 7 da borda do
+            // cartão em cima e do lado.
+            .h(altura::CABECALHO)
+            .px(crate::tema::linear::CABECA_LADO)
             .gap(esp::E8)
             // Sem a linha embaixo do cabeçalho com a conversa rolada (pedido do dono, 12/11/2026).
             // O recolher da lista mora no menu do logo (pedido do dono, 12/11/2026).
@@ -1067,12 +1083,18 @@ impl Janela {
                         .min_w_0()
                         .overflow_hidden()
                         .items_center()
-                        .gap(esp::E6)
+                        .gap(crate::tema::linear::ABAS_VAO)
                         .when_some(medir, |s, medir| s.on_prepaint(medir))
                         .children(abas.into_iter().flatten()),
                 )
-                    .child(acoes)
-                    .when(mostra_botoes_janela, |s| s.child(self.botoes_janela_separados(cx)))
+                    // O "+" e o × lado a lado, com 2 entre eles e sem o traço (protótipo Linear).
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .gap(esp::E2)
+                            .child(acoes)
+                            .when(mostra_botoes_janela, |s| s.child(self.botoes_janela_separados(cx))),
+                    )
             });
         match menu_do_cabecalho {
             Some((janela, motor)) => cabecalho
@@ -1216,7 +1238,15 @@ impl Janela {
                         };
                         Tooltip::new(texto).build(window, cx)
                     })
-                    .on_click(cx.listener(move |this, _, window, cx| this.abrir_aba(painel_id, id_abrir.clone(), window, cx)))
+                    .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                        this.abrir_aba(painel_id, id_abrir.clone(), window, cx);
+                        // Clique duplo: maximiza o painel desta aba no jeito do VS Code.
+                        if ev.click_count() >= 2 {
+                            cx.stop_propagation();
+                            this.ativar_painel(painel_id, cx);
+                            this.alternar_maximizado_ativo(cx);
+                        }
+                    }))
                     .on_drag(arrasto, move |arrasto, _, _, cx| {
                         cx.new(|_| PreviaArrasto { titulo: arrasto.titulo.clone(), simbolo: None })
                     })
@@ -1331,7 +1361,15 @@ impl Janela {
             }))
             // Sem dica na aba à vista: o título está ali mesmo, e a dica abria por cima da conversa
             // a cada passada do ponteiro (dono, 16/11/2026: "o de passar o mouse tá bem ruim").
-            .on_click(cx.listener(move |this, _, window, cx| {
+            .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                // Clique duplo na aba: maximiza no jeito do VS Code, e de novo volta (Linear,
+                // 25/11/2026). Parado aqui, não chega à barra de título (que maximizaria a janela).
+                if ev.click_count() >= 2 {
+                    cx.stop_propagation();
+                    this.ativar_painel(painel_id, cx);
+                    this.alternar_maximizado_ativo(cx);
+                    return;
+                }
                 if let Some(ix) = this.paineis.iter().position(|p| p.id == painel_id) {
                     this.focar_painel(ix, window, cx);
                 }
@@ -1425,8 +1463,8 @@ impl Janela {
             .trigger(botao_icone(
                 ("historico-painel", painel_id as usize),
                 Lucide::Plus,
-                "Novo chat ou histórico",
-                TamanhoBotao::Barra,
+                "Novo chat ou recentes",
+                TamanhoBotao::Linha,
                 window,
                 cx,
             ))
@@ -1507,7 +1545,7 @@ impl Janela {
                 LinhaDoHistorico {
                     grupo: Some(GRUPO_DE_ACAO),
                     chave: NOVO_CHAT_NO_PAINEL.into(),
-                    titulo: "Novo chat neste painel".into(),
+                    titulo: "Novo chat".into(),
                     descricao: String::new(),
                     sinal: None,
                     termos: "novo chat criar conversa".into(),
@@ -1584,7 +1622,7 @@ impl Janela {
     fn o_que_a_direita_mostra(&self, motor: &Motor) -> Direita {
         match self.aba_visivel(motor) {
             super::abas_direita::AbaDireita::Arquivo(_) => Direita::Arquivo,
-            super::abas_direita::AbaDireita::Chat => Direita::EsteChat,
+            super::abas_direita::AbaDireita::Chat | super::abas_direita::AbaDireita::Arquivos => Direita::EsteChat,
         }
     }
 
@@ -1722,8 +1760,9 @@ impl Direita {
     /// O item do "⋯" quando o botão sai do cabeçalho.
     fn no_menu(self) -> &'static str {
         match self {
-            Direita::Arquivo => "Mostrar o arquivo aberto",
-            Direita::EsteChat => "Mostrar Este chat",
+            // Curtos (Linear, 25/11/2026): o visto ao lado já diz se está à vista.
+            Direita::Arquivo => "Arquivo aberto",
+            Direita::EsteChat => "Este chat",
         }
     }
 }

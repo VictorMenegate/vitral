@@ -164,6 +164,12 @@ impl Dados {
         self.pasta.join("exportadas")
     }
 
+    /// O texto do editor de arquivo que não pôde ir para o arquivo quando o Vitral fechou (um
+    /// conflito sem resposta, uma gravação que falhou): uma cópia por vez, com o nome e a hora.
+    pub fn pasta_nao_salvos(&self) -> PathBuf {
+        self.pasta.join("nao_salvos")
+    }
+
     pub fn pasta_anexos(&self) -> PathBuf {
         self.pasta.join("anexos")
     }

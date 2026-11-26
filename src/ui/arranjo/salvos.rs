@@ -101,6 +101,9 @@ impl Arranjos {
     }
 
     /// Tira o arranjo da lista; se era o em uso, a janela fica sem seguir nenhum.
+    // O submenu Arranjos saiu do menu do Vitral no Linear (25/11/2026, a pedido do dono); o salvar
+    // e o andar entre eles continuam nos atalhos. Fica para quando voltar a ter onde apagar.
+    #[allow(dead_code)]
     pub(in crate::ui) fn apagar(&mut self, nome: &str) {
         self.salvos.retain(|s| !mesmo_nome(&s.nome, nome));
         if self.em_uso.as_deref().is_some_and(|em_uso| mesmo_nome(em_uso, nome)) {
@@ -142,6 +145,7 @@ impl Arranjos {
 
 /// O submenu "Arranjos" do menu do logo: os guardados (o em uso com o visto), "Salvar o arranjo
 /// atual…" e, embaixo, um "Apagar" para cada um.
+#[allow(dead_code)]
 pub(in crate::ui) fn no_menu(menu: PopupMenu, janela: &WeakEntity<Janela>, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
     let janela = janela.clone();
     menu.submenu_with_icon(Some(Lucide::LayoutGrid.into()), "Arranjos", window, cx, move |mut sub, _, _| {
@@ -247,6 +251,7 @@ impl Janela {
         }
     }
 
+    #[allow(dead_code)]
     fn apagar_arranjo(&mut self, nome: &str, window: &mut Window, cx: &mut Context<Self>) {
         let mut arranjos = self.arranjos_salvos();
         arranjos.apagar(nome);
