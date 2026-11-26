@@ -105,13 +105,13 @@ pub(super) enum Raia {
 impl Raia {
     const TODAS: [Raia; 5] = [Raia::Ideias, Raia::Esperando, Raia::Trabalhando, Raia::ParaVer, Raia::Feitas];
 
-    fn titulo(self) -> &'static str {
+    fn titulo(self) -> SharedString {
         match self {
-            Raia::Ideias => "Ideias",
-            Raia::Esperando => "Esperando você",
-            Raia::Trabalhando => "Trabalhando",
-            Raia::ParaVer => "Para ver",
-            Raia::Feitas => "Feitas",
+            Raia::Ideias => tr!("Ideias"),
+            Raia::Esperando => tr!("Esperando você"),
+            Raia::Trabalhando => tr!("Trabalhando"),
+            Raia::ParaVer => tr!("Para ver"),
+            Raia::Feitas => tr!("Feitas"),
         }
     }
 
@@ -135,13 +135,13 @@ impl Raia {
         }
     }
 
-    fn vazia(self) -> &'static str {
+    fn vazia(self) -> SharedString {
         match self {
-            Raia::Ideias => "Escreva aqui em cima o que você não quer esquecer.",
-            Raia::Esperando => "Nenhum chat esperando você.",
-            Raia::Trabalhando => "Nenhum chat trabalhando agora.",
-            Raia::ParaVer => "Nenhuma resposta nova.",
-            Raia::Feitas => "Nada feito nas últimas duas semanas.",
+            Raia::Ideias => tr!("Escreva aqui em cima o que você não quer esquecer."),
+            Raia::Esperando => tr!("Nenhum chat esperando você."),
+            Raia::Trabalhando => tr!("Nenhum chat trabalhando agora."),
+            Raia::ParaVer => tr!("Nenhuma resposta nova."),
+            Raia::Feitas => tr!("Nada feito nas últimas duas semanas."),
         }
     }
 
@@ -225,13 +225,13 @@ fn chat_vivo<'a>(m: &'a Motor, ideia: &Ideia) -> Option<&'a Chat> {
 }
 
 /// Como está o chat de um cartão de ideia, em poucas palavras.
-fn estado_do_chat(m: &Motor, c: &Chat) -> &'static str {
+fn estado_do_chat(m: &Motor, c: &Chat) -> SharedString {
     match m.execucao(&c.id) {
-        Execucao::Rodando { .. } => "trabalhando",
-        Execucao::EsperandoVoce => "esperando você",
-        Execucao::Erro(_) => "com erro",
-        Execucao::Parado if m.nao_lido(c) => "resposta nova",
-        Execucao::Parado => "parado",
+        Execucao::Rodando { .. } => tr!("trabalhando"),
+        Execucao::EsperandoVoce => tr!("esperando você"),
+        Execucao::Erro(_) => tr!("com erro"),
+        Execucao::Parado if m.nao_lido(c) => tr!("resposta nova"),
+        Execucao::Parado => tr!("parado"),
     }
 }
 
@@ -260,12 +260,12 @@ fn primeira_linha(texto: &str) -> Option<String> {
 fn detalhe_do_chat(c: &Chat, raia: Raia, pendencia: Option<&Pendencia>) -> Option<String> {
     match raia {
         Raia::Esperando => pendencia.map(|p| match p {
-            Pendencia::Permissao { ferramenta, resumo, .. } => format!("Permissão · {ferramenta} · {resumo}"),
-            Pendencia::Plano { .. } => "Plano pronto para aprovar".to_string(),
-            Pendencia::Pergunta { pergunta, .. } => format!("Pergunta · {pergunta}"),
-            Pendencia::Erro { texto, .. } => format!("Falhou · {}", primeira_linha(texto).unwrap_or_default()),
-            Pendencia::Parada { motivo, .. } => format!("Parou · {motivo}"),
-            Pendencia::Nova { .. } => "Resposta nova".to_string(),
+            Pendencia::Permissao { ferramenta, resumo, .. } => tr!("Permissão · {ferramenta} · {resumo}", ferramenta = ferramenta, resumo = resumo).to_string(),
+            Pendencia::Plano { .. } => tr!("Plano pronto para aprovar").to_string(),
+            Pendencia::Pergunta { pergunta, .. } => tr!("Pergunta · {pergunta}", pergunta = pergunta).to_string(),
+            Pendencia::Erro { texto, .. } => tr!("Falhou · {motivo}", motivo = primeira_linha(texto).unwrap_or_default()).to_string(),
+            Pendencia::Parada { motivo, .. } => tr!("Parou · {motivo}", motivo = motivo).to_string(),
+            Pendencia::Nova { .. } => tr!("Resposta nova").to_string(),
         }),
         Raia::Trabalhando => Some(
             c.itens
@@ -275,7 +275,7 @@ fn detalhe_do_chat(c: &Chat, raia: Raia, pendencia: Option<&Pendencia>) -> Optio
                     Item::Ferramenta { resumo, .. } => Some(super::mensagens::detalhe_do_passo(resumo)),
                     _ => None,
                 })
-                .unwrap_or_else(|| "Pensando…".to_string()),
+                .unwrap_or_else(|| tr!("Pensando…").to_string()),
         ),
         _ => c.itens.iter().rev().find_map(|i| match i {
             Item::Assistente { texto, .. } => primeira_linha(texto),
@@ -339,7 +339,7 @@ impl QuadroDeIdeias {
     ) -> Self {
         let origem = origem_lembrada();
         let nova = cx.new(|cx| InputState::new(window, cx).placeholder(dica_da_nova(origem, do_chat.is_some())));
-        let busca = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar"));
+        let busca = cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Buscar")));
         let assinatura = cx.subscribe_in(&nova, window, |this, campo, evento: &InputEvent, window, cx| {
             if let InputEvent::PressEnter { .. } = evento {
                 let titulo = campo.read(cx).value().to_string();
@@ -400,11 +400,11 @@ impl QuadroDeIdeias {
         let Some(ideia) = self.motor.read(cx).quadro().achar(id).cloned() else {
             return;
         };
-        let titulo = cx.new(|cx| InputState::new(window, cx).placeholder("Título").default_value(ideia.titulo.clone()));
+        let titulo = cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Título")).default_value(ideia.titulo.clone()));
         let pedido = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(5, 14)
-                .placeholder("O que o chat deve fazer: o contexto, onde mexer, como saber que ficou pronto.")
+                .placeholder(tr!("O que o chat deve fazer: o contexto, onde mexer, como saber que ficou pronto."))
                 .default_value(ideia.pedido.clone())
         });
         let (id_t, id_p) = (ideia.id.clone(), ideia.id.clone());
@@ -456,7 +456,7 @@ impl QuadroDeIdeias {
         let pasta = self.pasta_padrao.clone();
         match self.motor.update(cx, |m, cx| m.mandar_ideia(id, pasta, novo, cx)) {
             Ok(chat) => self.ir_ao_chat(chat, window, cx),
-            Err(erro) => window.push_notification(aviso(Tom::Erro, format!("Não mandou a ideia: {erro}")), cx),
+            Err(erro) => window.push_notification(aviso(Tom::Erro, tr!("Não mandou a ideia: {erro}", erro = erro)), cx),
         }
     }
 
@@ -481,7 +481,7 @@ impl QuadroDeIdeias {
             self._assinaturas.truncate(2);
         }
         let motor = self.motor.clone();
-        let texto = format!("Ideia apagada: {}", apagada.titulo);
+        let texto = tr!("Ideia apagada: {titulo}", titulo = apagada.titulo);
         window.push_notification(
             aviso_com_acao(Tom::Info, texto, "Desfazer", move |_, cx| {
                 let ideia = apagada.clone();
@@ -533,9 +533,9 @@ impl QuadroDeIdeias {
         }
         let do_quadro = |o: Origem| m.quadro().ideias.iter().filter(|i| o.aceita(i) && self.do_chat.as_ref().is_none_or(|c| i.chat.as_ref() == Some(c))).count();
         let segmentos = [
-            Segmento::new(format!("Todas {}", do_quadro(Origem::Todas))),
-            Segmento::new(format!("Linear {}", do_quadro(Origem::Linear))).dica("As issues com a etiqueta Ideia no Linear"),
-            Segmento::new(format!("Vitral {}", do_quadro(Origem::Vitral))).dica("As que ficam só no Vitral; a nova anotada aqui também fica"),
+            Segmento::new(tr!("Todas {n}", n = do_quadro(Origem::Todas))),
+            Segmento::new(format!("Linear {}", do_quadro(Origem::Linear))).dica(tr!("As issues com a etiqueta Ideia no Linear")),
+            Segmento::new(format!("Vitral {}", do_quadro(Origem::Vitral))).dica(tr!("As que ficam só no Vitral; a nova anotada aqui também fica")),
         ];
         let atual = Origem::TODAS.iter().position(|o| *o == self.origem).unwrap_or(0);
         let vista = cx.entity().downgrade();
@@ -555,7 +555,7 @@ impl QuadroDeIdeias {
         if presentes.len() < 2 {
             return None;
         }
-        let mut segmentos = vec![Segmento::new("Todos")];
+        let mut segmentos = vec![Segmento::new(tr!("Todos"))];
         segmentos.extend(presentes.iter().map(|a| Segmento::new(Marca::do_agente(*a).nome())));
         let atual = self.agente.and_then(|a| presentes.iter().position(|p| *p == a)).map_or(0, |i| i + 1);
         let vista = cx.entity().downgrade();
@@ -574,7 +574,7 @@ impl QuadroDeIdeias {
 
     /// Todas as pastas ou só uma.
     fn filtro_de_pasta(&self, m: &Motor, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let mut opcoes = vec![Opcao::new("", "Todas as pastas")];
+        let mut opcoes = vec![Opcao::new("", tr!("Todas as pastas"))];
         opcoes.extend(m.pastas_dos_chats().iter().map(|p| Opcao::new(p.to_string_lossy(), nome_da_pasta(p)).descricao(com_til(p))));
         let atual = self.pasta.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
         let vista = cx.entity().downgrade();
@@ -603,27 +603,27 @@ impl QuadroDeIdeias {
                 erro.unwrap_or_default(),
                 Cores::vermelho(),
                 vec![
-                    botao_fantasma("ligar-linear", Some(Lucide::Link.into()), "Ligar o Linear", TamanhoBotao::Linha, window, cx)
+                    botao_fantasma("ligar-linear", Some(Lucide::Link.into()), tr!("Ligar o Linear"), TamanhoBotao::Linha, window, cx)
                         .on_click(cx.listener(|q, _, window, cx| q.abrir_conexao(window, cx)))
                         .into_any_element(),
                 ],
             ),
             SituacaoDoLinear::Ligado { time, lendo, lido_em, erro } => {
-                let time = time.unwrap_or_else(|| "o time".into());
+                let time = time.unwrap_or_else(|| tr!("o time").to_string());
                 let texto = match (&erro, lendo, lido_em) {
                     (Some(erro), ..) => erro.clone(),
-                    (None, true, _) => format!("Lendo o Linear · {time}"),
+                    (None, true, _) => tr!("Lendo o Linear · {time}", time = time).to_string(),
                     (None, false, Some(quando)) => match tempo_relativo(quando) {
-                        agora if agora == "agora" => format!("Linear · {time} · lido agora"),
-                        ha => format!("Linear · {time} · lido há {ha}"),
+                        agora if agora == "agora" => tr!("Linear · {time} · lido agora", time = time).to_string(),
+                        ha => tr!("Linear · {time} · lido há {ha}", time = time, ha = ha).to_string(),
                     },
                     (None, false, None) => format!("Linear · {time}"),
                 };
                 let botoes = vec![
-                    botao_icone("reler-linear", Lucide::RotateCcw, "Ler o Linear agora", TamanhoBotao::Linha, window, cx)
+                    botao_icone("reler-linear", Lucide::RotateCcw, tr!("Ler o Linear agora"), TamanhoBotao::Linha, window, cx)
                         .on_click(cx.listener(|q, _, _, cx| q.motor.update(cx, |m, cx| m.ler_linear(cx))))
                         .into_any_element(),
-                    botao_icone("desligar-linear", Lucide::Unplug, "Desligar o Linear (as ideias de lá saem do quadro)", TamanhoBotao::Linha, window, cx)
+                    botao_icone("desligar-linear", Lucide::Unplug, tr!("Desligar o Linear (as ideias de lá saem do quadro)"), TamanhoBotao::Linha, window, cx)
                         .on_click(cx.listener(|q, _, _, cx| q.motor.update(cx, |m, cx| m.desligar_linear(cx))))
                         .into_any_element(),
                 ];
@@ -635,13 +635,13 @@ impl QuadroDeIdeias {
             .h(r(32.))
             .gap(esp::E8)
             .child(div().flex_none().text_color(Cores::tenue()).child(icone(Lucide::Kanban, 18., window)))
-            .child(div().flex_none().text_size(r(18.)).line_height(r(24.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::forte()).child("Tarefas"))
+            .child(div().flex_none().text_size(r(18.)).line_height(r(24.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::forte()).child(tr!("Tarefas")))
             // Carregando: o anel do "trabalhando" ao lado do texto, até o Linear responder.
             .children(m.lendo_o_linear().then(|| div().flex_none().child(AnelGirando::new(14.).cor(Cores::destaque()).vivo("ideias-lendo"))))
             .child(cortado().flex_1().metadado().text_color(cor).child(texto))
             .children(botoes)
             .child(
-                botao_icone("fechar-quadro", Lucide::X, "Voltar às conversas (Esc)", TamanhoBotao::Linha, window, cx)
+                botao_icone("fechar-quadro", Lucide::X, tr!("Voltar às conversas (Esc)"), TamanhoBotao::Linha, window, cx)
                     .on_click(cx.listener(|q, _, window, cx| q.fechar(window, cx))),
             )
             .into_any_element()
@@ -665,7 +665,7 @@ impl QuadroDeIdeias {
                 .child(div().flex_none().text_color(Cores::tenue()).child(icone(Lucide::MessageSquare, 12., window)))
                 .child(cortado().metadado().text_color(Cores::texto()).child(c.titulo.clone()))
                 .child(
-                    botao_icone("tirar-filtro", Lucide::X, "Ver todos os chats e ideias", TamanhoBotao::Linha, window, cx).on_click(cx.listener(|q, _, _, cx| {
+                    botao_icone("tirar-filtro", Lucide::X, tr!("Ver todos os chats e ideias"), TamanhoBotao::Linha, window, cx).on_click(cx.listener(|q, _, _, cx| {
                         q.do_chat = None;
                         cx.notify();
                     })),
@@ -703,7 +703,7 @@ impl QuadroDeIdeias {
             .collect();
         let mais = (raia == Raia::Ideias).then(|| {
             let foco = self.nova.read(cx).focus_handle(cx);
-            botao_icone("nova-ideia", Lucide::Plus, "Nova ideia", TamanhoBotao::Linha, window, cx).on_click(move |_, window, cx| window.focus(&foco, cx))
+            botao_icone("nova-ideia", Lucide::Plus, tr!("Nova ideia"), TamanhoBotao::Linha, window, cx).on_click(move |_, window, cx| window.focus(&foco, cx))
         });
         let cabeca = h_flex()
             .flex_none()
@@ -732,7 +732,7 @@ impl QuadroDeIdeias {
                     .gap(esp::E8)
                     .py(esp::E16)
                     .child(AnelGirando::new(18.).cor(Cores::destaque()).vivo("ideias-lendo-raia"))
-                    .child(div().metadado().text_color(Cores::apagado()).child("Lendo o Linear"))
+                    .child(div().metadado().text_color(Cores::apagado()).child(tr!("Lendo o Linear")))
             } else {
                 v_flex().px(esp::E8).py(esp::E12).text_center().metadado().text_color(Cores::apagado()).child(raia.vazia())
             }
@@ -759,7 +759,7 @@ impl QuadroDeIdeias {
     /// issue, quem pegou e o chat dela (ou a pasta). Arrasta entre as raias de ideia.
     fn cartao(&self, ideia: &Ideia, m: &Motor, window: &Window, cx: &Context<Self>) -> AnyElement {
         let grupo: SharedString = format!("ideia-{}", ideia.id).into();
-        let titulo: SharedString = if ideia.titulo.trim().is_empty() { "Sem título".into() } else { ideia.titulo.clone().into() };
+        let titulo: SharedString = if ideia.titulo.trim().is_empty() { tr!("Sem título") } else { ideia.titulo.clone().into() };
         // Embaixo do título: o porquê, ou o começo do pedido quando ele diz mais que o título.
         let detalhe = if !ideia.nota.trim().is_empty() {
             Some(ideia.nota.trim().to_string())
@@ -770,7 +770,7 @@ impl QuadroDeIdeias {
         let chat = chat_vivo(m, ideia);
         let mut fatos: Vec<AnyElement> = Vec::new();
         if ideia.coluna == Coluna::Proximas {
-            fatos.push(Etiqueta::new("Próxima").icone(Lucide::ListTodo).baixa().into_any_element());
+            fatos.push(Etiqueta::new(tr!("Próxima")).icone(Lucide::ListTodo).baixa().into_any_element());
         }
         if let Some(no) = &ideia.linear {
             fatos.push(Etiqueta::new(no.identificador.clone()).baixa().into_any_element());
@@ -800,12 +800,12 @@ impl QuadroDeIdeias {
             Some(c) => botao_icone(
                 SharedString::from(format!("mandar-{}", ideia.id)),
                 Lucide::Send,
-                format!("Mandar no chat \u{201c}{}\u{201d}", c.titulo),
+                tr!("Mandar no chat “{titulo}”", titulo = c.titulo),
                 TamanhoBotao::Linha,
                 window,
                 cx,
             ),
-            None => botao_icone(SharedString::from(format!("mandar-{}", ideia.id)), Lucide::Send, "Abrir chat com esta ideia", TamanhoBotao::Linha, window, cx),
+            None => botao_icone(SharedString::from(format!("mandar-{}", ideia.id)), Lucide::Send, tr!("Abrir chat com esta ideia"), TamanhoBotao::Linha, window, cx),
         }
         .on_click(cx.listener(move |this, _, window, cx| {
             cx.stop_propagation();
@@ -858,7 +858,7 @@ impl QuadroDeIdeias {
         if raia == Raia::Trabalhando {
             let (motor, chat) = (self.motor.clone(), c.id.clone());
             acoes.push(
-                botao_icone(id_botao("parar"), Lucide::Square, "Parar", TamanhoBotao::Linha, window, cx)
+                botao_icone(id_botao("parar"), Lucide::Square, tr!("Parar"), TamanhoBotao::Linha, window, cx)
                     .on_click(move |_, _, cx| {
                         cx.stop_propagation();
                         motor.update(cx, |m, cx| m.parar(&chat, cx));
@@ -868,7 +868,7 @@ impl QuadroDeIdeias {
         } else {
             let (motor, chat) = (self.motor.clone(), c.id.clone());
             acoes.push(
-                botao_icone(id_botao("arquivar"), Lucide::Archive, "Arquivar", TamanhoBotao::Linha, window, cx)
+                botao_icone(id_botao("arquivar"), Lucide::Archive, tr!("Arquivar"), TamanhoBotao::Linha, window, cx)
                     .on_click(move |_, _, cx| {
                         cx.stop_propagation();
                         motor.update(cx, |m, cx| m.arquivar_chat(&chat, cx));
@@ -886,7 +886,7 @@ impl QuadroDeIdeias {
         let detalhe = detalhe_do_chat(c, raia, pendencia);
         let mut selos: Vec<AnyElement> = vec![Etiqueta::new(modelo_do_chat(c)).baixa().into_any_element()];
         if ideias > 0 {
-            let texto = if ideias == 1 { "Ideia".to_string() } else { format!("{ideias} ideias") };
+            let texto = if ideias == 1 { tr!("Ideia").to_string() } else { tr!("{n} ideias", n = ideias).to_string() };
             selos.push(Etiqueta::new(texto).icone(Lucide::Lightbulb).baixa().into_any_element());
         }
         if raia == Raia::Trabalhando {
@@ -895,12 +895,12 @@ impl QuadroDeIdeias {
                 .filter(|a| a.estado == super::mapa_agentes::Estado::Rodando)
                 .count();
             if vivos > 0 {
-                let texto = if vivos == 1 { "1 agente".to_string() } else { format!("{vivos} agentes") };
+                let texto = if vivos == 1 { tr!("1 agente").to_string() } else { tr!("{n} agentes", n = vivos).to_string() };
                 selos.push(Etiqueta::new(texto).icone(Lucide::UsersRound).baixa().into_any_element());
             }
         }
         if c.fixado {
-            selos.push(Etiqueta::new("Fixada").icone(Lucide::Pin).baixa().into_any_element());
+            selos.push(Etiqueta::new(tr!("Fixada")).icone(Lucide::Pin).baixa().into_any_element());
         }
         // A permissão se responde aqui mesmo, como no aviso: o comando perigoso ou comprido leva à
         // conversa, onde o cartão mostra o comando inteiro.
@@ -910,20 +910,20 @@ impl QuadroDeIdeias {
                 let perigoso = ferramenta == "Bash" && comando.as_deref().is_some_and(|c| !super::mensagens::trechos_perigosos(c).is_empty());
                 let comprido = comando.as_deref().is_some_and(|c| c.lines().count() > 2 || c.chars().count() > 160);
                 let (m1, m2, p1, p2) = (self.motor.clone(), self.motor.clone(), pedido.clone(), pedido.clone());
-                let negar = botao_fantasma(id_botao("negar"), None, "Negar", TamanhoBotao::Linha, window, cx).on_click(move |_, _, cx| {
+                let negar = botao_fantasma(id_botao("negar"), None, tr!("Negar"), TamanhoBotao::Linha, window, cx).on_click(move |_, _, cx| {
                     cx.stop_propagation();
                     m1.update(cx, |m, cx| m.responder_permissao(&p1, false, None, cx));
                 });
                 let sim = if perigoso || comprido {
                     let chat = c.id.clone();
-                    botao_fantasma(id_botao("ver-comando"), Some(Lucide::ArrowRight.into()), "Ver o comando", TamanhoBotao::Linha, window, cx)
+                    botao_fantasma(id_botao("ver-comando"), Some(Lucide::ArrowRight.into()), tr!("Ver o comando"), TamanhoBotao::Linha, window, cx)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
                             this.ir_ao_chat(chat.clone(), window, cx);
                         }))
                         .into_any_element()
                 } else {
-                    botao_primario(id_botao("permitir"), None, "Permitir", TamanhoBotao::Linha, window, cx)
+                    botao_primario(id_botao("permitir"), None, tr!("Permitir"), TamanhoBotao::Linha, window, cx)
                         .on_click(move |_, _, cx| {
                             cx.stop_propagation();
                             m2.update(cx, |m, cx| m.responder_permissao(&p2, true, None, cx));
@@ -951,8 +951,8 @@ impl QuadroDeIdeias {
                             .gap(esp::E4)
                             .child(h_flex().flex_1().min_w_0().overflow_hidden().gap(esp::E4).children(selos))
                             .child(div().flex_none().metadado().text_color(Cores::apagado()).child(match tempo_relativo(c.atualizado_em) {
-                                agora if agora == "agora" => agora,
-                                ha => format!("há {ha}"),
+                                agora if agora == "agora" => tr!("agora").to_string(),
+                                ha => tr!("há {ha}", ha = ha).to_string(),
                             })),
                     ),
             )
@@ -975,18 +975,18 @@ impl QuadroDeIdeias {
             caixa.into_any_element()
         };
         let campo_ligar = campo.clone();
-        let ligar = botao_primario("testar-linear", None, if ligando { "Testando" } else { "Testar e ligar" }, TamanhoBotao::Controle, window, cx)
+        let ligar = botao_primario("testar-linear", None, if ligando { tr!("Testando") } else { tr!("Testar e ligar") }, TamanhoBotao::Controle, window, cx)
             .on_click(cx.listener(move |q, _, _, cx| {
                 let chave = campo_ligar.read(cx).value().to_string();
                 q.motor.update(cx, |m, cx| m.ligar_linear(chave, cx));
             }));
-        let pagina = botao_fantasma("pagina-chave-linear", Some(Lucide::ExternalLink.into()), "Criar a chave no Linear", TamanhoBotao::Controle, window, cx)
+        let pagina = botao_fantasma("pagina-chave-linear", Some(Lucide::ExternalLink.into()), tr!("Criar a chave no Linear"), TamanhoBotao::Controle, window, cx)
             .on_click(|_, _, cx| cx.open_url(crate::linear::PAGINA_DA_CHAVE));
         let vista = cx.entity().downgrade();
         v_flex()
             .w_full()
             .gap(esp::E16)
-            .child(CabecalhoDialogo::new("Ligar o Linear").sem_fechar().voltar(move |window, cx| {
+            .child(CabecalhoDialogo::new(tr!("Ligar o Linear")).sem_fechar().voltar(move |window, cx| {
                 let _ = vista.update(cx, |q, cx| q.voltar(window, cx));
             }))
             .child(
@@ -996,14 +996,13 @@ impl QuadroDeIdeias {
                     .mx_auto()
                     .gap(esp::E12)
                     .child(div().corpo_ui().text_color(Cores::tenue()).child(
-                        "Cole a sua chave pessoal do Linear (Settings, Security & access, Personal API keys). As ideias passam a ser \
-                         as issues com a etiqueta Ideia do time EFI, e o que você muda aqui muda lá.",
+                        tr!("Cole a sua chave pessoal do Linear (Settings, Security & access, Personal API keys). As ideias passam a ser as issues com a etiqueta Ideia do time EFI, e o que você muda aqui muda lá."),
                     ))
                     .child(caixa)
                     .children(erro.map(|e| div().metadado().text_color(Cores::vermelho()).child(e)))
-                    .child(div().metadado().text_color(Cores::apagado()).child(format!(
-                        "Fica em {}, só para você.",
-                        com_til(&crate::linear::arquivo_da_chave(&m.dados.config))
+                    .child(div().metadado().text_color(Cores::apagado()).child(tr!(
+                        "Fica em {pasta}, só para você.",
+                        pasta = com_til(&crate::linear::arquivo_da_chave(&m.dados.config))
                     )))
                     .child(h_flex().pt(esp::E8).gap(esp::E8).child(pagina).child(div().flex_1()).child(ligar)),
             )
@@ -1014,13 +1013,13 @@ impl QuadroDeIdeias {
         let Some(ideia) = m.quadro().achar(&edicao.id) else {
             return div().into_any_element();
         };
-        let rotulo = |t: &'static str| div().flex_none().rotulo().text_color(Cores::texto()).child(t);
+        let rotulo = |t: SharedString| div().flex_none().rotulo().text_color(Cores::texto()).child(t);
         let chat = chat_vivo(m, ideia);
 
         // O chat da ideia: um novo (na pasta escolhida) ou uma conversa que já existe.
         let mut conversas: Vec<&crate::modelo::Chat> = m.chats.iter().filter(|c| !c.arquivado).collect();
         conversas.sort_by_key(|c| std::cmp::Reverse(c.atualizado_em));
-        let mut opcoes = vec![Opcao::new("", "Um chat novo").descricao("Criado com o pedido, quando você mandar")];
+        let mut opcoes = vec![Opcao::new("", tr!("Um chat novo")).descricao(tr!("Criado com o pedido, quando você mandar"))];
         let atual = chat.map(|c| c.id.clone()).unwrap_or_default();
         let fora_da_lista = chat.filter(|c| !conversas.iter().take(CHATS_NA_ESCOLHA).any(|o| o.id == c.id));
         for c in conversas.iter().take(CHATS_NA_ESCOLHA).copied().chain(fora_da_lista) {
@@ -1063,10 +1062,10 @@ impl QuadroDeIdeias {
                 pastas.insert(0, p.clone());
             }
             let mut opcoes: Vec<Opcao> = pastas.iter().map(|p| Opcao::new(p.to_string_lossy(), nome_da_pasta(p)).descricao(com_til(p))).collect();
-            opcoes.push(Opcao::new("", "Sem pasta").descricao("Uma pasta vazia só do chat"));
+            opcoes.push(Opcao::new("", tr!("Sem pasta")).descricao(tr!("Uma pasta vazia só do chat")));
             let atual = pasta_do_cartao.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
             let (motor, id) = (self.motor.clone(), ideia.id.clone());
-            h_flex().gap(esp::E8).child(rotulo("Pasta")).child(menu_escolha(
+            h_flex().gap(esp::E8).child(rotulo(tr!("Pasta"))).child(menu_escolha(
                 "pasta-da-ideia",
                 Anchor::TopLeft,
                 opcoes,
@@ -1080,7 +1079,7 @@ impl QuadroDeIdeias {
                 cx,
             ))
         });
-        let colunas: Vec<Opcao> = Coluna::TODAS.iter().map(|c| Opcao::new(c.titulo(), c.titulo())).collect();
+        let colunas: Vec<Opcao> = Coluna::TODAS.iter().map(|c| Opcao::new(c.titulo(), crate::i18n::traduzir(c.titulo()).into_owned())).collect();
         let (motor, id) = (self.motor.clone(), ideia.id.clone());
         let coluna = menu_escolha(
             "coluna-da-ideia",
@@ -1097,22 +1096,22 @@ impl QuadroDeIdeias {
             cx,
         );
         let nota = (!ideia.nota.trim().is_empty()).then(|| {
-            v_flex().gap(esp::E4).child(rotulo("Por quê")).child(div().corpo_ui().text_color(Cores::tenue()).child(ideia.nota.clone()))
+            v_flex().gap(esp::E4).child(rotulo(tr!("Por quê"))).child(div().corpo_ui().text_color(Cores::tenue()).child(ideia.nota.clone()))
         });
         let (id_apagar, id_mandar) = (ideia.id.clone(), ideia.id.clone());
-        let apagar = botao_perigo("apagar-ideia", Some(Lucide::Trash.into()), "Apagar", TamanhoBotao::Controle, window, cx)
+        let apagar = botao_perigo("apagar-ideia", Some(Lucide::Trash.into()), tr!("Apagar"), TamanhoBotao::Controle, window, cx)
             .on_click(cx.listener(move |this, _, window, cx| this.apagar(&id_apagar, window, cx)));
         let ir = chat.map(|c| {
             let chat = c.id.clone();
-            botao_fantasma("ir-ao-chat-da-ideia", Some(Lucide::MessageSquare.into()), "Ir ao chat", TamanhoBotao::Controle, window, cx)
+            botao_fantasma("ir-ao-chat-da-ideia", Some(Lucide::MessageSquare.into()), tr!("Ir ao chat"), TamanhoBotao::Controle, window, cx)
                 .on_click(cx.listener(move |this, _, window, cx| this.ir_ao_chat(chat.clone(), window, cx)))
         });
         let no_linear = ideia.linear.as_ref().filter(|l| !l.url.is_empty()).map(|l| {
             let url = l.url.clone();
-            botao_fantasma("abrir-no-linear", Some(Lucide::ExternalLink.into()), format!("{} no Linear", l.identificador), TamanhoBotao::Controle, window, cx)
+            botao_fantasma("abrir-no-linear", Some(Lucide::ExternalLink.into()), tr!("{id} no Linear", id = l.identificador), TamanhoBotao::Controle, window, cx)
                 .on_click(move |_, _, cx| cx.open_url(&url))
         });
-        let rotulo_mandar = if chat.is_some() { "Mandar no chat" } else { "Abrir chat" };
+        let rotulo_mandar = if chat.is_some() { tr!("Mandar no chat") } else { tr!("Abrir chat") };
         let mandar = botao_primario("mandar-ideia", Some(Lucide::Send.into()), rotulo_mandar, TamanhoBotao::Controle, window, cx)
             .on_click(cx.listener(move |this, _, window, cx| this.mandar(&id_mandar, false, window, cx)));
         let vista = cx.entity().downgrade();
@@ -1121,12 +1120,12 @@ impl QuadroDeIdeias {
             .gap(esp::E16)
             .child(
                 // Sem o × de diálogo: o quadro não é diálogo, e a seta (ou o Esc) volta.
-                CabecalhoDialogo::new("Ideia")
+                CabecalhoDialogo::new(tr!("Ideia"))
                     .sem_fechar()
                     .subtitulo(div().font_weight(FontWeight::NORMAL).child(if chat.is_some() {
-                        "O pedido entra na fila do chat dela"
+                        tr!("O pedido entra na fila do chat dela")
                     } else {
-                        "O pedido vai como a primeira mensagem de um chat novo"
+                        tr!("O pedido vai como a primeira mensagem de um chat novo")
                     }))
                     .voltar(move |window, cx| {
                         let _ = vista.update(cx, |q, cx| q.voltar(window, cx));
@@ -1138,9 +1137,9 @@ impl QuadroDeIdeias {
                     .max_w(r(760.))
                     .mx_auto()
                     .gap(esp::E12)
-                    .child(v_flex().gap(esp::E4).child(rotulo("Título")).child(Input::new(&edicao.titulo)))
-                    .child(v_flex().gap(esp::E4).child(rotulo("Pedido para o chat")).child(Textarea::new(&edicao.pedido)).child(
-                        div().metadado().text_color(Cores::apagado()).child("Vazio, vai o título. O texto se grava sozinho."),
+                    .child(v_flex().gap(esp::E4).child(rotulo(tr!("Título"))).child(Input::new(&edicao.titulo)))
+                    .child(v_flex().gap(esp::E4).child(rotulo(tr!("Pedido para o chat"))).child(Textarea::new(&edicao.pedido)).child(
+                        div().metadado().text_color(Cores::apagado()).child(tr!("Vazio, vai o título. O texto se grava sozinho.")),
                     ))
                     .children(nota)
                     .child(
@@ -1148,9 +1147,9 @@ impl QuadroDeIdeias {
                             .flex_wrap()
                             .gap_x(esp::E24)
                             .gap_y(esp::E8)
-                            .child(h_flex().gap(esp::E8).child(rotulo("Chat")).child(escolha_do_chat))
+                            .child(h_flex().gap(esp::E8).child(rotulo(tr!("Chat"))).child(escolha_do_chat))
                             .children(pasta)
-                            .child(h_flex().gap(esp::E8).child(rotulo("Coluna")).child(coluna)),
+                            .child(h_flex().gap(esp::E8).child(rotulo(tr!("Coluna"))).child(coluna)),
                     )
                     .child(
                         h_flex()
@@ -1188,30 +1187,30 @@ fn menu_do_cartao(menu: PopupMenu, vista: WeakEntity<QuadroDeIdeias>, d: &DadosD
     let (a, b, e, x) = (id.clone(), id.clone(), id.clone(), id.clone());
     let mut menu = match &d.chat {
         Some(titulo) => menu
-            .item(item(&format!("Mandar no chat \u{201c}{titulo}\u{201d}"), Lucide::Send, Box::new(move |q, w, cx| q.mandar(&a, false, w, cx))))
-            .item(item("Abrir num chat novo", Lucide::MessageSquarePlus, Box::new(move |q, w, cx| q.mandar(&b, true, w, cx)))),
-        None => menu.item(item("Abrir chat com esta ideia", Lucide::Send, Box::new(move |q, w, cx| q.mandar(&a, true, w, cx)))),
+            .item(item(&tr!("Mandar no chat “{titulo}”", titulo = titulo), Lucide::Send, Box::new(move |q, w, cx| q.mandar(&a, false, w, cx))))
+            .item(item(&tr!("Abrir num chat novo"), Lucide::MessageSquarePlus, Box::new(move |q, w, cx| q.mandar(&b, true, w, cx)))),
+        None => menu.item(item(&tr!("Abrir chat com esta ideia"), Lucide::Send, Box::new(move |q, w, cx| q.mandar(&a, true, w, cx)))),
     };
-    menu = menu.item(item("Editar", Lucide::Pencil, Box::new(move |q, w, cx| q.editar(&e, w, cx))));
+    menu = menu.item(item(&tr!("Editar"), Lucide::Pencil, Box::new(move |q, w, cx| q.editar(&e, w, cx))));
     if let Some(url) = d.linear.clone() {
-        menu = menu.item(PopupMenuItem::new("Abrir no Linear").icon(Lucide::ExternalLink).on_click(move |_, _, cx| cx.open_url(&url)));
+        menu = menu.item(PopupMenuItem::new(tr!("Abrir no Linear")).icon(Lucide::ExternalLink).on_click(move |_, _, cx| cx.open_url(&url)));
     }
     menu = menu.separator();
     for destino in Coluna::TODAS.into_iter().filter(|c| *c != d.coluna) {
         let id = id.clone();
-        menu = menu.item(item(&format!("Mover para {}", destino.titulo()), icone_da_coluna(destino), Box::new(move |q, _, cx| {
+        menu = menu.item(item(&tr!("Mover para {coluna}", coluna = crate::i18n::traduzir(destino.titulo())), icone_da_coluna(destino), Box::new(move |q, _, cx| {
             q.motor.update(cx, |m, cx| m.mover_ideia(&id, destino, None, cx));
         })));
     }
-    menu.separator().item(item("Apagar", Lucide::Trash, Box::new(move |q, w, cx| q.apagar(&x, w, cx))))
+    menu.separator().item(item(&tr!("Apagar"), Lucide::Trash, Box::new(move |q, w, cx| q.apagar(&x, w, cx))))
 }
 
 /// A dica do campo de ideia nova, pela origem e pelo quadro de um chat.
-fn dica_da_nova(origem: Origem, do_chat: bool) -> &'static str {
+fn dica_da_nova(origem: Origem, do_chat: bool) -> SharedString {
     match (origem, do_chat) {
-        (Origem::Vitral, _) => "Nova ideia só no Vitral (Enter anota)",
-        (_, true) => "Ideia para este chat (Enter anota)",
-        _ => "Nova ideia (Enter anota)",
+        (Origem::Vitral, _) => tr!("Nova ideia só no Vitral (Enter anota)"),
+        (_, true) => tr!("Ideia para este chat (Enter anota)"),
+        _ => tr!("Nova ideia (Enter anota)"),
     }
 }
 
@@ -1231,17 +1230,17 @@ fn menu_do_chat(menu: PopupMenu, vista: WeakEntity<QuadroDeIdeias>, d: &DadosDoC
         })
     };
     let (a, b, c, e) = (d.chat.clone(), d.chat.clone(), d.chat.clone(), d.chat.clone());
-    let mut menu = menu.item(item("Abrir a conversa", Lucide::MessageSquare, Box::new(move |q, w, cx| q.ir_ao_chat(a.clone(), w, cx))));
+    let mut menu = menu.item(item(&tr!("Abrir a conversa"), Lucide::MessageSquare, Box::new(move |q, w, cx| q.ir_ao_chat(a.clone(), w, cx))));
     if d.rodando {
-        menu = menu.item(item("Parar", Lucide::Square, Box::new(move |q, _, cx| q.motor.update(cx, |m, cx| m.parar(&b, cx)))));
+        menu = menu.item(item(&tr!("Parar"), Lucide::Square, Box::new(move |q, _, cx| q.motor.update(cx, |m, cx| m.parar(&b, cx)))));
     }
     menu.item(item(
-        if d.fixado { "Desafixar" } else { "Fixar" },
+        &if d.fixado { tr!("Desafixar") } else { tr!("Fixar") },
         if d.fixado { Lucide::PinOff } else { Lucide::Pin },
         Box::new(move |q, _, cx| q.motor.update(cx, |m, cx| m.alternar_fixado(&c, cx))),
     ))
     .separator()
-    .item(item("Arquivar", Lucide::Archive, Box::new(move |q, _, cx| {
+    .item(item(&tr!("Arquivar"), Lucide::Archive, Box::new(move |q, _, cx| {
         q.motor.update(cx, |m, cx| {
             m.arquivar_chat(&e, cx);
         })
@@ -1317,7 +1316,7 @@ impl Render for QuadroDeIdeias {
         }
         let escondidas = feitas_total.saturating_sub(feitas_a_vista);
         let mostrar_todas = (escondidas > 0 && !self.feitas_todas).then(|| {
-            botao_fantasma("feitas-todas", None, format!("Mostrar mais {escondidas}"), TamanhoBotao::Linha, window, cx)
+            botao_fantasma("feitas-todas", None, tr!("Mostrar mais {n}", n = escondidas), TamanhoBotao::Linha, window, cx)
                 .on_click(cx.listener(|q, _, _, cx| {
                     q.feitas_todas = true;
                     cx.notify();

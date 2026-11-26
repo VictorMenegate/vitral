@@ -148,7 +148,7 @@ impl Arranjos {
 #[allow(dead_code)]
 pub(in crate::ui) fn no_menu(menu: PopupMenu, janela: &WeakEntity<Janela>, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
     let janela = janela.clone();
-    menu.submenu_with_icon(Some(Lucide::LayoutGrid.into()), "Arranjos", window, cx, move |mut sub, _, _| {
+    menu.submenu_with_icon(Some(Lucide::LayoutGrid.into()), tr!("Arranjos"), window, cx, move |mut sub, _, _| {
         // Lido na hora em que o submenu é montado: é sempre o que está no disco.
         let arranjos = Arranjos::ler(crate::ui::zoom::interface().as_ref());
         for salvo in &arranjos.salvos {
@@ -163,7 +163,7 @@ pub(in crate::ui) fn no_menu(menu: PopupMenu, janela: &WeakEntity<Janela>, windo
         }
         let salvar = janela.clone();
         sub = sub.item(
-            PopupMenuItem::new("Salvar o arranjo atual…")
+            PopupMenuItem::new(tr!("Salvar o arranjo atual…"))
                 .icon(Lucide::Plus)
                 .action(Box::new(SalvarArranjo))
                 .on_click(move |_, window, cx| {
@@ -175,7 +175,7 @@ pub(in crate::ui) fn no_menu(menu: PopupMenu, janela: &WeakEntity<Janela>, windo
         }
         for salvo in &arranjos.salvos {
             let (janela, nome) = (janela.clone(), salvo.nome.clone());
-            sub = sub.item(PopupMenuItem::new(format!("Apagar “{}”", salvo.nome)).icon(Lucide::Trash).on_click(move |_, window, cx| {
+            sub = sub.item(PopupMenuItem::new(tr!("Apagar “{nome}”", nome = salvo.nome)).icon(Lucide::Trash).on_click(move |_, window, cx| {
                 let _ = janela.update(cx, |this, cx| this.apagar_arranjo(&nome, window, cx));
             }));
         }
@@ -193,7 +193,7 @@ impl Janela {
     /// guarda a janela como está.
     pub(in crate::ui) fn dialogo_salvar_arranjo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let em_uso = self.arranjos_salvos().em_uso.unwrap_or_default();
-        let campo = cx.new(|cx| InputState::new(window, cx).placeholder("Central, Vitral, Loja…").default_value(em_uso));
+        let campo = cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Central, Vitral, Loja…")).default_value(em_uso));
         campo.update(cx, |c, cx| c.select_all(window, cx));
         let janela = cx.entity().downgrade();
         let salvar = {
@@ -210,19 +210,19 @@ impl Janela {
             let (no_botao, no_enter) = (salvar.clone(), salvar.clone());
             moldura(dialogo, largura::P, window)
                 .title(topo(cabecalho(
-                    "Salvar o arranjo",
-                    Some("Guarda os chats de cada painel, as abas e as larguras com um nome. O mesmo nome salva por cima.".into()),
+                    tr!("Salvar o arranjo"),
+                    Some(tr!("Guarda os chats de cada painel, as abas e as larguras com um nome. O mesmo nome salva por cima.").to_string()),
                 )))
                 .child(Input::new(&campo))
                 .footer(
                     RodapeDialogo::new()
                         .cancelar(
-                            botao_fantasma("arranjo-cancelar", None, "Cancelar", TamanhoBotao::Controle, window, cx)
+                            botao_fantasma("arranjo-cancelar", None, tr!("Cancelar"), TamanhoBotao::Controle, window, cx)
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
                         .principal(
-                            botao_primario("arranjo-salvar", None, "Salvar", TamanhoBotao::Controle, window, cx)
-                                .when(vazio, |b| b.disabled(true).opacity(0.45).tooltip("Dê um nome ao arranjo"))
+                            botao_primario("arranjo-salvar", None, tr!("Salvar"), TamanhoBotao::Controle, window, cx)
+                                .when(vazio, |b| b.disabled(true).opacity(0.45).tooltip(tr!("Dê um nome ao arranjo")))
                                 .on_click(move |_, window, cx| {
                                     if no_botao(window, cx) {
                                         window.close_dialog(cx);
@@ -241,11 +241,11 @@ impl Janela {
         match arranjos.guardar(nome, self.arranjo_de_agora(window)) {
             Ok(nome) => {
                 arranjos.gravar();
-                window.push_notification(aviso(Tom::Pronto, format!("Arranjo “{nome}” salvo")), cx);
+                window.push_notification(aviso(Tom::Pronto, tr!("Arranjo “{nome}” salvo", nome = nome)), cx);
                 true
             }
             Err(motivo) => {
-                window.push_notification(aviso(Tom::Atencao, motivo), cx);
+                window.push_notification(aviso(Tom::Atencao, crate::i18n::traduzir(motivo).into_owned()), cx);
                 false
             }
         }
@@ -256,7 +256,7 @@ impl Janela {
         let mut arranjos = self.arranjos_salvos();
         arranjos.apagar(nome);
         arranjos.gravar();
-        window.push_notification(aviso(Tom::Info, format!("Arranjo “{nome}” apagado (os chats continuam na lista)")), cx);
+        window.push_notification(aviso(Tom::Info, tr!("Arranjo “{nome}” apagado (os chats continuam na lista)", nome = nome)), cx);
     }
 
     /// Ctrl+Alt+PageDown e PageUp: o arranjo vizinho do em uso.
@@ -265,9 +265,9 @@ impl Janela {
         match arranjos.vizinho(passo).map(str::to_string) {
             Some(nome) => self.trocar_de_arranjo(&nome, window, cx),
             None if arranjos.salvos.is_empty() => {
-                window.push_notification(aviso(Tom::Info, "Nenhum arranjo salvo ainda: “Salvar o arranjo atual…”, no menu do logo"), cx);
+                window.push_notification(aviso(Tom::Info, tr!("Nenhum arranjo salvo ainda: “Salvar o arranjo atual…”, no menu do logo")), cx);
             }
-            None => window.push_notification(aviso(Tom::Info, "Só há este arranjo salvo"), cx),
+            None => window.push_notification(aviso(Tom::Info, tr!("Só há este arranjo salvo")), cx),
         }
     }
 
@@ -287,7 +287,7 @@ impl Janela {
             motor.read(cx).chats.iter().filter(|c| !c.arquivado).map(|c| c.id.clone()).collect();
         if alvo.reabrivel(|id| abriveis.contains(id)).0.is_empty() {
             window.push_notification(
-                aviso(Tom::Atencao, format!("Os chats do arranjo “{nome}” não existem mais (arquivados ou apagados)")),
+                aviso(Tom::Atencao, tr!("Os chats do arranjo “{nome}” não existem mais (arquivados ou apagados)", nome = nome)),
                 cx,
             );
             return;
@@ -310,7 +310,7 @@ impl Janela {
             let foco = composer.read(cx).focus_handle(cx);
             window.focus(&foco, cx);
         }
-        window.push_notification(aviso(Tom::Info, format!("Arranjo “{nome}”")), cx);
+        window.push_notification(aviso(Tom::Info, tr!("Arranjo “{nome}”", nome = nome)), cx);
         cx.notify();
     }
 }
