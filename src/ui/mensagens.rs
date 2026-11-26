@@ -2900,17 +2900,21 @@ pub(super) fn turnos_do_foco(itens: &[Item], rodando: bool) -> Vec<TurnoRecolhiv
     saida
 }
 
-/// A linha do turno que roda, no modo foco: o que ele faz agora e quantas chamadas fez.
+/// A linha do turno que roda, no modo foco: o que ele faz agora e quantas chamadas fez. Só a
+/// chamada ainda sem resultado vai no gerúndio; o que já acabou (a chamada, o raciocínio) vai no
+/// passado. Sem isso, com o modelo pensando entre duas chamadas, a linha dizia "Pensando" e a
+/// linha viva embaixo dela, "Pensando…" (dono, 26/11/2026: "arruma esse pensando que aparece
+/// duplicado").
 fn resumo_ao_vivo(itens: &[Item], turno: TurnoRecolhivel) -> String {
     let trecho = &itens[turno.mensagem + 1..turno.resposta.min(itens.len())];
     let chamadas = trecho.iter().filter(|i| matches!(i, Item::Ferramenta { .. })).count();
     let agora = trecho.iter().rev().find_map(|i| match i {
-        Item::Ferramenta { nome, resumo, .. } => {
+        Item::Ferramenta { nome, resumo, resultado, .. } => {
             let detalhe = detalhe_da_chamada(nome, resumo);
-            let verbo = verbo_da_ferramenta(nome, true);
+            let verbo = verbo_da_ferramenta(nome, resultado.is_none());
             Some(if detalhe.is_empty() { verbo.to_string() } else { format!("{verbo} {detalhe}") })
         }
-        Item::Raciocinio { .. } => Some("Pensando".to_string()),
+        Item::Raciocinio { .. } => Some("Pensou".to_string()),
         _ => None,
     });
     let mut partes = vec![agora.unwrap_or_else(|| "Trabalhando".to_string())];
@@ -7340,6 +7344,24 @@ mod testes {
         assert_eq!(rotulo_do_turno_calado(true, true), "Compactando…");
         assert_eq!(rotulo_do_turno_calado(false, true), "Agentes trabalhando em segundo plano…");
         assert_eq!(rotulo_do_turno_calado(false, false), "Pensando…");
+    }
+
+    /// O turno recolhido que roda: o que acabou vai no passado e só a chamada sem resultado no
+    /// gerúndio. Com o modelo pensando depois de uma chamada, a linha não diz "Pensando" em cima
+    /// do "Pensando…" da linha viva (dono, 26/11/2026).
+    #[test]
+    fn o_resumo_ao_vivo_nao_repete_o_pensando() {
+        use super::{TurnoRecolhivel, resumo_ao_vivo};
+        let pensou = Item::Raciocinio { texto: "hmm".into(), milis: 0, em: 0 };
+        let leu = ferramenta("Read", "Read · motor.rs", Some("ok"), false);
+        let lendo = ferramenta("Read", "Read · motor.rs", None, false);
+        let turno = |n: usize| TurnoRecolhivel { mensagem: 0, resposta: n, ao_vivo: true };
+        let itens = [usuario("oi"), leu.clone(), pensou.clone()];
+        assert_eq!(resumo_ao_vivo(&itens, turno(3)), "Pensou · 1 chamada");
+        let itens = [usuario("oi"), pensou, leu];
+        assert_eq!(resumo_ao_vivo(&itens, turno(3)), "Leu motor.rs · 1 chamada");
+        let itens = [usuario("oi"), lendo];
+        assert_eq!(resumo_ao_vivo(&itens, turno(2)), "Lendo motor.rs · 1 chamada");
     }
 
     /// Rodada do Paseo, item 4: a tabela para colar em planilha.
