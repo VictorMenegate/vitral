@@ -194,7 +194,7 @@
  "Muda só as mensagens: o texto, o código e os cartões delas. A lista, a caixa de mensagem e os menus seguem o zoom.": "Changes only the messages: their text, code and cards. The list, the message box and the menus follow the zoom.",
  "Média": "Medium",
  "Mínimo de linhas": "Minimum lines",
- "Na fila": "In the queue",
+ "Na fila": "To the queue",
  "Na revisão automática e no botão": "In automatic review and on the button",
  "Nada encontrado. Tente outras palavras; a memória cresce com o que a equipe registra.": "Nothing found. Try other words; memory grows with what the team records.",
  "Nada foi mexido: {erro}": "Nothing was touched: {erro}",
@@ -438,5 +438,6 @@
  "“Com edições”: o turno que mudou o mínimo de linhas. “Todo turno”: qualquer turno que terminou bem. “Só no botão”: só pelo “Revisar com…”.": "“With edits”: a turn that changed at least the minimum number of lines. “Every turn”: any turn that finished well. “Button only”: only through “Review with…”.",
  "“Entra no turno” manda a mensagem ao agente sem pará-lo. “Vai para a fila” espera o turno acabar. O Ctrl+Enter faz o outro. Respondendo a um pedido de permissão ou a uma pergunta, o Enter continua sendo a resposta.": "“Joins the turn” sends the message to the agent without stopping it. “Goes to the queue” waits for the turn to end. Ctrl+Enter does the other. When answering a permission request or a question, Enter stays the answer.",
  "“Percorrer as enviadas” traz o texto das mensagens que você já enviou neste chat, uma por vez, sem desfazer nada; ↓ volta, e editar o texto devolve as setas ao cursor. O corrigir continua no lápis da mensagem e no Ctrl+↑.": "“Browse sent” brings back the text of the messages you already sent in this chat, one at a time, without undoing anything; ↓ goes back, and editing the text gives the arrows back to the cursor. Fixing stays on the message's pencil and on Ctrl+↑.",
- "“Sem perguntar” é o mesmo do seu VS Code. Nos outros, os pedidos de permissão aparecem na conversa.": "“Don't ask” is the same as in your VS Code. In the others, permission requests show up in the chat."
+ "“Sem perguntar” é o mesmo do seu VS Code. Nos outros, os pedidos de permissão aparecem na conversa.": "“Don't ask” is the same as in your VS Code. In the others, permission requests show up in the chat.",
+ "Ver novidades": "See what's new"
 }

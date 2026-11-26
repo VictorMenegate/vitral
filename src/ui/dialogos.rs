@@ -634,7 +634,7 @@ fn grupos_de_conversas(motor: &Motor, chat: &str) -> Vec<GrupoDeEscolha> {
                 .filter(|i| matches!(i, Item::Usuario { .. } | Item::Assistente { .. } | Item::Entrega { .. }))
                 .count();
             let quando = tempo_relativo(c.atualizado_em);
-            let quando = if quando == "agora" { quando } else { tr!("há {quando}", quando = quando).to_string() };
+            let quando = if quando == "agora" { tr!("agora").to_string() } else { tr!("há {quando}", quando = quando).to_string() };
             let pasta = if motor.sem_pasta(c) { tr!("sem pasta").to_string() } else { nome_da_pasta(&c.cwd) };
             let rodando = sinal_do_chat(motor, c).filter(|s| *s == Sinal::Rodando);
             ItemDeEscolha {

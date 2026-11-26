@@ -194,7 +194,7 @@
  "Muda só as mensagens: o texto, o código e os cartões delas. A lista, a caixa de mensagem e os menus seguem o zoom.": "Cambia solo los mensajes: su texto, código y tarjetas. La lista, el cuadro de mensaje y los menús siguen el zoom.",
  "Média": "Media",
  "Mínimo de linhas": "Mínimo de líneas",
- "Na fila": "En la cola",
+ "Na fila": "A la cola",
  "Na revisão automática e no botão": "En la revisión automática y en el botón",
  "Nada encontrado. Tente outras palavras; a memória cresce com o que a equipe registra.": "No se encontró nada. Prueba con otras palabras; la memoria crece con lo que el equipo registra.",
  "Nada foi mexido: {erro}": "No se tocó nada: {erro}",
@@ -438,5 +438,6 @@
  "“Com edições”: o turno que mudou o mínimo de linhas. “Todo turno”: qualquer turno que terminou bem. “Só no botão”: só pelo “Revisar com…”.": "“Con ediciones”: el turno que cambió al menos el mínimo de líneas. “Cada turno”: cualquier turno que terminó bien. “Solo con el botón”: solo mediante “Revisar con…”.",
  "“Entra no turno” manda a mensagem ao agente sem pará-lo. “Vai para a fila” espera o turno acabar. O Ctrl+Enter faz o outro. Respondendo a um pedido de permissão ou a uma pergunta, o Enter continua sendo a resposta.": "“Entra en el turno” envía el mensaje al agente sin detenerlo. “Va a la cola” espera a que termine el turno. Ctrl+Enter hace lo otro. Al responder una solicitud de permiso o una pregunta, Enter sigue siendo la respuesta.",
  "“Percorrer as enviadas” traz o texto das mensagens que você já enviou neste chat, uma por vez, sem desfazer nada; ↓ volta, e editar o texto devolve as setas ao cursor. O corrigir continua no lápis da mensagem e no Ctrl+↑.": "“Recorrer los enviados” trae el texto de los mensajes que ya enviaste en este chat, uno por vez, sin deshacer nada; ↓ vuelve, y editar el texto devuelve las flechas al cursor. Corregir sigue en el lápiz del mensaje y en Ctrl+↑.",
- "“Sem perguntar” é o mesmo do seu VS Code. Nos outros, os pedidos de permissão aparecem na conversa.": "“Sin preguntar” es el mismo de tu VS Code. En los demás, las solicitudes de permiso aparecen en la conversación."
+ "“Sem perguntar” é o mesmo do seu VS Code. Nos outros, os pedidos de permissão aparecem na conversa.": "“Sin preguntar” es el mismo de tu VS Code. En los demás, las solicitudes de permiso aparecen en la conversación.",
+ "Ver novidades": "Ver novedades"
 }

@@ -69,7 +69,7 @@ fn linhas_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[
     let pasta_do_painel = a_vista.and_then(|id| motor.chat(id)).map(|c| c.cwd.clone());
     let linha = |grupo: Option<&'static str>, c: &Chat| {
         let quando = super::tempo_relativo(c.atualizado_em);
-        let quando = if quando == crate::i18n::traduzir("agora") { quando } else { tr!("há {quando}", quando = quando).to_string() };
+        let quando = if quando == "agora" { tr!("agora").to_string() } else { tr!("há {quando}", quando = quando).to_string() };
         let pasta = if motor.sem_pasta(c) {
             Some(tr!("sem pasta").to_string())
         } else {
@@ -179,7 +179,7 @@ fn grupos_que_casam(
 /// min") e o começo da última fala, ou a pasta quando não há o que dizer.
 fn dica_da_aba(motor: &Motor, chat: &Chat) -> String {
     let quando = super::tempo_relativo(chat.atualizado_em);
-    let quando = if quando == crate::i18n::traduzir("agora") { quando } else { tr!("há {quando}", quando = quando).to_string() };
+    let quando = if quando == "agora" { tr!("agora").to_string() } else { tr!("há {quando}", quando = quando).to_string() };
     let estado = super::falas::estado_do_chat(motor, chat);
     let fala = super::falas::ultima_fala(chat).unwrap_or_default();
     let segunda = match (estado.is_empty(), fala.is_empty()) {
