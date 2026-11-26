@@ -5,7 +5,6 @@ use std::f32::consts::TAU;
 
 use gpui_kit::component::ElementExt as _;
 
-use gpui_kit::base::plot::shape::{Arc as Arco, ArcData};
 use gpui_kit::component::tooltip::{ManagedTooltipExt as _, Tooltip};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -61,6 +60,109 @@ const FENDA: f32 = TAU / 6.;
 
 /// Um arco de `de` a `ate` (radianos, 0 no topo, sentido horário; podem ser negativos) com uma
 /// tampa redonda em cada ponta: o traço do anel com fenda e do anel que gira.
+/// Um traço de anel: o arco de `de` a `ate` (radianos, 0 no alto, no sentido do relógio), na
+/// `cor`, com as pontas redondas ou não (o trilho inteiro não tem ponta).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Traco {
+    pub de: f32,
+    pub ate: f32,
+    pub cor: Hsla,
+    pub pontas: bool,
+}
+
+/// Os traços de um anel numa imagem BGRA de `largura` por `altura` pixels do aparelho, com o
+/// centro no meio, o meio do traço a `raio_meio` do centro e a `espessura` dele (tudo em pixels
+/// do aparelho). A borda é suavizada em um pixel, pela distância até o traço; os traços se cobrem
+/// na ordem (o trilho, depois o progresso). Alfa direto, como as outras imagens do Vitral.
+pub(crate) fn tracos_em_bgra(largura: u32, altura: u32, raio_meio: f32, espessura: f32, tracos: &[Traco]) -> Vec<u8> {
+    let (cx, cy) = (largura as f32 / 2., altura as f32 / 2.);
+    let meia = espessura / 2.;
+    let cores: Vec<[f32; 4]> = tracos
+        .iter()
+        .map(|t| {
+            let c = Rgba::from(t.cor);
+            [c.r, c.g, c.b, c.a]
+        })
+        .collect();
+    let mut bgra = Vec::with_capacity((largura * altura * 4) as usize);
+    for y in 0..altura {
+        for x in 0..largura {
+            let (dx, dy) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
+            let raio = (dx * dx + dy * dy).sqrt();
+            let angulo = dx.atan2(-dy).rem_euclid(TAU);
+            let na_faixa = (raio - raio_meio).abs() - meia;
+            // Pré-multiplicado enquanto soma; no fim, de volta ao alfa direto.
+            let mut soma = [0f32; 4];
+            for (traco, cor) in tracos.iter().zip(&cores) {
+                let vao = traco.ate - traco.de;
+                let distancia = if vao >= TAU - 1e-4 {
+                    na_faixa
+                } else {
+                    let dentro = (angulo - traco.de).rem_euclid(TAU) <= vao;
+                    let mut d = if dentro { na_faixa } else { f32::INFINITY };
+                    if traco.pontas {
+                        for ponta in [traco.de, traco.ate] {
+                            let (px, py) = (cx + raio_meio * ponta.sin(), cy - raio_meio * ponta.cos());
+                            let (ex, ey) = (x as f32 + 0.5 - px, y as f32 + 0.5 - py);
+                            d = d.min((ex * ex + ey * ey).sqrt() - meia);
+                        }
+                    }
+                    d
+                };
+                let cobertura = (0.5 - distancia).clamp(0., 1.);
+                if cobertura <= 0. {
+                    continue;
+                }
+                let a = cobertura * cor[3];
+                for k in 0..3 {
+                    soma[k] = cor[k] * a + soma[k] * (1. - a);
+                }
+                soma[3] = a + soma[3] * (1. - a);
+            }
+            let canal = |v: f32| (v.clamp(0., 1.) * 255. + 0.5) as u8;
+            if soma[3] > 0. {
+                let a = soma[3];
+                bgra.extend_from_slice(&[canal(soma[2] / a), canal(soma[1] / a), canal(soma[0] / a), canal(a)]);
+            } else {
+                bgra.extend_from_slice(&[0, 0, 0, 0]);
+            }
+        }
+    }
+    bgra
+}
+
+/// Pinta os traços de um anel centrado em `bounds` como UMA imagem, feita na CPU e guardada.
+/// Era um caminho (`paint_path`) por arco, e no GPUI cada lote de caminhos para o desenho da
+/// janela e faz uma passada da janela inteira com antisserrilhado 4x: com os anéis da barra de
+/// baixo, das caixas e os que giram, a placa de vídeo da AMD integrada passava uns 4 ms por quadro
+/// só nisso (medido na bancada em 26/11/2026: sem os anéis, 365 para 244 ms de GPU por segundo).
+pub(crate) fn pintar_tracos(bounds: Bounds<Pixels>, raio_fora: f32, espessura: f32, tracos: &[Traco], window: &mut Window, cx: &mut App) {
+    let escala = window.scale_factor();
+    let largura = (bounds.size.width.as_f32() * escala).ceil().max(1.) as u32;
+    let altura = (bounds.size.height.as_f32() * escala).ceil().max(1.) as u32;
+    if largura > 512 || altura > 512 || tracos.is_empty() {
+        return;
+    }
+    let raio_meio = (raio_fora - espessura / 2.) * escala;
+    let espessura = espessura * escala;
+    // Os ângulos em quartos de grau: o mesmo desenho dá a mesma chave.
+    let grau = |a: f32| (a.rem_euclid(TAU) * 1440. / TAU).round() as i64;
+    let mut chave = std::collections::hash_map::DefaultHasher::new();
+    {
+        use std::hash::Hash as _;
+        (largura, altura, (raio_meio * 64.).round() as i64, (espessura * 64.).round() as i64).hash(&mut chave);
+        for t in tracos {
+            let vao = (((t.ate - t.de) * 1440. / TAU).round() as i64).min(1440);
+            let cor = Rgba::from(t.cor);
+            (grau(t.de), vao, t.pontas, [cor.r, cor.g, cor.b, cor.a].map(|c| (c * 255.).round() as u8)).hash(&mut chave);
+        }
+    }
+    let chave = std::hash::Hasher::finish(&chave);
+    super::metal::pintar_imagem_numa_colecao(bounds, chave, (largura, altura), window, cx, || {
+        tracos_em_bgra(largura, altura, raio_meio, espessura, tracos)
+    });
+}
+
 pub fn pintar_arco(
     bounds: Bounds<Pixels>,
     raio_fora: f32,
@@ -69,21 +171,11 @@ pub fn pintar_arco(
     ate: f32,
     cor: Hsla,
     window: &mut Window,
+    cx: &mut App,
 ) {
-    let arco = Arco::new().inner_radius(raio_fora - espessura).outer_radius(raio_fora);
-    arco.paint(&ArcData::new(&(), 0, 1., de, ate), cor, &bounds, window);
-    let centro = bounds.center();
-    let meio = raio_fora - espessura / 2.;
-    for angulo in [de, ate] {
-        let ponto = point(centro.x + px(meio * angulo.sin()), centro.y - px(meio * angulo.cos()));
-        let lado = px(espessura);
-        let caixa = Bounds::centered_at(ponto, size(lado, lado));
-        window.paint_quad(fill(caixa, cor).corner_radii(lado / 2.));
-    }
+    pintar_tracos(bounds, raio_fora, espessura, &[Traco { de, ate, cor, pontas: true }], window, cx);
 }
 
-/// O trilho escuro com a fenda embaixo e, por cima, o arco da fração (da ponta das 7 horas, no
-/// sentido horário) com as pontas redondas. Abaixo de 2% sobra só a tampa da ponta de saída.
 fn pintar_anel(
     bounds: Bounds<Pixels>,
     raio_fora: f32,
@@ -91,18 +183,16 @@ fn pintar_anel(
     fracao: Option<f32>,
     cor: Hsla,
     window: &mut Window,
+    cx: &mut App,
 ) {
     let (de, ate) = (-(TAU - FENDA) / 2., (TAU - FENDA) / 2.);
-    pintar_arco(bounds, raio_fora, espessura, de, ate, Cores::borda_forte(), window);
-    let Some(f) = fracao.map(|f| f.clamp(0., 1.)).filter(|f| *f > 0.) else {
-        return;
-    };
-    pintar_arco(bounds, raio_fora, espessura, de, de + f * (ate - de), cor, window);
+    let mut tracos = vec![Traco { de, ate, cor: Cores::borda_forte(), pontas: true }];
+    if let Some(f) = fracao.map(|f| f.clamp(0., 1.)).filter(|f| *f > 0.) {
+        tracos.push(Traco { de, ate: de + f * (ate - de), cor, pontas: true });
+    }
+    pintar_tracos(bounds, raio_fora, espessura, &tracos, window, cx);
 }
 
-/// O trilho inteiro, sem fenda, e por cima o arco da fração a partir do alto, no sentido horário:
-/// lê como medidor, e não como o anel girando de "trabalhando" (dono, 18/11/2026: "melhora o
-/// design dessa parte de usos e contexto").
 fn pintar_anel_inteiro(
     bounds: Bounds<Pixels>,
     raio_fora: f32,
@@ -110,13 +200,20 @@ fn pintar_anel_inteiro(
     fracao: Option<f32>,
     cor: Hsla,
     window: &mut Window,
+    cx: &mut App,
 ) {
-    let trilho = Arco::new().inner_radius(raio_fora - espessura).outer_radius(raio_fora);
-    trilho.paint(&ArcData::new(&(), 0, 1., 0., TAU), Cores::traco(), &bounds, window);
-    let Some(f) = fracao.map(|f| f.clamp(0., 1.)).filter(|f| *f > 0.) else {
-        return;
-    };
-    pintar_arco(bounds, raio_fora, espessura, 0., f.max(0.02) * TAU, cor, window);
+    let mut tracos = vec![Traco { de: 0., ate: TAU, cor: Cores::traco(), pontas: false }];
+    if let Some(f) = fracao.map(|f| f.clamp(0., 1.)).filter(|f| *f > 0.) {
+        tracos.push(Traco { de: 0., ate: f.max(0.02) * TAU, cor, pontas: true });
+    }
+    pintar_tracos(bounds, raio_fora, espessura, &tracos, window, cx);
+}
+
+/// O ângulo de um anel que gira, em passos de 5 graus: as imagens dele se repetem a cada volta
+/// (`pintar_tracos` guarda cada uma), e a 30 quadros por segundo o passo não se vê.
+fn giro_em_passos(giro: f32) -> f32 {
+    let passo = TAU / 72.;
+    (giro / passo).round() * passo
 }
 
 /// Anel de progresso: contexto, uso da conta, progresso da Equipe. O arco desliza até a fração
@@ -245,13 +342,13 @@ impl RenderOnce for Anel {
             .child(
                 canvas(
                     |_, _, _| {},
-                    move |bounds, _, window, _| {
+                    move |bounds, _, window, cx| {
                         let escala = bounds.size.width.as_f32() / diametro;
                         let raio_fora = bounds.size.width.min(bounds.size.height).as_f32() / 2.;
                         if inteiro {
-                            pintar_anel_inteiro(bounds, raio_fora, espessura * escala, Some(fracao), cor, window);
+                            pintar_anel_inteiro(bounds, raio_fora, espessura * escala, Some(fracao), cor, window, cx);
                         } else {
-                            pintar_anel(bounds, raio_fora, espessura * escala, Some(fracao), cor, window);
+                            pintar_anel(bounds, raio_fora, espessura * escala, Some(fracao), cor, window, cx);
                         }
                     },
                 )
@@ -317,11 +414,12 @@ impl RenderOnce for AnelGirando {
         div().flex_none().size(r(lado)).child(
             canvas(
                 |_, _, _| {},
-                move |bounds, _, window, _| {
+                move |bounds, _, window, cx| {
                     let escala = bounds.size.width.as_f32() / lado;
                     let raio_fora = bounds.size.width.min(bounds.size.height).as_f32() / 2.;
                     let espessura = (lado * 0.16).max(1.5) * escala;
-                    pintar_arco(bounds, raio_fora, espessura, giro, giro + TAU * 0.72, cor, window);
+                    let giro = giro_em_passos(giro);
+                    pintar_arco(bounds, raio_fora, espessura, giro, giro + TAU * 0.72, cor, window, cx);
                 },
             )
             .size_full(),
@@ -455,11 +553,11 @@ impl RenderOnce for AnelDeUso {
             .child(
                 canvas(
                     |_, _, _| {},
-                    move |bounds, _, window, _| {
+                    move |bounds, _, window, cx| {
                         let escala = bounds.size.width.as_f32() / diametro;
                         let raio_fora = bounds.size.width.min(bounds.size.height).as_f32() / 2.;
                         // Um anel fino e inteiro, que enche a partir do alto.
-                        pintar_anel_inteiro(bounds, raio_fora, 2. * escala, fora, cor_fora, window);
+                        pintar_anel_inteiro(bounds, raio_fora, 2. * escala, fora, cor_fora, window, cx);
                     },
                 )
                 .absolute()
@@ -593,8 +691,44 @@ impl RenderOnce for BarraSegmentada {
 
 #[cfg(test)]
 mod testes {
-    use super::cor_da_faixa;
+    use std::f32::consts::TAU;
+
+    use gpui_kit::{Hsla, hsla};
+
+    use super::{Traco, cor_da_faixa, tracos_em_bgra};
     use crate::tema::Cores;
+
+    /// O alfa do pixel (x, y) de uma imagem BGRA de `largura`.
+    fn alfa(bgra: &[u8], largura: u32, x: u32, y: u32) -> u8 {
+        bgra[((y * largura + x) * 4 + 3) as usize]
+    }
+
+    /// O anel em imagem: o trilho inteiro cobre a faixa toda e nada fora dela; o arco de um quarto
+    /// (do alto até a direita, com pontas redondas) cobre o alto e a direita, e não a esquerda.
+    #[test]
+    fn o_anel_vira_imagem_no_lugar_certo() {
+        let branco: Hsla = hsla(0., 0., 1., 1.);
+        let (lado, raio_meio, espessura) = (40u32, 15., 4.);
+        let trilho = tracos_em_bgra(lado, lado, raio_meio, espessura, &[Traco { de: 0., ate: TAU, cor: branco, pontas: false }]);
+        assert_eq!(trilho.len(), (lado * lado * 4) as usize);
+        // No alto, embaixo, à esquerda e à direita, no meio do traço: cheio.
+        for (x, y) in [(20, 5), (20, 34), (5, 20), (34, 20)] {
+            assert_eq!(alfa(&trilho, lado, x, y), 255, "({x}, {y})");
+        }
+        // O centro e os cantos: vazios.
+        for (x, y) in [(20, 20), (0, 0), (39, 39)] {
+            assert_eq!(alfa(&trilho, lado, x, y), 0, "({x}, {y})");
+        }
+        let quarto = tracos_em_bgra(lado, lado, raio_meio, espessura, &[Traco { de: 0., ate: TAU / 4., cor: branco, pontas: true }]);
+        assert_eq!(alfa(&quarto, lado, 20, 5), 255, "o começo, no alto");
+        assert_eq!(alfa(&quarto, lado, 34, 20), 255, "o fim, à direita");
+        assert_eq!(alfa(&quarto, lado, 30, 9), 255, "o meio do arco");
+        assert_eq!(alfa(&quarto, lado, 5, 20), 0, "a esquerda fica vazia");
+        assert_eq!(alfa(&quarto, lado, 20, 34), 0, "embaixo fica vazio");
+        // Um arco que passa da volta (o anel girando) dá a mesma imagem que o mesmo arco na volta.
+        let girado = tracos_em_bgra(lado, lado, raio_meio, espessura, &[Traco { de: TAU * 3., ate: TAU * 3. + TAU / 4., cor: branco, pontas: true }]);
+        assert_eq!(girado, quarto);
+    }
 
     #[test]
     fn faixa_de_uso_nos_limites() {
@@ -657,7 +791,7 @@ impl RenderOnce for AneisDaConversa {
             };
             canvas(
                 |_, _, _| {},
-                move |limites, _, window, _| {
+                move |limites, _, window, cx| {
                     if !ativo {
                         return;
                     }
@@ -666,7 +800,8 @@ impl RenderOnce for AneisDaConversa {
                         let lado = b.size.width.as_f32().max(1.);
                         let raio_fora = b.size.width.min(b.size.height).as_f32() / 2.;
                         let espessura = (lado * 0.16).max(1.5);
-                        pintar_arco(b, raio_fora, espessura, giro, giro + TAU * 0.72, cor, window);
+                        let giro = giro_em_passos(giro);
+                        pintar_arco(b, raio_fora, espessura, giro, giro + TAU * 0.72, cor, window, cx);
                     }
                 },
             )

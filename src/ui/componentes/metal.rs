@@ -376,6 +376,57 @@ pub fn pintar_imagem_guardada(
     guardadas.push(ImagemGuardada { tamanho, estado, imagem: nova });
 }
 
+/// Imagens pequenas feitas na CPU que se repetem com estados diferentes ao mesmo tempo (os anéis:
+/// cada fração, cada passo do giro), por janela: cada uma pintada de novo sem refazer enquanto a
+/// `chave` voltar, e as menos usadas saindo do atlas quando passa de `COLECAO_MAXIMA`. `fazer`
+/// devolve o BGRA de `tamanho.0` por `tamanho.1`.
+pub fn pintar_imagem_numa_colecao(
+    limites: Bounds<Pixels>,
+    chave: u64,
+    tamanho: (u32, u32),
+    window: &mut Window,
+    cx: &mut App,
+    fazer: impl FnOnce() -> Vec<u8>,
+) {
+    let janela = window.window_handle().window_id();
+    let svg = cx.svg_renderer();
+    let (guardadas, relogio) = cx.default_global::<Colecao>().0.entry(janela).or_default();
+    *relogio += 1;
+    let agora = *relogio;
+    if let Some((imagem, uso)) = guardadas.get_mut(&chave) {
+        *uso = agora;
+        let imagem = imagem.clone();
+        let _ = window.paint_image(limites, limites, Corners::default(), imagem, 0, false);
+        return;
+    }
+    let Some(nova) = imagem_de_bgra(tamanho.0, tamanho.1, &fazer(), svg) else {
+        return;
+    };
+    // A nova entra no atlas antes de as velhas saírem.
+    let _ = window.paint_image(limites, limites, Corners::default(), nova.clone(), 0, false);
+    guardadas.insert(chave, (nova, agora));
+    if guardadas.len() > COLECAO_MAXIMA {
+        let mut usos: Vec<(u64, u64)> = guardadas.iter().map(|(k, (_, u))| (*k, *u)).collect();
+        usos.sort_by_key(|(_, u)| *u);
+        let velhas: Vec<Arc<RenderImage>> =
+            usos.into_iter().take(COLECAO_MAXIMA / 4).filter_map(|(k, _)| guardadas.remove(&k).map(|(img, _)| img)).collect();
+        for velha in velhas {
+            let _ = window.drop_image(velha);
+        }
+    }
+}
+
+/// Quantas imagens a coleção de uma janela guarda.
+const COLECAO_MAXIMA: usize = 256;
+
+/// As imagens da `pintar_imagem_numa_colecao`, por janela: a chave, a imagem e o último uso, e o
+/// relógio dos usos.
+#[derive(Default)]
+#[allow(clippy::type_complexity)]
+struct Colecao(HashMap<WindowId, (HashMap<u64, (Arc<RenderImage>, u64)>, u64)>);
+
+impl Global for Colecao {}
+
 struct ImagemGuardada {
     tamanho: (u32, u32, u32),
     estado: (u64, Option<(u32, u32)>, u32),
@@ -388,7 +439,7 @@ struct ImagensGuardadas(Vec<ImagemGuardada>);
 impl Global for ImagensGuardadas {}
 
 /// A imagem que a placa recebe, a partir do BGRA: passa pelo BMP e pelo decodificador do GPUI.
-fn imagem_de_bgra(largura: u32, altura: u32, bgra: &[u8], svg: SvgRenderer) -> Option<Arc<RenderImage>> {
+pub(super) fn imagem_de_bgra(largura: u32, altura: u32, bgra: &[u8], svg: SvgRenderer) -> Option<Arc<RenderImage>> {
     static AVISADO: AtomicBool = AtomicBool::new(false);
     match Image::from_bytes(ImageFormat::Bmp, bmp_de_bgra(largura, altura, bgra)).to_image_data(svg) {
         Ok(imagem) => Some(imagem),
