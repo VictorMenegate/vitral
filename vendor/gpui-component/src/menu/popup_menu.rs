@@ -4,14 +4,14 @@ use crate::actions::{SelectLeft, SelectRight};
 use crate::menu::menu_item::MenuItemElement;
 use crate::scroll::ScrollableElement;
 use crate::{ActiveTheme, ElementExt, Icon, IconName, Sizable as _, StyledExt as _, h_flex, v_flex};
-use crate::{Side, Size, kbd::{Kbd, desenho_de_teclas}};
+use crate::{Side, Size, kbd::Kbd};
 use gpui::{
     Action, Anchor, AnyElement, App, AppContext, Bounds, Context, DismissEvent, Edges, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding,
     ParentElement, Pixels, Render, Role, ScrollHandle, SharedString, StatefulInteractiveElement,
     Styled, WeakEntity, Window, anchored, deferred, div, prelude::FluentBuilder, px,
 };
-use gpui::{FontWeight, hsla};
+use gpui::FontWeight;
 use gpui::{ClickEvent, MouseDownEvent, OwnedMenuItem, Point, Subscription};
 use gpui_base::TestSupportExt as _;
 
@@ -60,6 +60,9 @@ pub enum PopupMenuItem {
         render: Box<dyn Fn(&mut Window, &mut App) -> AnyElement + 'static>,
         /// Vitral: a camada que enche o item por baixo do conteúdo (a ficha do escolhido).
         fundo: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyElement + 'static>>,
+        /// Vitral: um elemento na coluna do ícone, no lugar dele (a marca colorida de uma IA, que
+        /// o `Icon` de uma cor só não desenha).
+        icone_proprio: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyElement + 'static>>,
         handler: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
     },
     /// Vitral: uma linha fixa (cabeçalho ou rodapé): fora do teclado, sem realce e sem esmaecer.
@@ -107,6 +110,7 @@ impl PopupMenuItem {
             action: None,
             render: Box::new(move |window, cx| builder(window, cx).into_any_element()),
             fundo: None,
+            icone_proprio: None,
             handler: None,
         }
     }
@@ -244,6 +248,20 @@ impl PopupMenuItem {
         self
     }
 
+    /// Vitral: um elemento na coluna do ícone (ver `icone_proprio`).
+    ///
+    /// Only works for [`PopupMenuItem::ElementItem`].
+    pub fn icone_proprio<F, E>(mut self, builder: F) -> Self
+    where
+        F: Fn(&mut Window, &mut App) -> E + 'static,
+        E: IntoElement,
+    {
+        if let PopupMenuItem::ElementItem { icone_proprio, .. } = &mut self {
+            *icone_proprio = Some(Box::new(move |window, cx| builder(window, cx).into_any_element()));
+        }
+        self
+    }
+
     /// Vitral: marca o item que abre fora do app (o `ExternalLink` à direita).
     ///
     /// Only works for [`PopupMenuItem::Item`].
@@ -331,9 +349,12 @@ impl PopupMenuItem {
             PopupMenuItem::Item { icon, checked, .. } => {
                 icon.is_some() || (check_side.is_left() && *checked)
             }
-            PopupMenuItem::ElementItem { icon, checked, .. } => {
-                icon.is_some() || (check_side.is_left() && *checked)
-            }
+            PopupMenuItem::ElementItem {
+                icon,
+                icone_proprio,
+                checked,
+                ..
+            } => icon.is_some() || icone_proprio.is_some() || (check_side.is_left() && *checked),
             PopupMenuItem::Submenu { icon, .. } => icon.is_some(),
             _ => false,
         }
@@ -1441,14 +1462,8 @@ impl PopupMenu {
                     .line_height(z(14.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(muted)
-                    .children(Self::render_icon(
-                        has_left_icon,
-                        false,
-                        None,
-                        false,
-                        window,
-                        cx,
-                    ))
+                    // Vitral: o rótulo começa na coluna dos ícones, como o `.rot` do protótipo
+                    // (26/11/2026), e não na do texto.
                     .child(div().flex_1().min_w_0().truncate().child(label.clone())),
             ),
             // Vitral: a linha fixa vai de borda a borda do menu, sem a margem do item nem a do
@@ -1474,6 +1489,7 @@ impl PopupMenu {
                 danger,
                 action,
                 fundo,
+                icone_proprio,
                 ..
             } => {
                 let key = if item.mostra_atalho() {
@@ -1498,14 +1514,27 @@ impl PopupMenu {
                         .min_h(item_height)
                         .items_center()
                         .gap_x(z(10.))
-                        .children(Self::render_icon(
-                            has_left_icon,
-                            is_left_check,
-                            icon.clone(),
-                            *danger,
-                            window,
-                            cx,
-                        ))
+                        .children(match icone_proprio {
+                            Some(proprio) => Some(
+                                div()
+                                    .flex_none()
+                                    .size(window.rem_size() * (16. / 15.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child((proprio)(window, cx))
+                                    .into_any_element(),
+                            ),
+                            None => Self::render_icon(
+                                has_left_icon,
+                                is_left_check,
+                                icon.clone(),
+                                *danger,
+                                window,
+                                cx,
+                            )
+                            .map(IntoElement::into_any_element),
+                        })
                         .child(div().flex_1().min_w_0().child((render)(window, cx)))
                         .children(key.map(|key| teclas_do_item(key, cx).ml(z(24.))))
                         .children(right_check_icon),
@@ -1634,13 +1663,14 @@ impl PopupMenu {
 /// `debug_selector` "kbd:…" do `Kbd`, que os testes procuram.
 fn teclas_do_item(kbd: Kbd, cx: &App) -> gpui::Div {
     let atalho = kbd.keystroke().unparse(cx.platform_info().os);
-    div().flex_none().debug_selector(move || format!("kbd:{atalho}")).child(desenho_de_teclas(
-        kbd.partes(),
-        hsla(0., 0., 1., 0.08),
-        cx.theme().muted_foreground,
-        cx.theme().mono_font_family.clone(),
-        px(8.),
-    ))
+    // Vitral (Linear, 26/11/2026): o atalho em texto simples, apagado e menor, como o `.fim` do
+    // protótipo ("Ctrl ,"), e não em teclas com caixa.
+    div()
+        .flex_none()
+        .debug_selector(move || format!("kbd:{atalho}"))
+        .text_size(cx.theme().font_size * (11.5 / 15.))
+        .text_color(cx.theme().muted_foreground)
+        .child(kbd.partes().join(" "))
 }
 
 impl FluentBuilder for PopupMenu {}

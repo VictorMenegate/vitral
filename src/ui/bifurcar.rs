@@ -18,7 +18,7 @@ pub(super) fn botao(chave: &str, painel: u64, ix: usize, window: &Window, cx: &C
     botao_icone(
         SharedString::from(format!("bifurcar-{chave}")),
         Lucide::GitFork,
-        "Continuar daqui em outro chat\nAbre ao lado um chat novo com a conversa até este ponto; este fica como está",
+        tr!("Continuar daqui em outro chat\nAbre ao lado um chat novo com a conversa até este ponto; este fica como está"),
         TamanhoBotao::Linha,
         window,
         cx,
@@ -71,12 +71,12 @@ impl Janela {
             }
         }
         let como = if novo.com_sessao {
-            "o agente continua com o que viu até este ponto"
+            tr!("o agente continua com o que viu até este ponto")
         } else {
-            "o agente recebe as últimas mensagens como resumo"
+            tr!("o agente recebe as últimas mensagens como resumo")
         };
-        let onde = if ao_lado { "ao lado" } else { "numa aba (não cabia outro painel)" };
-        window.push_notification(aviso(Tom::Info, format!("Chat novo aberto {onde}: {como}.")), cx);
+        let onde = if ao_lado { tr!("ao lado") } else { tr!("numa aba (não cabia outro painel)") };
+        window.push_notification(aviso(Tom::Info, tr!("Chat novo aberto {onde}: {como}.", onde = onde, como = como)), cx);
         cx.notify();
     }
 }

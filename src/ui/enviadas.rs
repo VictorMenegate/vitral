@@ -39,11 +39,11 @@ enum Origem {
 }
 
 impl Origem {
-    fn titulo(self) -> &'static str {
+    fn titulo(self) -> SharedString {
         match self {
-            Origem::DesteChat => "Deste chat",
-            Origem::DestaPasta => "Desta pasta",
-            Origem::Outros => "Outros chats",
+            Origem::DesteChat => tr!("Deste chat"),
+            Origem::DestaPasta => tr!("Desta pasta"),
+            Origem::Outros => tr!("Outros chats"),
         }
     }
 }
@@ -79,7 +79,7 @@ fn enviadas(chats: &[Chat], aberto: Option<&str>, avulsos: &Path) -> Vec<Enviada
         } else {
             Origem::Outros
         };
-        let pasta = if sem_pasta(chat) { "Sem pasta".to_string() } else { nome_da_pasta(&chat.cwd) };
+        let pasta = if sem_pasta(chat) { tr!("Sem pasta").to_string() } else { nome_da_pasta(&chat.cwd) };
         for item in &chat.itens {
             let Item::Usuario { texto, em, .. } = item else {
                 continue;
@@ -153,7 +153,7 @@ fn grupos(lista: &[Enviada], busca: &str) -> Vec<GrupoDeEscolha> {
 }
 
 /// "↑ ↓ escolher": as teclas da lista e o que fazem, no rodapé.
-fn dica_teclas(teclas: &[&'static str], texto: &'static str) -> impl IntoElement {
+fn dica_teclas(teclas: &[&'static str], texto: impl Into<SharedString>) -> impl IntoElement {
     div()
         .flex()
         .items_center()
@@ -161,7 +161,7 @@ fn dica_teclas(teclas: &[&'static str], texto: &'static str) -> impl IntoElement
         .metadado()
         .text_color(Cores::tenue())
         .child(desenho_teclas(teclas.iter().map(|t| SharedString::from(*t)).collect()))
-        .child(texto)
+        .child(texto.into())
 }
 
 impl Janela {
@@ -176,7 +176,7 @@ impl Janela {
             Rc::new(enviadas(&m.chats, self.selecionado.as_deref(), &m.dados.pasta_avulso("")))
         };
         let vista = cx.new(|cx| {
-            let mut vista = ListaDeEscolha::new("Buscar nas suas mensagens", window, cx);
+            let mut vista = ListaDeEscolha::new(&tr!("Buscar nas suas mensagens"), window, cx);
             vista.em_dialogo();
             vista.definir(grupos(&lista, ""), None, cx);
             let filtro = lista.clone();
@@ -193,8 +193,8 @@ impl Janela {
                             .gap(r(12.))
                             .w_full()
                             .child(div().flex_1())
-                            .child(dica_teclas(&["↑", "↓"], "escolhe"))
-                            .child(dica_teclas(&["Enter"], "pôr na caixa")),
+                            .child(dica_teclas(&["↑", "↓"], tr!("escolhe")))
+                            .child(dica_teclas(&["Enter"], tr!("pôr na caixa"))),
                     )
                     .into_any_element()
             });
@@ -220,7 +220,7 @@ impl Janela {
         let no_dialogo = vista.clone();
         window.open_dialog(cx, move |dialogo, window, _| {
             moldura(dialogo, largura::G, window)
-                .title(topo(cabecalho("Suas mensagens", Some("De todos os chats, as mais recentes primeiro".into()))))
+                .title(topo(cabecalho(tr!("Suas mensagens"), Some(tr!("De todos os chats, as mais recentes primeiro").to_string()))))
                 .child(no_dialogo.clone())
                 .on_ok(|_, _, _| false)
         });

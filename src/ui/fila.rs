@@ -36,10 +36,10 @@ const LETRAS_DA_DICA: usize = 600;
 fn dica_da_linha(e: &Entrada) -> String {
     let mut partes = Vec::new();
     if let Some(de) = &e.de {
-        partes.push(format!("De: {de}"));
+        partes.push(tr!("De: {de}", de = de).to_string());
     }
     if !e.anexos.is_empty() {
-        partes.push(contagem(e.anexos.len(), "anexo", "anexos"));
+        partes.push(contagem(e.anexos.len(), &tr!("anexo"), &tr!("anexos")));
     }
     let texto = e.texto.trim();
     let texto = if texto.chars().count() > LETRAS_DA_DICA {
@@ -63,9 +63,9 @@ pub(super) fn previa(texto: &str) -> String {
 /// O que a pílula da faixa diz: com o turno rodando, só a contagem; parado, o que a fila é.
 pub(super) fn rotulo(n: usize, rodando: bool, estreita: bool) -> String {
     match (rodando, estreita) {
-        (true, _) => "na fila".to_string(),
-        (false, true) => contagem(n, "na fila", "na fila"),
-        (false, false) => contagem(n, "mensagem esperando na fila", "mensagens esperando na fila"),
+        (true, _) => tr!("na fila").to_string(),
+        (false, true) => contagem(n, &tr!("na fila"), &tr!("na fila")),
+        (false, false) => contagem(n, &tr!("mensagem esperando na fila"), &tr!("mensagens esperando na fila")),
     }
 }
 
@@ -83,9 +83,9 @@ impl Janela {
         cx: &Context<Self>,
     ) -> AnyElement {
         let dica: SharedString = if rodando {
-            "Ver a fila: o que você mandou enquanto o turno roda, e tirar o que não quer mais".into()
+            tr!("Ver a fila: o que você mandou enquanto o turno roda, e tirar o que não quer mais")
         } else {
-            "Ver a fila desta conversa e tirar o que não quer mais".into()
+            tr!("Ver a fila desta conversa e tirar o que não quer mais")
         };
         let gatilho = Button::new(("pilula-fila", painel as usize))
             .custom(variante_fantasma(cx))
@@ -132,9 +132,9 @@ impl Janela {
         };
         let juntou = self.devolver_a_caixa(painel, &chat, entrada, window, cx);
         let texto = if juntou {
-            "Tirei da fila e juntei ao que estava na caixa (Ctrl+Z desfaz a junção)."
+            tr!("Tirei da fila e juntei ao que estava na caixa (Ctrl+Z desfaz a junção).")
         } else {
-            "Tirei da fila; a mensagem voltou para a caixa."
+            tr!("Tirei da fila; a mensagem voltou para a caixa.")
         };
         window.push_notification(aviso(Tom::Info, texto), cx);
         cx.notify();
@@ -182,7 +182,7 @@ impl Janela {
             return false;
         };
         self.devolver_a_caixa(painel, chat, entrada, window, cx);
-        window.push_notification(aviso(Tom::Info, "Trouxe da fila a última mensagem; Ctrl+Enter a devolve à fila."), cx);
+        window.push_notification(aviso(Tom::Info, tr!("Trouxe da fila a última mensagem; Ctrl+Enter a devolve à fila.")), cx);
         true
     }
 
@@ -214,7 +214,7 @@ impl Janela {
             if !texto.trim().is_empty() {
                 let trocou = motor.update(cx, |m, cx| m.editar_na_fila(&edicao.chat, edicao.indice, &edicao.antes, &texto, cx));
                 if !trocou {
-                    window.push_notification(aviso(Tom::Atencao, "A fila andou enquanto você editava; nada foi mudado."), cx);
+                    window.push_notification(aviso(Tom::Atencao, tr!("A fila andou enquanto você editava; nada foi mudado.")), cx);
                 }
             }
         }
@@ -268,10 +268,10 @@ struct Linha {
 fn meta_da_linha(e: &Entrada) -> String {
     let mut partes = Vec::new();
     if let Some(de) = &e.de {
-        partes.push(format!("De: {de}"));
+        partes.push(tr!("De: {de}", de = de).to_string());
     }
     if !e.anexos.is_empty() {
-        partes.push(contagem(e.anexos.len(), "anexo", "anexos"));
+        partes.push(contagem(e.anexos.len(), &tr!("anexo"), &tr!("anexos")));
     }
     partes.join(" · ")
 }
@@ -315,30 +315,20 @@ fn corpo_da_fila(
         .collect();
     let fechar = janela.clone();
     let explicacao = if agora {
-        "Esperam este turno terminar e entram juntas no próximo. “Mandar agora” põe a mensagem dentro do turno que está rodando, sem pará-lo."
+        tr!("Esperam este turno terminar e entram juntas no próximo. “Mandar agora” põe a mensagem dentro do turno que está rodando, sem pará-lo.")
     } else if rodando {
-        "Entram juntas no próximo turno, quando este terminar."
+        tr!("Entram juntas no próximo turno, quando este terminar.")
     } else {
-        "Entram juntas na próxima mensagem, ou agora, no botão abaixo."
+        tr!("Entram juntas na próxima mensagem, ou agora, no botão abaixo.")
     };
-    // A explicação vai na dica do título: com 4 linhas embaixo, o cartão tomava quase metade do
-    // painel e cortava a 3ª mensagem (teste de usabilidade, 16/11/2026).
-    let cabecalho = h_flex().gap(esp::E8).items_center()
-        .child(super::mensagens::icone_de(Lucide::ListChecks, 16.).text_color(Cores::tenue()))
-        .child(
-            div()
-                .id(("titulo-da-fila", painel as usize))
-                .flex_1()
-                .corpo_ui()
-                .text_color(Cores::texto())
-                .child(format!("Fila · {}", contagem(total, "mensagem", "mensagens")))
-                .dica_no_ponteiro(move |window, cx| Tooltip::new(explicacao).build(window, cx)),
-        )
-        .child(botao_icone(("fechar-fila", painel as usize), Lucide::X, "Fechar a fila", TamanhoBotao::Linha, window, cx)
-            .on_click(move |_, _, cx| { let _ = fechar.update(cx, |j, cx| {
-                if let Some(p) = j.paineis.iter_mut().find(|p| p.id == painel) { p.fila_aberta = false; }
-                cx.notify();
-            }); }));
+    let fechar_fila = botao_icone(("fechar-fila", painel as usize), Lucide::X, tr!("Fechar a fila"), TamanhoBotao::Linha, window, cx).on_click(move |_, _, cx| {
+        let _ = fechar.update(cx, |j, cx| {
+            if let Some(p) = j.paineis.iter_mut().find(|p| p.id == painel) {
+                p.fila_aberta = false;
+            }
+            cx.notify();
+        });
+    });
     if linhas.is_empty() {
         return div().into_any_element();
     }
@@ -350,7 +340,7 @@ fn corpo_da_fila(
         // Uma por uma, na ordem da fila: cada mandada tira a primeira, e a seguinte vira a primeira.
         let (motor, chat) = (motor.clone(), chat.to_string());
         Some(
-            botao_fantasma("fila-mandar-todas", Some(Lucide::ArrowUp.into()), "Mandar todas agora", TamanhoBotao::Barra, window, cx).on_click(
+            botao_fantasma("fila-mandar-todas", Some(Lucide::ArrowUp.into()), tr!("Mandar todas agora"), TamanhoBotao::Linha, window, cx).on_click(
                 move |_, window, cx| {
                     let resultado = motor.update(cx, |m, cx| {
                         while let Some(indice) = m.fila_do_chat(&chat).first().map(|(i, _)| *i) {
@@ -367,7 +357,7 @@ fn corpo_da_fila(
     } else if !rodando {
         let (motor, chat) = (motor.clone(), chat.to_string());
         Some(
-            botao_fantasma("fila-entregar", Some(Lucide::Play.into()), "Entregar agora", TamanhoBotao::Barra, window, cx)
+            botao_fantasma("fila-entregar", Some(Lucide::Play.into()), tr!("Entregar agora"), TamanhoBotao::Linha, window, cx)
                 .on_click(move |_, _, cx| {
                     // Tudo entra já, as mensagens com hora marcada também.
                     motor.update(cx, |m, cx| m.entregar_fila_agora(&chat, cx));
@@ -376,28 +366,53 @@ fn corpo_da_fila(
     } else {
         None
     };
-    v_flex().w_full().min_w_0().gap(esp::E8).p(esp::E12).rounded(raio::CARTAO)
-        .border_1().border_color(Cores::borda()).bg(Cores::cartao_elevado())
+    // Linear (26/11/2026, dono: "melhora o design da fila"): chapado, sem a borda clara; o
+    // cabeçalho numa linha baixa, com o "Entregar agora" ao lado do ×, e uma linha por mensagem,
+    // com as ações aparecendo com o ponteiro. A explicação vai na dica do título.
+    let cabecalho = h_flex()
+        .h(r(28.))
+        .pl(esp::E4)
+        .gap(esp::E6)
+        .items_center()
+        .child(super::mensagens::icone_de(Lucide::TextAlignStart, 14.).text_color(Cores::tenue()))
+        .child(
+            h_flex()
+                .id(("titulo-da-fila", painel as usize))
+                .flex_1()
+                .min_w_0()
+                .gap(esp::E6)
+                .child(div().text_size(r(12.5)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::texto()).child(tr!("Fila")))
+                .child(div().metadado().text_color(Cores::tenue()).child(total.to_string()))
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(explicacao.clone()).build(window, cx)),
+        )
+        .children(entregar)
+        .child(fechar_fila);
+    v_flex()
+        .w_full()
+        .min_w_0()
+        .gap(esp::E2)
+        .p(esp::E6)
+        .rounded(raio::CARTAO)
+        .bg(Cores::flutuante())
         .child(cabecalho)
-        // Até umas três mensagens inteiras antes de rolar. A barra do kit (16) fica por cima da
-        // ponta direita e segura o clique: as linhas guardam o lugar dela, senão o × ficava
-        // debaixo da barra e não tirava a mensagem da fila (teste de usabilidade, 16/11/2026).
+        // Até umas oito mensagens antes de rolar. A barra do kit fica por cima da ponta direita e
+        // segura o clique: as linhas guardam o lugar dela, senão o × ficava debaixo da barra e não
+        // tirava a mensagem da fila (teste de usabilidade, 16/11/2026).
         .child(
             v_flex()
-                .gap(esp::E6)
-                .pr(esp::E16)
+                .gap(esp::E2)
+                .pr(esp::E8)
                 .children(desenhadas)
                 .max_h(r(260.))
                 .overflow_y_scrollbar()
                 .id(("fila-mensagens", painel as usize)),
         )
-        .when_some(entregar, |c, b| c.child(h_flex().justify_end().child(b)))
         .into_any_element()
 }
 
-/// Uma mensagem da fila, num cartão de dois andares: em cima o lugar na ordem e o começo do texto
-/// (até duas linhas; o resto na dica); embaixo o que ela leva junto e as ações. Com as ações todas
-/// ao lado do texto sobravam umas vinte letras dele (dono, 13/11/2026: "melhora essa parte").
+/// Uma mensagem da fila, numa linha (26/11/2026): o lugar na ordem, o começo do texto (o resto na
+/// dica), o que ela leva junto e, com o ponteiro, as ações. Antes eram dois andares, com as ações
+/// sempre à mostra (13/11/2026); com elas só no ponteiro, o texto tem a linha inteira.
 #[allow(clippy::too_many_arguments)]
 fn linha_da_fila(
     motor: &Entity<Motor>,
@@ -421,10 +436,10 @@ fn linha_da_fila(
         // Fora do painel largo, só a seta: com o rótulo a fileira não cabia em ~340 e o × saía
         // cortado na borda.
         if larga {
-            botao_fantasma(("mandar-da-fila", indice), Some(Lucide::ArrowUp.into()), "Mandar agora", TamanhoBotao::Linha, window, cx)
-                .tooltip("Entra no turno que está rodando, sem pará-lo")
+            botao_fantasma(("mandar-da-fila", indice), Some(Lucide::ArrowUp.into()), tr!("Mandar agora"), TamanhoBotao::Linha, window, cx)
+                .tooltip(tr!("Entra no turno que está rodando, sem pará-lo"))
         } else {
-            botao_icone(("mandar-da-fila", indice), Lucide::ArrowUp, "Mandar agora\nEntra no turno que está rodando, sem pará-lo", TamanhoBotao::Linha, window, cx)
+            botao_icone(("mandar-da-fila", indice), Lucide::ArrowUp, tr!("Mandar agora\nEntra no turno que está rodando, sem pará-lo"), TamanhoBotao::Linha, window, cx)
         }
             .on_click(move |_, window, cx| {
                 if let Err(motivo) = motor.update(cx, |m, cx| m.mandar_da_fila_agora(&chat, indice, cx)) {
@@ -437,7 +452,7 @@ fn linha_da_fila(
         botao_icone(
             ("editar-da-fila", indice),
             Lucide::Pencil,
-            if do_usuario { "Editar esta mensagem" } else { "Só as suas mensagens podem ser editadas" },
+            if do_usuario { tr!("Editar esta mensagem") } else { tr!("Só as suas mensagens podem ser editadas") },
             TamanhoBotao::Linha,
             window,
             cx,
@@ -449,10 +464,10 @@ fn linha_da_fila(
     };
     // Com uma mensagem só não há ordem para mudar.
     let ordem = (!(primeira && ultima)).then(|| {
-        let subir = botao_icone(("subir-na-fila", indice), Lucide::MoveUp, "Subir na fila: entra antes da de cima", TamanhoBotao::Linha, window, cx)
+        let subir = botao_icone(("subir-na-fila", indice), Lucide::MoveUp, tr!("Subir na fila: entra antes da de cima"), TamanhoBotao::Linha, window, cx)
             .when(primeira, |b| b.disabled(true).opacity(0.45))
             .on_click(mover(false));
-        let descer = botao_icone(("descer-na-fila", indice), Lucide::MoveDown, "Descer na fila: entra depois da de baixo", TamanhoBotao::Linha, window, cx)
+        let descer = botao_icone(("descer-na-fila", indice), Lucide::MoveDown, tr!("Descer na fila: entra depois da de baixo"), TamanhoBotao::Linha, window, cx)
             .when(ultima, |b| b.disabled(true).opacity(0.45))
             .on_click(mover(true));
         h_flex().child(subir).child(descer)
@@ -462,7 +477,7 @@ fn linha_da_fila(
         botao_icone(
             ("tirar-da-fila", indice),
             Lucide::X,
-            "Tirar da fila (o texto volta para a caixa, se ela estiver vazia)",
+            tr!("Tirar da fila (o texto volta para a caixa, se ela estiver vazia)"),
             TamanhoBotao::Linha,
             window,
             cx,
@@ -471,79 +486,86 @@ fn linha_da_fila(
             let _ = janela.update(cx, |this, cx| this.tirar_da_fila(chat.clone(), indice, painel, window, cx));
         })
     };
-    v_flex()
+    let numero = div()
+        .flex_none()
+        .w(r(14.))
+        .metadado()
+        .text_color(Cores::apagado())
+        .child((posicao + 1).to_string());
+    let grupo = SharedString::from(format!("linha-da-fila-{indice}"));
+    // Editando no lugar: o campo ocupa a linha, com o Ctrl+Enter salvando e o Esc desistindo (o
+    // Enter quebra a linha).
+    if let Some(campo) = edicao {
+        let (salvar, desistir) = (janela.clone(), janela.clone());
+        return h_flex()
+            .id(("linha-da-fila", indice))
+            .items_start()
+            .gap(esp::E8)
+            .px(esp::E8)
+            .py(esp::E6)
+            .rounded(raio::CONTROLE)
+            .bg(Cores::hover())
+            .child(numero.pt(esp::E2))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    // O Ctrl+Enter do campo vira a ação Enter{secondary} do kit, que é despachada
+                    // antes das teclas e quebraria a linha: ela é pega aqui, na captura, antes do
+                    // campo (conferência na bancada, 16/11/2026).
+                    .capture_action(move |acao: &Enter, window, cx| {
+                        if acao.secondary {
+                            cx.stop_propagation();
+                            let _ = salvar.update(cx, |this, cx| this.fechar_edicao_da_fila(true, window, cx));
+                        }
+                    })
+                    .capture_key_down(move |ev: &KeyDownEvent, window, cx| {
+                        if ev.keystroke.key == "escape" {
+                            cx.stop_propagation();
+                            let _ = desistir.update(cx, |this, cx| this.fechar_edicao_da_fila(false, window, cx));
+                        }
+                    })
+                    .child(Textarea::new(&campo))
+                    .child(div().pt(esp::E4).metadado().text_color(Cores::apagado()).child(tr!("Ctrl+Enter salva · Esc desiste"))),
+            )
+            .into_any_element();
+    }
+    // Uma linha só: o lugar na ordem, o começo do texto (o resto na dica), o que ela leva junto e,
+    // com o ponteiro, as ações.
+    h_flex()
         .id(("linha-da-fila", indice))
-        .gap(esp::E4)
+        .group(grupo.clone())
+        .min_h(r(30.))
+        .gap(esp::E8)
         .px(esp::E8)
-        .pt(esp::E8)
-        .pb(esp::E4)
         .rounded(raio::CONTROLE)
-        .bg(Cores::recuo())
+        .hover(|s| s.bg(Cores::hover()))
+        .child(numero)
         .child(
-            h_flex()
-                .items_start()
-                .gap(esp::E8)
-                .child(
-                    div()
-                        .flex_none()
-                        .size(r(16.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(raio::CONTROLE)
-                        .bg(Cores::hover())
-                        .micro()
-                        .text_color(Cores::tenue())
-                        .child((posicao + 1).to_string()),
-                )
-                .child(match edicao {
-                    // Editando no lugar: Ctrl+Enter salva e Esc desiste (o Enter quebra a linha).
-                    Some(campo) => {
-                        let (salvar, desistir) = (janela.clone(), janela.clone());
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            // O Ctrl+Enter do campo vira a ação Enter{secondary} do kit, que é
-                            // despachada antes das teclas e quebraria a linha: ela é pega aqui, na
-                            // captura, antes do campo (conferência na bancada, 16/11/2026).
-                            .capture_action(move |acao: &Enter, window, cx| {
-                                if acao.secondary {
-                                    cx.stop_propagation();
-                                    let _ = salvar.update(cx, |this, cx| this.fechar_edicao_da_fila(true, window, cx));
-                                }
-                            })
-                            .capture_key_down(move |ev: &KeyDownEvent, window, cx| {
-                                if ev.keystroke.key == "escape" {
-                                    cx.stop_propagation();
-                                    let _ = desistir.update(cx, |this, cx| this.fechar_edicao_da_fila(false, window, cx));
-                                }
-                            })
-                            .child(Textarea::new(&campo))
-                            .child(div().pt(esp::E4).metadado().text_color(Cores::apagado()).child("Ctrl+Enter salva · Esc desiste"))
-                            .into_any_element()
-                    }
-                    None => div()
-                        .id(("texto-da-fila", indice))
-                        .flex_1()
-                        .min_w_0()
-                        .line_clamp(2)
-                        .corpo_ui()
-                        .text_color(if do_usuario { Cores::texto() } else { Cores::tenue() })
-                        .child(previa)
-                        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
-                        .into_any_element(),
-                }),
+            div()
+                .id(("texto-da-fila", indice))
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_size(r(13.))
+                .line_height(r(18.))
+                .text_color(if do_usuario { Cores::texto() } else { Cores::tenue() })
+                .child(previa)
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
         )
+        // A hora marcada, num selo com o relógio, e o que ela leva (quem mandou, os anexos).
+        .children(agendada.map(|hora| Selo::neutro(hora).icone(Lucide::Clock, Cores::tenue())))
+        .when(!meta.is_empty(), |s| s.child(div().flex_none().max_w(r(160.)).truncate().metadado().text_color(Cores::apagado()).child(meta)))
         .child(
             h_flex()
-                .gap(esp::E4)
-                // Na coluna do texto, depois do número.
-                .pl(esp::E24)
-                // A hora marcada, num selo com o relógio, antes do resto.
-                .children(agendada.map(|hora| Selo::neutro(hora).icone(Lucide::Clock, Cores::tenue())))
-                .child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::apagado()).child(meta))
-                // Os botões não encolhem: quem corta é a meta.
-                .child(h_flex().flex_none().gap(esp::E4).children(mandar).child(editar).children(ordem).child(tirar)),
+                .flex_none()
+                .gap(esp::E2)
+                .invisible()
+                .group_hover(grupo, |s| s.visible())
+                .children(mandar)
+                .child(editar)
+                .children(ordem)
+                .child(tirar),
         )
         .into_any_element()
 }

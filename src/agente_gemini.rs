@@ -34,6 +34,7 @@ use serde_json::{Value, json};
 
 use crate::{
     claude::{Evento, Opcoes},
+    modelo::Agente,
     mcp::Resposta,
     processos,
 };
@@ -127,6 +128,37 @@ static MODELOS: Mutex<Vec<ModeloDoGemini>> = Mutex::new(Vec::new());
 
 pub fn modelos() -> Vec<ModeloDoGemini> {
     MODELOS.lock().map(|m| m.clone()).unwrap_or_default()
+}
+
+/// Os modelos que a última sessão de cada agente ACP novo ofereceu (a opção `model` das
+/// `configOptions`; vazio até a primeira conversa com ele).
+static MODELOS_ACP: Mutex<Vec<(Agente, Vec<ModeloDoGemini>)>> = Mutex::new(Vec::new());
+
+/// Os modelos de um agente ACP: os do agy no Gemini, os da última sessão nos outros.
+pub fn modelos_de(agente: Agente) -> Vec<ModeloDoGemini> {
+    if agente == Agente::Gemini {
+        return modelos();
+    }
+    MODELOS_ACP.lock().ok().and_then(|m| m.iter().find(|(a, _)| *a == agente).map(|(_, l)| l.clone())).unwrap_or_default()
+}
+
+/// O nome de mostrar de um modelo de um agente ACP; sem a lista, o próprio valor.
+pub fn nome_do_modelo_de(agente: Agente, valor: &str) -> String {
+    modelos_de(agente).into_iter().find(|m| m.valor == valor).map_or_else(|| valor.to_string(), |m| m.nome)
+}
+
+fn guardar_modelos_de(agente: Agente, novos: Vec<ModeloDoGemini>) {
+    if agente == Agente::Gemini {
+        guardar_modelos(novos);
+        return;
+    }
+    if novos.is_empty() {
+        return;
+    }
+    if let Ok(mut guardados) = MODELOS_ACP.lock() {
+        guardados.retain(|(a, _)| *a != agente);
+        guardados.push((agente, novos));
+    }
 }
 
 /// O nome de mostrar de um modelo do Gemini; sem a lista, o próprio valor.
@@ -223,7 +255,9 @@ fn modelos_das_opcoes(opcoes: &Value) -> Vec<ModeloDoGemini> {
 }
 
 fn opcao<'a>(opcoes: &'a Value, id: &str) -> Option<&'a Value> {
-    opcoes.as_array()?.iter().find(|o| o["id"] == id)
+    // O id do agy é o nome da categoria; nos outros, a `category` do ACP é o que vale.
+    let lista = opcoes.as_array()?;
+    lista.iter().find(|o| o["id"] == id).or_else(|| lista.iter().find(|o| o["category"] == id))
 }
 
 /// A opção `id` aceita `valor` e ainda não está nele.
@@ -344,6 +378,24 @@ impl Canal {
 
 pub struct Protocolo {
     canal: Arc<Mutex<Canal>>,
+    /// Quem é o agente: o Gemini (o agy) ou um ACP novo (`agente_acp`), que muda o nome nos avisos,
+    /// o jeito do prompt de sistema e o da retomada.
+    agente: Agente,
+    /// O `initialize` disse que dá para retomar (`sessionCapabilities.resume`) ou carregar
+    /// (`agentCapabilities.loadSession`) uma conversa guardada.
+    pode_resume: bool,
+    pode_load: bool,
+    /// No Sem perguntar de um agente sem a opção própria para isso, o Vitral aprova cada pedido
+    /// sozinho (o mesmo que a opção faria).
+    aprova_sozinho: bool,
+    /// Os jeitos de entrar que o `initialize` ofereceu (`authMethods`): o Cursor pede o
+    /// `authenticate` com um deles antes da sessão, mesmo já com o login feito no terminal.
+    autenticacao: Option<String>,
+    /// O `authenticate` já foi tentado nesta abertura (uma vez só).
+    autenticou: bool,
+    /// O esforço do Vitral como veio ("xhigh", "max"): os ACP novos que o oferecem o recebem
+    /// direto, sem passar pelos três níveis do agy.
+    esforco_cru: Option<String>,
     cwd: PathBuf,
     retomar: Option<String>,
     modelo: Option<String>,
@@ -369,6 +421,14 @@ impl Protocolo {
     pub fn novo(canal: Arc<Mutex<Canal>>, opcoes: &Opcoes, texto: &str, imagens: &[PathBuf]) -> Self {
         Self {
             canal,
+            agente: opcoes.agente,
+            pode_resume: opcoes.agente == Agente::Gemini,
+            pode_load: false,
+            aprova_sozinho: opcoes.permissao == "bypassPermissions"
+                && crate::agente_acp::perfil(opcoes.agente).is_some_and(|p| p.sem_perguntar.is_empty()),
+            autenticacao: None,
+            autenticou: false,
+            esforco_cru: opcoes.esforco.clone().filter(|e| !e.is_empty()),
             cwd: opcoes.cwd.clone(),
             retomar: (opcoes.retomar && !opcoes.sessao.is_empty()).then(|| opcoes.sessao.clone()),
             modelo: opcoes.modelo.clone().filter(|m| !m.trim().is_empty()),
@@ -417,6 +477,11 @@ impl Protocolo {
         // Um pedido do agente: a permissão vai para o cartão do Vitral; o resto ele não oferece.
         if let (Some(id), Some(metodo)) = (v.get("id"), v["method"].as_str()) {
             if metodo == "session/request_permission" {
+                if self.aprova_sozinho {
+                    let permitir = opcao_de_permissao(&v["params"], &["allow_always", "allow_once"], "allow");
+                    let mut canal = self.canal.lock().unwrap_or_else(|e| e.into_inner());
+                    return canal.escrever(json!({"jsonrpc": "2.0", "id": id, "result": {"outcome": {"outcome": "selected", "optionId": permitir}}}));
+                }
                 eventos.push(self.pedido_de_permissao(id.clone(), &v["params"]));
                 return Ok(());
             }
@@ -448,20 +513,49 @@ impl Protocolo {
 
     fn resposta(&mut self, id: &str, v: &Value, eventos: &mut Vec<Evento>) -> io::Result<()> {
         let erro = v.get("error").map(|e| e["message"].as_str().unwrap_or("Pedido recusado").to_string());
-        let mut canal = self.canal.lock().unwrap_or_else(|e| e.into_inner());
+        // O canal por uma cópia do `Arc`: abrir a sessão também mexe no protocolo.
+        let canal_compartilhado = self.canal.clone();
+        let mut canal = canal_compartilhado.lock().unwrap_or_else(|e| e.into_inner());
         match id {
             "vitral-init" => {
+                let nome = self.agente.nome();
                 if let Some(erro) = erro {
-                    return Err(io::Error::other(format!("O Gemini não abriu: {erro}")));
+                    return Err(io::Error::other(format!("O {nome} não abriu: {erro}")));
+                }
+                // Os ACP novos dizem no `initialize` se retomam a conversa guardada.
+                if self.agente != Agente::Gemini {
+                    let capacidades = &v["result"]["agentCapabilities"];
+                    self.pode_load = capacidades["loadSession"].as_bool().unwrap_or(false);
+                    self.pode_resume = !capacidades["sessionCapabilities"]["resume"].is_null();
+                    self.autenticacao = v["result"]["authMethods"][0]["id"].as_str().map(str::to_string);
+                }
+                self.abrir_sessao(&mut canal)
+            }
+            "vitral-auth" => {
+                // Recusado: o login no terminal ainda falta.
+                if erro.is_some() {
+                    return Err(io::Error::other(format!(
+                        "O {} pede login (Authentication required). Entre com `{}`.",
+                        self.agente.nome(),
+                        login_sugerido_de(self.agente)
+                    )));
                 }
                 self.abrir_sessao(&mut canal)
             }
             "vitral-sessao" => {
                 if let Some(erro) = erro {
-                    if erro.contains("uthentication") {
+                    let nome = self.agente.nome();
+                    let pede_login = erro.contains("uthentication") || erro.to_lowercase().contains("auth required") || erro.contains("-32000");
+                    // Um ACP novo que oferece o `authenticate` (o Cursor): tenta uma vez antes de
+                    // dizer que falta o login; o login feito no terminal vale por ele.
+                    if pede_login && !self.autenticou && let Some(metodo) = self.autenticacao.clone() {
+                        self.autenticou = true;
+                        return canal.pedir("vitral-auth", "authenticate", json!({"methodId": metodo}));
+                    }
+                    if pede_login {
                         return Err(io::Error::other(format!(
-                            "O Gemini pede login (Authentication required). Entre com `{}`.",
-                            login_sugerido()
+                            "O {nome} pede login (Authentication required). Entre com `{}`.",
+                            login_sugerido_de(self.agente)
                         )));
                     }
                     // A conversa que o agy não tem mais (apagada, ou de outra conta) não deixa o
@@ -469,37 +563,47 @@ impl Protocolo {
                     if self.retomar.take().is_some() {
                         return self.abrir_sessao(&mut canal);
                     }
-                    return Err(io::Error::other(format!("O Gemini não abriu a conversa: {erro}")));
+                    return Err(io::Error::other(format!("O {nome} não abriu a conversa: {erro}")));
                 }
                 let resultado = &v["result"];
                 let sessao = resultado["sessionId"].as_str().map(str::to_string).or_else(|| self.retomar.clone()).unwrap_or_default();
                 if sessao.is_empty() {
-                    return Err(io::Error::other("O Gemini não devolveu a conversa."));
+                    return Err(io::Error::other(format!("O {} não devolveu a conversa.", self.agente.nome())));
                 }
                 canal.sessao = sessao.clone();
                 eventos.push(Evento::Sessao(sessao.clone()));
                 let opcoes = &resultado["configOptions"];
-                guardar_modelos(modelos_das_opcoes(opcoes));
+                guardar_modelos_de(self.agente, modelos_das_opcoes(opcoes));
                 let atual = opcao(opcoes, "model").and_then(|o| o["currentValue"].as_str()).unwrap_or_default().to_string();
                 let mut mudar: Vec<(&str, String)> = Vec::new();
                 if let Some(modelo) = self.modelo.clone().filter(|m| precisa_mudar(opcoes, "model", m)) {
                     mudar.push(("model", modelo));
                 }
-                if let Some(nivel) = self.nivel.filter(|n| precisa_mudar(opcoes, "thought_level", n)) {
-                    mudar.push(("thought_level", nivel.to_string()));
+                // O esforço como veio, quando o agente o oferece (o OpenCode tem de low a max); senão
+                // os três níveis do agy.
+                let esforco = self
+                    .esforco_cru
+                    .clone()
+                    .filter(|e| self.agente != Agente::Gemini && precisa_mudar(opcoes, "thought_level", e))
+                    .or_else(|| self.nivel.filter(|n| precisa_mudar(opcoes, "thought_level", n)).map(str::to_string));
+                if let Some(nivel) = esforco {
+                    mudar.push(("thought_level", nivel));
                 }
                 if precisa_mudar(opcoes, "mode", self.modo) {
                     mudar.push(("mode", self.modo.to_string()));
                 }
                 let modelo = mudar.iter().find(|(id, _)| *id == "model").map_or(atual, |(_, m)| m.clone());
-                self.nome_do_modelo = nome_do_modelo(&modelo);
+                self.nome_do_modelo = nome_do_modelo_de(self.agente, &modelo);
                 eventos.push(Evento::Inicio { modelo: self.nome_do_modelo.clone(), comandos: Vec::new(), versao: None, fluxos: None });
                 self.configurando = mudar.len();
-                for (opcao, valor) in mudar {
+                for (categoria, valor) in mudar {
+                    // O id de verdade da opção (o OpenCode chama o esforço de "effort", na categoria
+                    // `thought_level`).
+                    let id = opcao(opcoes, categoria).and_then(|o| o["id"].as_str()).unwrap_or(categoria).to_string();
                     canal.pedir(
-                        &format!("vitral-cfg-{opcao}"),
+                        &format!("vitral-cfg-{categoria}"),
                         "session/set_config_option",
-                        json!({"sessionId": sessao, "configId": opcao, "value": valor}),
+                        json!({"sessionId": sessao, "configId": id, "value": valor}),
                     )?;
                 }
                 if self.configurando == 0 {
@@ -540,18 +644,29 @@ impl Protocolo {
         }
     }
 
-    /// O `session/new`, ou o `session/resume` da conversa guardada, com o prompt de sistema.
-    fn abrir_sessao(&self, canal: &mut Canal) -> io::Result<()> {
+    /// O `session/new`, ou o `session/resume` (ou o `session/load`) da conversa guardada, com o
+    /// prompt de sistema. Só o agy aceita o prompt de sistema pelo `_meta`; os outros o recebem
+    /// na frente do primeiro pedido da conversa nova.
+    fn abrir_sessao(&mut self, canal: &mut Canal) -> io::Result<()> {
         let mut parametros = json!({"cwd": self.cwd, "mcpServers": []});
-        if !self.sistema.is_empty() {
+        let por_meta = self.agente == Agente::Gemini;
+        if !self.sistema.is_empty() && por_meta {
             parametros["_meta"] = json!({"antigravity": {"systemPrompt": {"append": self.sistema}}});
         }
         let metodo = match &self.retomar {
-            Some(sessao) => {
+            Some(sessao) if self.pode_resume || self.pode_load => {
                 parametros["sessionId"] = json!(sessao);
-                "session/resume"
+                if self.pode_resume { "session/resume" } else { "session/load" }
             }
-            None => "session/new",
+            _ => {
+                // Sem retomar: a conversa é nova, e o prompt de sistema vai na frente do pedido.
+                self.retomar = None;
+                if !self.sistema.is_empty() && !por_meta {
+                    let sistema = std::mem::take(&mut self.sistema);
+                    self.inicial.insert(0, json!({"type": "text", "text": format!("<instrucoes-do-vitral>\n{sistema}\n</instrucoes-do-vitral>")}));
+                }
+                "session/new"
+            }
         };
         canal.pedir("vitral-sessao", metodo, parametros)
     }
@@ -655,9 +770,25 @@ impl Protocolo {
     }
 }
 
+/// A opção de um pedido de permissão pelo tipo (`allow_once`, `reject_once`...), nunca pelo id,
+/// que cada agente escolhe; sem nenhuma do tipo, `padrao`.
+fn opcao_de_permissao(pedido: &Value, tipos: &[&str], padrao: &str) -> String {
+    let opcoes = pedido["options"].as_array().cloned().unwrap_or_default();
+    tipos
+        .iter()
+        .find_map(|tipo| opcoes.iter().find(|o| o["kind"] == *tipo).and_then(|o| o["optionId"].as_str()))
+        .unwrap_or(padrao)
+        .to_string()
+}
+
 /// O comando de login a sugerir quando o agy pede.
 pub fn login_sugerido() -> &'static str {
     "agy acp --login"
+}
+
+/// O comando de login de cada agente ACP.
+pub fn login_sugerido_de(agente: Agente) -> &'static str {
+    crate::agente_acp::perfil(agente).map_or_else(login_sugerido, |p| p.login)
 }
 
 /// Os tokens de uma resposta do `session/prompt` (o `inputTokens` do agy já vem sem o cache).
@@ -700,6 +831,7 @@ fn ferramenta_do_agy(chamada: &Value) -> (String, Value) {
             "Edit".into(),
             json!({"file_path": caminho(), "old_string": campo("Target"), "new_string": campo("Replacement")}),
         ),
+        "" if let Some(pelo_tipo) = ferramenta_pelo_tipo(chamada) => pelo_tipo,
         outro => {
             let nome = if outro.is_empty() { chamada["kind"].as_str().unwrap_or("ferramenta") } else { outro };
             let mut entrada = if args.is_object() { args.clone() } else { json!({}) };
@@ -709,6 +841,39 @@ fn ferramenta_do_agy(chamada: &Value) -> (String, Value) {
             (nome.to_string(), entrada)
         }
     }
+}
+
+/// A chamada de um agente ACP sem nome próprio de ferramenta (os novos: o ACP só manda o `kind`,
+/// o título, os lugares e a entrada crua) no formato das do Claude Code: ler, editar, rodar,
+/// buscar e baixar viram Read, Edit ou Write, Bash, Grep e WebFetch.
+fn ferramenta_pelo_tipo(chamada: &Value) -> Option<(String, Value)> {
+    let cru = &chamada["rawInput"];
+    let texto = |chaves: &[&str]| chaves.iter().find_map(|c| cru[*c].as_str().filter(|t| !t.is_empty()).map(str::to_string));
+    let titulo = chamada["title"].as_str().unwrap_or_default().to_string();
+    let caminho = chamada["locations"][0]["path"].as_str().map(str::to_string).or_else(|| texto(&["path", "file_path", "filePath", "filename"])).unwrap_or_default();
+    let diff = chamada["content"].as_array().and_then(|c| c.iter().find(|p| p["type"] == "diff")).cloned();
+    Some(match chamada["kind"].as_str()? {
+        "read" => ("Read".into(), json!({"file_path": caminho})),
+        "edit" => match diff {
+            Some(d) if d["oldText"].is_string() => (
+                "Edit".into(),
+                json!({"file_path": d["path"].as_str().map_or(caminho.clone(), str::to_string), "old_string": d["oldText"], "new_string": d["newText"]}),
+            ),
+            Some(d) => ("Write".into(), json!({"file_path": d["path"].as_str().map_or(caminho.clone(), str::to_string), "content": d["newText"]})),
+            None => ("Edit".into(), json!({"file_path": caminho, "description": titulo})),
+        },
+        "execute" => {
+            let comando = match &cru["command"] {
+                Value::Array(partes) => partes.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" "),
+                Value::String(c) => c.clone(),
+                _ => titulo.clone(),
+            };
+            ("Bash".into(), json!({"command": comando, "description": titulo}))
+        }
+        "search" => ("Grep".into(), json!({"pattern": texto(&["pattern", "query", "regex"]).unwrap_or(titulo)})),
+        "fetch" => ("WebFetch".into(), json!({"url": texto(&["url", "uri"]).unwrap_or(titulo)})),
+        _ => return None,
+    })
 }
 
 /// O que a chamada devolveu (o texto, ou o que mudou num arquivo) e se o comando saiu com erro.
@@ -874,6 +1039,7 @@ mod testes {
             esforco: Some("xhigh".into()),
             ultracode: false,
             pasta_conta: None,
+            ambiente_codex: Vec::new(),
             memoria_nativa: false,
             sugestoes: false,
             mcp_da_equipe: None,
@@ -905,6 +1071,46 @@ mod testes {
             eventos.extend(p.linha(&json!({"jsonrpc": "2.0", "id": format!("vitral-cfg-{opcao}"), "result": {}})));
         }
         (p, canal, g, eventos)
+    }
+
+    /// Um agente ACP novo (o Kimi): sem o `_meta` do agy, o prompt de sistema vai na frente do
+    /// primeiro pedido; a conversa guardada volta pelo `session/load` quando o `initialize` diz
+    /// que dá; as ferramentas sem nome viram as do Claude Code pelo `kind`; e no Sem perguntar o
+    /// Vitral aprova o pedido sozinho, sem cartão (26/11/2026).
+    #[test]
+    fn agente_acp_novo_usa_o_padrao_do_acp() {
+        use crate::modelo::Agente;
+        let g = Gravador(Arc::default());
+        let canal = Arc::new(Mutex::new(Canal::novo(Box::new(g.clone()))));
+        let opcoes_kimi = Opcoes { agente: Agente::Kimi, permissao: "bypassPermissions".into(), ..opcoes(false) };
+        let mut p = Protocolo::novo(canal.clone(), &opcoes_kimi, "pedido", &[]);
+        p.iniciar().unwrap();
+        p.linha(&json!({"jsonrpc": "2.0", "id": "vitral-init", "result": {"protocolVersion": 1, "agentCapabilities": {"loadSession": true}}}));
+        let enviados = pedidos(&g);
+        assert_eq!(enviados[1]["method"], "session/new");
+        assert!(enviados[1]["params"]["_meta"].is_null(), "o _meta é só do agy");
+        p.linha(&json!({"jsonrpc": "2.0", "id": "vitral-sessao", "result": {"sessionId": "k1"}}));
+        let prompt = pedidos(&g).into_iter().find(|v| v["method"] == "session/prompt").expect("prompt");
+        assert!(prompt["params"]["prompt"][0]["text"].as_str().unwrap().contains("Regras do Vitral."));
+        assert_eq!(prompt["params"]["prompt"][1]["text"], "pedido");
+        // Uma ferramenta pelo kind, e a permissão aprovada sozinha.
+        let eventos = p.linha(&json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "k1", "update": {
+            "sessionUpdate": "tool_call", "toolCallId": "t1", "kind": "execute", "title": "Rodar testes", "rawInput": {"command": "cargo test"}, "status": "in_progress"}}}));
+        assert!(eventos.iter().any(|e| matches!(e, Evento::Ferramenta { nome, entrada, .. } if nome == "Bash" && entrada["command"] == "cargo test")));
+        let eventos = p.linha(&json!({"jsonrpc": "2.0", "id": 9, "method": "session/request_permission", "params": {"sessionId": "k1",
+            "toolCall": {"toolCallId": "t1", "kind": "execute"}, "options": [{"optionId": "nao", "kind": "reject_once"}, {"optionId": "sim", "kind": "allow_once"}]}}));
+        assert!(eventos.is_empty(), "sem cartão no Sem perguntar");
+        let resposta = pedidos(&g).into_iter().rev().find(|v| v["id"] == 9).expect("resposta");
+        assert_eq!(resposta["result"]["outcome"]["optionId"], "sim");
+        // Retomar: pelo session/load.
+        let g = Gravador(Arc::default());
+        let canal = Arc::new(Mutex::new(Canal::novo(Box::new(g.clone()))));
+        let mut p = Protocolo::novo(canal, &Opcoes { agente: Agente::Kimi, ..opcoes(true) }, "pedido", &[]);
+        p.iniciar().unwrap();
+        p.linha(&json!({"jsonrpc": "2.0", "id": "vitral-init", "result": {"protocolVersion": 1, "agentCapabilities": {"loadSession": true}}}));
+        let sessao = pedidos(&g).into_iter().find(|v| v["id"] == "vitral-sessao").expect("sessão");
+        assert_eq!(sessao["method"], "session/load");
+        assert_eq!(sessao["params"]["sessionId"], "sessao-velha");
     }
 
     #[test]

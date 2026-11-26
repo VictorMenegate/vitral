@@ -27,6 +27,11 @@ impl Grupo {
     /// Na ordem em que as seções aparecem.
     pub const TODOS: [Grupo; 4] = [Grupo::Conversa, Grupo::Lista, Grupo::Paineis, Grupo::Janela];
 
+    /// O título na língua de agora.
+    pub fn nome(self) -> SharedString {
+        SharedString::from(crate::i18n::traduzir(self.titulo()))
+    }
+
     pub fn titulo(self) -> &'static str {
         match self {
             Grupo::Conversa => "Na conversa",
@@ -156,7 +161,7 @@ tabela! {
     "ctrl-b", super::AlternarLista, Some("Vitral && !PaginaMd"), Grupo::Lista, "Mostrar a lista", "";
     "ctrl-g", super::ProximaPendencia, None, Grupo::Lista, "Ir à próxima pendência (dá a volta)", "";
     "ctrl-shift-g", super::PendenciaAnterior, None, Grupo::Lista, "Ir à pendência anterior", "";
-    "ctrl-i", super::AbrirQuadroDeIdeias, Some("Vitral && !PaginaMd"), Grupo::Lista, "Quadro de ideias", "";
+    "ctrl-i", super::AbrirQuadroDeIdeias, Some("Vitral && !PaginaMd"), Grupo::Lista, "Tarefas", "";
 
     // ---------- painéis ----------
     "ctrl-j", super::AlternarPainel, None, Grupo::Paineis, "Mostrar ou fechar o painel da direita", "";
@@ -276,8 +281,8 @@ pub fn abrir(window: &mut Window, cx: &mut App) {
             .collect();
         super::dialogos::moldura(dialogo, largura_do_dialogo, window)
             .title(super::dialogos::topo(
-                CabecalhoDialogo::new("Atalhos do teclado")
-                    .subtitulo(div().font_weight(FontWeight::NORMAL).child("Com o foco fora de um campo de texto, ? abre esta lista")),
+                CabecalhoDialogo::new(tr!("Atalhos do teclado"))
+                    .subtitulo(div().font_weight(FontWeight::NORMAL).child(tr!("Com o foco fora de um campo de texto, ? abre esta lista"))),
             ))
             .child(
                 div()
@@ -318,7 +323,7 @@ fn secao(grupo: Grupo, linhas: Vec<(Vec<SharedString>, &'static str)>) -> AnyEle
                 .text_size(r(12.))
                 .font_semibold()
                 .text_color(Cores::tenue())
-                .child(grupo.titulo()),
+                .child(grupo.nome()),
         )
         .children(linhas.into_iter().map(|(teclas, rotulo)| {
             div()
@@ -328,7 +333,7 @@ fn secao(grupo: Grupo, linhas: Vec<(Vec<SharedString>, &'static str)>) -> AnyEle
                 .min_h(r(26.))
                 .px(esp::E4)
                 .rounded(raio::CONTROLE)
-                .child(div().flex_1().min_w_0().corpo_ui().text_color(Cores::texto()).child(rotulo))
+                .child(div().flex_1().min_w_0().corpo_ui().text_color(Cores::texto()).child(SharedString::from(crate::i18n::traduzir(rotulo))))
                 .child(desenho_teclas(teclas))
         }))
         .into_any_element()

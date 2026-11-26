@@ -186,7 +186,7 @@ impl Janela {
                 continue;
             }
             let campos: Vec<Entity<InputState>> =
-                (0..quantas).map(|_| cx.new(|cx| InputState::new(window, cx).placeholder("Escreva a sua resposta"))).collect();
+                (0..quantas).map(|_| cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Escreva a sua resposta")))).collect();
             let assinaturas = campos
                 .iter()
                 .map(|campo| {
@@ -242,8 +242,8 @@ impl Janela {
     ) -> AnyElement {
         let id_de = |nome: &str| SharedString::from(format!("{nome}-{id}"));
         let titulo = match perguntas {
-            [_] => "Pergunta".to_string(),
-            varias => format!("{} perguntas", varias.len()),
+            [_] => tr!("Pergunta").to_string(),
+            varias => tr!("{n} perguntas", n = varias.len()).to_string(),
         };
         let cabecalho = h_flex()
             .id(id_de("cab-pergunta"))
@@ -252,7 +252,7 @@ impl Janela {
             .child(azulejo(Lucide::MessageCircleQuestionMark, Cores::texto()))
             .child(div().flex_1().min_w_0().truncate().titulo_cartao().text_color(Cores::forte()).child(titulo))
             .when_some(posicao, |s, (k, n)| {
-                s.child(div().flex_none().etiqueta().text_color(Cores::tenue()).child(format!("{k} de {n}")))
+                s.child(div().flex_none().etiqueta().text_color(Cores::tenue()).child(tr!("{k} de {n}", k = k, n = n)))
             });
         let nao_responder: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)> = {
             let id = id.to_string();
@@ -267,7 +267,7 @@ impl Janela {
         };
         let nao_responder = |t: TamanhoBotao| {
             let ao_clicar = nao_responder.clone();
-            botao_fantasma(id_de("nao-responder"), None, "Não responder", t, window, cx).on_click(move |e, window, cx| ao_clicar(e, window, cx))
+            botao_fantasma(id_de("nao-responder"), None, tr!("Não responder"), t, window, cx).on_click(move |e, window, cx| ao_clicar(e, window, cx))
         };
         if !corpo_aberto {
             // Recolhida (há outro pedido aberto): o cabeçalho com a primeira pergunta; o clique abre.
@@ -292,7 +292,7 @@ impl Janela {
         // Com várias perguntas, quantas já têm resposta (as de baixo podem estar fora da vista).
         let andamento = (perguntas.len() > 1).then(|| {
             let feitas = respondidas(perguntas, estado.map(|e| e.escolhas.as_slice()).unwrap_or_default(), &self.outras_da_pergunta(id, cx));
-            format!("{feitas} de {} respondidas", perguntas.len())
+            tr!("{feitas} de {total} respondidas", feitas = feitas, total = perguntas.len()).to_string()
         });
         let blocos = perguntas.iter().enumerate().map(|(n, pergunta)| {
             let escolha = estado.and_then(|e| e.escolhas.get(n)).cloned().unwrap_or_default();
@@ -342,7 +342,7 @@ impl Janela {
             let sem_opcoes = pergunta.opcoes.is_empty();
             let outra = (!sem_opcoes).then(|| {
                 let id = id.to_string();
-                linha(SharedString::from(format!("outra-{id}-{n}")), escolha.outra, "Outra…".into(), String::new()).on_click(
+                linha(SharedString::from(format!("outra-{id}-{n}")), escolha.outra, tr!("Outra…").to_string(), String::new()).on_click(
                     cx.listener(move |this: &mut Janela, _: &ClickEvent, window, cx| {
                         if let Some(estado) = this.perguntas.get_mut(&id)
                             && let Some(escolha) = estado.escolhas.get_mut(n)
@@ -372,7 +372,7 @@ impl Janela {
                             s.child(div().etiqueta().text_color(Cores::apagado()).child(pergunta.cabecalho.to_uppercase()))
                         })
                         .child(div().corpo_ui().text_color(Cores::forte()).child(pergunta.texto.trim().to_string()))
-                        .when(varias, |s| s.child(div().metadado().text_color(Cores::tenue()).child("Dá para marcar mais de uma."))),
+                        .when(varias, |s| s.child(div().metadado().text_color(Cores::tenue()).child(tr!("Dá para marcar mais de uma.")))),
                 )
                 .child(v_flex().gap(esp::E2).children(opcoes).children(outra).children(campo))
         });
@@ -384,9 +384,9 @@ impl Janela {
             })
         };
         let minima = minima(nivel);
-        let enviar: Button = botao_claro(id_de("enviar-pergunta"), None, "Enviar", TamanhoBotao::Controle, window, cx)
+        let enviar: Button = botao_claro(id_de("enviar-pergunta"), None, tr!("Enviar"), TamanhoBotao::Controle, window, cx)
             .disabled(!pronta)
-            .when(!pronta, |b| b.tooltip(if perguntas.len() == 1 { "Escolha uma opção ou escreva a sua resposta" } else { "Responda todas as perguntas" }))
+            .when(!pronta, |b| b.tooltip(if perguntas.len() == 1 { tr!("Escolha uma opção ou escreva a sua resposta") } else { tr!("Responda todas as perguntas") }))
             .when(minima, |b| b.w_full())
             .on_click(enviar);
         let andamento = andamento.map(|texto| div().min_w_0().truncate().metadado().text_color(Cores::tenue()).child(texto));

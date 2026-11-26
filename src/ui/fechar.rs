@@ -21,28 +21,25 @@ pub(super) enum Parar {
 
 /// "1 conversa está trabalhando", "2 conversas estão trabalhando".
 pub(super) fn conversas_trabalhando(n: usize) -> String {
-    if n == 1 { "1 conversa está trabalhando".to_string() } else { format!("{n} conversas estão trabalhando") }
+    if n == 1 { tr!("1 conversa está trabalhando").to_string() } else { tr!("{n} conversas estão trabalhando", n = n).to_string() }
 }
 
 /// A pergunta com `n` conversas trabalhando. O "mesmo assim" pede o clique: o Enter fica com o
 /// "continuar".
 pub(super) fn confirmacao_de_parar(n: usize, parar: Parar) -> Confirmacao {
-    let param = if n == 1 { "ela para" } else { "elas param" };
+    let param = if n == 1 { tr!("ela para") } else { tr!("elas param") };
     let (acao, ok, cancelar, depois) = match parar {
-        Parar::Fechar => ("fechar", "Fechar mesmo assim", "Continuar aberto", "Ao abrir o Vitral de novo"),
-        Parar::Reiniciar => ("reiniciar", "Reiniciar mesmo assim", "Continuar aberto", "Quando o Vitral abrir de novo"),
+        Parar::Fechar => (tr!("fechar"), tr!("Fechar mesmo assim"), tr!("Continuar aberto"), tr!("Ao abrir o Vitral de novo")),
+        Parar::Reiniciar => (tr!("reiniciar"), tr!("Reiniciar mesmo assim"), tr!("Continuar aberto"), tr!("Quando o Vitral abrir de novo")),
     };
     Confirmacao {
         tom: TomConfirmacao::Atencao,
         icone: Lucide::TriangleAlert.into(),
         titulo: conversas_trabalhando(n).into(),
-        texto: format!(
-            "Se {acao} agora, {param} no meio. {depois}, o que parou fica em Esperando você, com o botão Retomar."
-        )
-        .into(),
+        texto: tr!("Se {acao} agora, {param} no meio. {depois}, o que parou fica em Esperando você, com o botão Retomar.", acao = acao, param = param, depois = depois),
         detalhes: Vec::new(),
-        ok: ok.into(),
-        cancelar: cancelar.into(),
+        ok,
+        cancelar,
         ok_perigo: true,
     }
 }
@@ -52,22 +49,22 @@ pub(super) fn confirmacao_de_parar(n: usize, parar: Parar) -> Confirmacao {
 /// entram como detalhe. O "mesmo assim" pede o clique, como na outra.
 pub(super) fn confirmacao_de_texto_nao_salvo(nome: &str, motivo: &str, pasta: &str, n: usize, parar: Parar) -> Confirmacao {
     let (acao, ok) = match parar {
-        Parar::Fechar => ("Fechando", "Fechar mesmo assim"),
-        Parar::Reiniciar => ("Reiniciando", "Reiniciar mesmo assim"),
+        Parar::Fechar => (tr!("Fechando"), tr!("Fechar mesmo assim")),
+        Parar::Reiniciar => (tr!("Reiniciando"), tr!("Reiniciar mesmo assim")),
     };
     let mut detalhes = Vec::new();
     if n > 0 {
-        let param = if n == 1 { "ela para" } else { "elas param" };
-        detalhes.push((Lucide::TriangleAlert.into(), format!("{}: {param} no meio.", conversas_trabalhando(n)).into(), true));
+        let param = if n == 1 { tr!("ela para") } else { tr!("elas param") };
+        detalhes.push((Lucide::TriangleAlert.into(), tr!("{conversas}: {param} no meio.", conversas = conversas_trabalhando(n), param = param), true));
     }
     Confirmacao {
         tom: TomConfirmacao::Atencao,
         icone: Lucide::TriangleAlert.into(),
-        titulo: "Texto não salvo".into(),
-        texto: format!("{nome}: {motivo}. {acao} agora, o que você escreveu fica numa cópia em {pasta}.").into(),
+        titulo: tr!("Texto não salvo"),
+        texto: tr!("{nome}: {motivo}. {acao} agora, o que você escreveu fica numa cópia em {pasta}.", nome = nome, motivo = motivo, acao = acao, pasta = pasta),
         detalhes,
-        ok: ok.into(),
-        cancelar: "Continuar aberto".into(),
+        ok,
+        cancelar: tr!("Continuar aberto"),
         ok_perigo: true,
     }
 }
@@ -177,7 +174,7 @@ impl Janela {
         });
         let confirmacao = match &em_risco {
             Some((nome, motivo)) => {
-                let pasta = self.pasta_nao_salvos(cx).map_or_else(|| "a pasta de dados do Vitral".into(), |p| super::boas_vindas::com_til(&p));
+                let pasta = self.pasta_nao_salvos(cx).map_or_else(|| tr!("a pasta de dados do Vitral").to_string(), |p| super::boas_vindas::com_til(&p));
                 confirmacao_de_texto_nao_salvo(nome, motivo, &pasta, n, parar)
             }
             None => confirmacao_de_parar(n, parar),
@@ -189,8 +186,8 @@ impl Janela {
             if copiar {
                 let copiou = fraca.update(cx, |this, cx| this.copiar_texto_do_editor(cx)).unwrap_or(Ok(()));
                 if let Err(erro) = copiou {
-                    let frase = format!("Não deu para guardar a cópia do texto ({erro}). O Vitral continua aberto.");
-                    window.push_notification(aviso(Tom::Erro, frase).title("Texto não salvo").autohide(false).chave("salvar-arquivo"), cx);
+                    let frase = tr!("Não deu para guardar a cópia do texto ({erro}). O Vitral continua aberto.", erro = erro);
+                    window.push_notification(aviso(Tom::Erro, frase).title(tr!("Texto não salvo")).autohide(false).chave("salvar-arquivo"), cx);
                     return;
                 }
             }

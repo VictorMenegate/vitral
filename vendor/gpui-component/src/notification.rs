@@ -23,7 +23,7 @@ use crate::{
     ActiveTheme as _, Edges, Icon, IconName, Sizable as _, StyledExt, TITLE_BAR_HEIGHT,
     animation::cubic_bezier,
     button::{Button, ButtonVariants as _},
-    styled::{anel_neutro, toast_shadow},
+    styled::toast_shadow,
     v_flex,
 };
 
@@ -432,8 +432,7 @@ impl Render for Notification {
             .occlude()
             .relative()
             .w_full()
-            .border_1()
-            .border_color(anel_neutro(cx))
+            // Vitral (26/11/2026): sem a borda clara, como os menus e os diálogos.
             .bg(cx.theme().tokens.popover)
             // Vitral: o raio das peças (o `radius.lg` do tema), como os popovers e os diálogos.
             .rounded(cx.theme().radius_lg)

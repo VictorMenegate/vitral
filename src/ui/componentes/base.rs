@@ -22,6 +22,8 @@ pub enum Simbolo {
     Icone(Icon, Option<Hsla>),
     /// Logo colorido (via `img()`, nunca `svg()`, que pinta numa cor só).
     Marca(Marca),
+    /// O glifo solto da marca, sem o disco (os modelos no seletor, como no protótipo).
+    Glifo(Marca),
     Papel(Papel),
     Sinal { nivel: u8, total: u8 },
     Anel { fracao: f32, cor: Option<Hsla> },
@@ -47,6 +49,7 @@ impl Simbolo {
         Some(match self {
             Simbolo::Icone(i, c) => Simbolo::Icone(i.clone(), *c),
             Simbolo::Marca(m) => Simbolo::Marca(*m),
+            Simbolo::Glifo(m) => Simbolo::Glifo(*m),
             Simbolo::Papel(p) => Simbolo::Papel(*p),
             Simbolo::Sinal { nivel, total } => Simbolo::Sinal { nivel: *nivel, total: *total },
             Simbolo::Anel { fracao, cor } => Simbolo::Anel { fracao: *fracao, cor: *cor },
@@ -65,6 +68,7 @@ impl Simbolo {
                 .when_some(cor, |i, cor| i.text_color(cor))
                 .into_any_element(),
             Simbolo::Marca(marca) => marca.disco(lado).into_any_element(),
+            Simbolo::Glifo(marca) => marca.glifo(lado),
             Simbolo::Papel(papel) => papel.circulo(lado).into_any_element(),
             Simbolo::Sinal { nivel, total } => {
                 BarrinhasDeSinal::new(nivel, total).altura(lado).into_any_element()
@@ -140,6 +144,9 @@ pub enum Marca {
     Codex,
     Gemini,
     Linear,
+    /// Os agentes ACP novos (`agente_acp`): sem logo no Vitral, um disco na cor do agente com a
+    /// inicial (26/11/2026).
+    Agente(crate::modelo::Agente),
 }
 
 static DISCO_CLAUDE: LazyLock<Arc<Image>> = LazyLock::new(|| {
@@ -181,6 +188,18 @@ impl Marca {
             crate::modelo::Agente::Claude => Marca::Claude,
             crate::modelo::Agente::Codex => Marca::Codex,
             crate::modelo::Agente::Gemini => Marca::Gemini,
+            outro => Marca::Agente(outro),
+        }
+    }
+
+    /// Um número estável por marca, para os ids dos elementos.
+    pub fn indice(self) -> usize {
+        match self {
+            Marca::Claude => 0,
+            Marca::Codex => 1,
+            Marca::Gemini => 2,
+            Marca::Linear => 3,
+            Marca::Agente(a) => 10 + crate::modelo::Agente::TODOS.iter().position(|x| *x == a).unwrap_or(0),
         }
     }
 
@@ -190,6 +209,7 @@ impl Marca {
             Marca::Codex => "Codex",
             Marca::Gemini => "Gemini",
             Marca::Linear => "Linear",
+            Marca::Agente(a) => a.nome(),
         }
     }
 
@@ -200,6 +220,7 @@ impl Marca {
             Marca::Codex => Cores::codex(),
             Marca::Gemini => Cores::gemini(),
             Marca::Linear => Cores::linear(),
+            Marca::Agente(a) => cor_do_agente(a),
         }
     }
 
@@ -215,9 +236,36 @@ impl Marca {
             Marca::Codex => GLIFO_CODEX.clone(),
             Marca::Gemini => GLIFO_GEMINI.clone(),
             Marca::Linear => return self.disco(lado).into_any_element(),
+            Marca::Agente(a) => return monograma(a, lado, false),
         };
         img(imagem).flex_none().size(r(lado)).into_any_element()
     }
+}
+
+/// A cor de um agente ACP novo, a do perfil dele.
+fn cor_do_agente(agente: crate::modelo::Agente) -> Hsla {
+    crate::agente_acp::perfil(agente).map_or_else(Cores::tenue, |p| rgb(p.cor).into())
+}
+
+/// O disco de um agente sem logo: a cor dele e a inicial, em preto nas cores claras.
+fn monograma(agente: crate::modelo::Agente, lado: f32, apagada: bool) -> AnyElement {
+    let cor = cor_do_agente(agente);
+    let clara = cor.l > 0.6;
+    div()
+        .flex_none()
+        .size(r(lado))
+        .rounded_full()
+        .bg(cor)
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(r((lado * 0.56).max(7.)))
+        .line_height(r(lado))
+        .font_weight(FontWeight::BOLD)
+        .text_color(if clara { rgb(0x111111) } else { rgb(0xffffff) })
+        .when(apagada, |d| d.opacity(0.45))
+        .child(agente.nome().chars().next().unwrap_or('?').to_string())
+        .into_any_element()
 }
 
 /// O logo da marca num disco colorido.
@@ -238,16 +286,20 @@ impl DiscoDeMarca {
 
 impl RenderOnce for DiscoDeMarca {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        if let Marca::Agente(agente) = self.marca {
+            return monograma(agente, self.lado, self.apagada);
+        }
         let imagem = match self.marca {
             Marca::Claude => DISCO_CLAUDE.clone(),
             Marca::Codex => DISCO_CODEX.clone(),
             Marca::Gemini => DISCO_GEMINI.clone(),
-            Marca::Linear => DISCO_LINEAR.clone(),
+            Marca::Linear | Marca::Agente(_) => DISCO_LINEAR.clone(),
         };
         img(imagem)
             .flex_none()
             .size(r(self.lado))
             .when(self.apagada, |i| i.grayscale(true).opacity(0.45))
+            .into_any_element()
     }
 }
 

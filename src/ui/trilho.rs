@@ -26,7 +26,6 @@ use super::{
         contagem, malha_viva,
     },
     movimento::{self, Curva},
-    uso_plano,
 };
 use crate::{
     atualizacao,
@@ -60,19 +59,19 @@ pub(super) fn logo_v() -> Arc<Image> {
 /// das respostas novas.
 fn dica_sino(p: &PrecisaDeVoce) -> String {
     let partes: Vec<String> = [
-        (p.pedidos, "pedido", "pedidos"),
-        (p.paradas, "parada", "paradas"),
-        (p.erros, "erro", "erros"),
-        (p.novas, "resposta nova", "respostas novas"),
+        (p.pedidos, tr!("pedido"), tr!("pedidos")),
+        (p.paradas, tr!("parada"), tr!("paradas")),
+        (p.erros, tr!("erro"), tr!("erros")),
+        (p.novas, tr!("resposta nova"), tr!("respostas novas")),
     ]
     .into_iter()
     .filter(|(n, ..)| *n > 0)
-    .map(|(n, um, varios)| contagem(n, um, varios))
+    .map(|(n, um, varios)| contagem(n, &um, &varios))
     .collect();
     if partes.is_empty() {
-        "O que precisa de você".into()
+        tr!("O que precisa de você").to_string()
     } else {
-        format!("O que precisa de você\n{}", partes.join(", "))
+        format!("{}\n{}", tr!("O que precisa de você"), partes.join(", "))
     }
 }
 
@@ -150,8 +149,8 @@ fn item(
 /// (a versão era o pé do menu até 24/11/2026; subiu para o menu caber a 150%). Na dica, de onde
 /// veio o binário e a pasta de dados. Fixo, fora do teclado.
 fn cabecalho_vitral(dados: &Path, chats: usize) -> PopupMenuItem {
-    let detalhe = format!("{} · {}", linha_tecnica(), contagem(chats, "chat", "chats"));
-    let dica = format!("{} · {}\nDados em {}", atualizacao::rotulo(), atualizacao::origem(), pasta_curta(dados));
+    let detalhe = format!("{} · {}", linha_tecnica(), contagem(chats, &tr!("chat"), &tr!("chats")));
+    let dica = format!("{} · {}\n{}", atualizacao::rotulo(), atualizacao::origem(), tr!("Dados em {pasta}", pasta = pasta_curta(dados)));
     cabecalho_objeto_com_dica(Simbolo::Imagem(LOGO.clone()), "Vitral", Some(detalhe.into()), dica)
 }
 
@@ -172,8 +171,6 @@ enum ItemDoMenu {
     NovoChatEmOutraPasta,
     Importar,
     Resumo,
-    InstalarCodex,
-    InstalarGemini,
     Configuracoes,
 }
 
@@ -186,17 +183,16 @@ enum ItemDoMenu {
 /// Enxuto no jeito do Linear (25/11/2026: "pode tirar esses arranjos, quadro de ideias, novo chat,
 /// o contas do Claude e o atalhos de teclado e paleta de comandos", e o "Recolher a lista" porque o
 /// modo foco já faz isso): chat em outra pasta, importar, o resumo de hoje e as Configurações. Os
-/// "Instalar…" só aparecem enquanto faltar o agente (são o único caminho até eles).
-fn grupos_do_menu(compacto: bool, instalar_codex: bool, instalar_gemini: bool) -> Vec<Vec<ItemDoMenu>> {
+/// "Instalar…" saíram (dono, 26/11/2026: "tinha do menu do logo o instalar pra como vai ter muitas
+/// não poluir"): instalar e atualizar cada IA mora em Configurações › Agentes.
+fn grupos_do_menu(compacto: bool) -> Vec<Vec<ItemDoMenu>> {
     use ItemDoMenu::*;
     let mut grupos = Vec::new();
     if compacto {
         grupos.push(vec![MostrarLista, PrecisaDeVoce]);
     }
     grupos.push(vec![NovoChatEmOutraPasta, Importar, Resumo]);
-    let mut ajustes: Vec<ItemDoMenu> = [instalar_codex.then_some(InstalarCodex), instalar_gemini.then_some(InstalarGemini)].into_iter().flatten().collect();
-    ajustes.push(Configuracoes);
-    grupos.push(ajustes);
+    grupos.push(vec![Configuracoes]);
     grupos
 }
 
@@ -205,15 +201,15 @@ fn grupos_do_menu(compacto: bool, instalar_codex: bool, instalar_gemini: bool) -
 fn linha_da_pronta(versao: String, janela: &WeakEntity<Janela>) -> PopupMenuItem {
     let janela = janela.clone();
     PopupMenuItem::element(move |_, _| {
-        let dica: SharedString = format!("Reinicia na {versao}, que já está instalada").into();
+        let dica: SharedString = tr!("Reinicia na {versao}, que já está instalada", versao = versao);
         h_flex()
             .id("menu-versao-pronta")
             .flex_1()
             .min_w_0()
             .gap(esp::E6)
-            .child(div().min_w_0().truncate().text_color(Cores::forte()).child("Versão nova pronta"))
+            .child(div().min_w_0().truncate().text_color(Cores::forte()).child(tr!("Versão nova pronta")))
             .child(div().flex_none().text_color(Cores::apagado()).child("·"))
-            .child(div().flex_none().font_weight(FontWeight::SEMIBOLD).text_color(Cores::destaque_texto()).child("Reiniciar"))
+            .child(div().flex_none().font_weight(FontWeight::SEMIBOLD).text_color(Cores::destaque_texto()).child(tr!("Reiniciar")))
             .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
     })
     .icon(Icon::new(Lucide::RotateCw).text_color(Cores::destaque_texto()))
@@ -287,8 +283,8 @@ impl RenderOnce for BotaoLogo {
                     return s.on_hover(pairando.ouvinte());
                 }
                 let dica = match &self.pronta {
-                    Some(versao) => format!("Menu do Vitral\nVersão {versao} pronta"),
-                    None => "Menu do Vitral".to_string(),
+                    Some(versao) => format!("{}\n{}", tr!("Menu do Vitral"), tr!("Versão {versao} pronta", versao = versao)),
+                    None => tr!("Menu do Vitral").to_string(),
                 };
                 s.hover(|s| s.border_color(Cores::borda())).dica_com_hover(pairando.ouvinte(), move |window, cx| {
                     Tooltip::new(dica.clone()).action(&AbrirMenuVitral, None).build(window, cx)
@@ -408,9 +404,9 @@ impl Janela {
             let ligada = m.config.revisar_edicoes;
             let motor = motor.clone();
             let dica = if ligada {
-                "Revisão automática ligada\nO outro agente confere os turnos que mudam bastante"
+                tr!("Revisão automática ligada\nO outro agente confere os turnos que mudam bastante")
             } else {
-                "Revisão automática desligada"
+                tr!("Revisão automática desligada")
             };
             h_flex()
                 .id("barra-revisao")
@@ -424,8 +420,8 @@ impl Janela {
                 .text_color(if ligada { Cores::texto() } else { Cores::apagado() })
                 .hover(|s| s.bg(Cores::hover()))
                 .child(div().flex_none().text_color(if ligada { Cores::destaque_texto() } else { Cores::apagado() }).child(super::componentes::icone(Lucide::CheckCheck, 14., window)))
-                .child("Revisão")
-                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica).build(window, cx))
+                .child(tr!("Revisão"))
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                 .on_click(move |_, _, cx| motor.update(cx, |m, cx| m.mudar_config(|c| c.revisar_edicoes = !c.revisar_edicoes, cx)))
         };
         let arquivadas = self.botao_arquivadas(m, window, cx);
@@ -528,10 +524,8 @@ impl Janela {
     fn itens_menu(&self, motor: &Motor, compacto: bool, precisa: PrecisaDeVoce, cx: &Context<Self>) -> ConstruirMenu {
         let janela = cx.entity().downgrade();
         let raiz = motor.dados.pasta.clone();
-        let sem_codex = motor.codex_lido && motor.codex.is_none();
         let chats = motor.chats.iter().filter(|c| !c.arquivado).count();
-        // O instalador oficial do Codex e o do Antigravity CLI são scripts do sh: no Windows, nada.
-        let grupos = grupos_do_menu(compacto, sem_codex, !crate::agente_gemini::instalado());
+        let grupos = grupos_do_menu(compacto);
         Rc::new(move |menu, window, cx| {
             // Relida na hora de abrir: outra abertura pode ter instalado uma mais nova depois.
             let pronta = cx.try_global::<atualizacao::Atualizacoes>().and_then(atualizacao::Atualizacoes::versao_pronta);
@@ -597,12 +591,12 @@ fn item_do_menu(
 ) -> PopupMenu {
     use ItemDoMenu::*;
     match qual {
-        MostrarLista => menu.item(item("Mostrar a lista", Lucide::PanelLeftOpen, janela, |this, window, cx| this.alternar_lista(window, cx)).action(Box::new(AlternarLista))),
+        MostrarLista => menu.item(item(tr!("Mostrar a lista"), Lucide::PanelLeftOpen, janela, |this, window, cx| this.alternar_lista(window, cx)).action(Box::new(AlternarLista))),
         PrecisaDeVoce => {
             let (selo, caixa) = (selo_do_menu(precisa), janela.clone());
             menu.item(
                 PopupMenuItem::element(move |_, _| {
-                    h_flex().gap(esp::E8).min_w_0().child(div().flex_1().min_w_0().truncate().child("O que precisa de você")).children(selo.clone())
+                    h_flex().gap(esp::E8).min_w_0().child(div().flex_1().min_w_0().truncate().child(tr!("O que precisa de você"))).children(selo.clone())
                 })
                 .icon(Lucide::Bell)
                 .on_click(move |_, _, cx| {
@@ -614,17 +608,14 @@ fn item_do_menu(
                 }),
             )
         }
-        NovoChatEmOutraPasta => menu.item(item("Chat em outra pasta…", Lucide::FolderOpen, janela, |this, window, cx| this.dialogo_nova_conversa(window, cx))),
-        Importar => menu.item(item("Importar conversa…", Lucide::Download, janela, |this, _, cx| {
+        NovoChatEmOutraPasta => menu.item(item(tr!("Chat em outra pasta…"), Lucide::FolderOpen, janela, |this, window, cx| this.dialogo_nova_conversa(window, cx))),
+        Importar => menu.item(item(tr!("Importar conversa…"), Lucide::Download, janela, |this, _, cx| {
             if let Some(motor) = this.motor.clone() {
                 motor.update(cx, |m, cx| m.importar_do_claude_code(false, cx));
             }
         })),
-        Resumo => menu.item(item("Resumo de hoje", Lucide::CalendarClock, janela, |this, window, cx| this.abrir_resumo_do_dia(window, cx))),
-        InstalarCodex => menu.item(PopupMenuItem::new("Instalar o Codex…").icon(Lucide::Download).on_click(|_, _, _| uso_plano::instalar_codex())),
-        // O Gemini, pelo instalador oficial do Antigravity CLI, que também faz o login.
-        InstalarGemini => menu.item(PopupMenuItem::new("Instalar o Gemini…").icon(Lucide::Download).on_click(|_, _, _| uso_plano::instalar_gemini())),
-        Configuracoes => menu.item(item("Configurações", Lucide::Settings, janela, |this, window, cx| this.abrir_configuracoes(window, cx)).action(Box::new(AbrirConfiguracoes))),
+        Resumo => menu.item(item(tr!("Resumo de hoje"), Lucide::CalendarClock, janela, |this, window, cx| this.abrir_resumo_do_dia(window, cx))),
+        Configuracoes => menu.item(item(tr!("Configurações"), Lucide::Settings, janela, |this, window, cx| this.abrir_configuracoes(window, cx)).action(Box::new(AbrirConfiguracoes))),
     }
 }
 
@@ -681,14 +672,13 @@ mod testes {
     fn o_menu_do_vitral_e_o_enxuto_do_linear() {
         use super::{ItemDoMenu::*, grupos_do_menu};
         // Linear (25/11/2026): chat em outra pasta, importar, o resumo de hoje e as Configurações.
-        let normal = grupos_do_menu(false, false, false);
+        let normal = grupos_do_menu(false);
         assert_eq!(normal, [vec![NovoChatEmOutraPasta, Importar, Resumo], vec![Configuracoes]]);
-        // No recolhido, a lista e o sino só se alcançam por aqui.
-        let recolhido = grupos_do_menu(true, false, false);
+        // No recolhido, a lista e o sino só se alcançam por aqui. Os "Instalar…" saíram para as
+        // Configurações (26/11/2026).
+        let recolhido = grupos_do_menu(true);
         assert_eq!(recolhido[0], [MostrarLista, PrecisaDeVoce]);
-        // Os instaladores entram só quando falta o agente, antes das Configurações.
-        assert_eq!(grupos_do_menu(false, true, true)[1], [InstalarCodex, InstalarGemini, Configuracoes]);
-        for grupos in [normal, recolhido, grupos_do_menu(true, true, true)] {
+        for grupos in [normal, recolhido] {
             assert!(grupos.len() <= 3, "no máximo 2 divisórias");
             assert!(grupos.iter().all(|g| !g.is_empty()));
             assert!(grupos.iter().map(Vec::len).sum::<usize>() <= 8);

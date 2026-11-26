@@ -115,42 +115,44 @@ pub(super) fn ler_erro(texto: &str, agente_do_chat: Agente, antes: Option<&str>)
     match lido.tipo {
         TipoDeErro::Limite => {
             lido.titulo = match agente {
-                Agente::Codex => "O Codex chegou ao limite de uso".into(),
-                Agente::Gemini => "O Gemini chegou ao limite da cota".into(),
-                Agente::Claude => "O Claude chegou ao limite do plano".into(),
+                Agente::Codex => crate::tr!("O Codex chegou ao limite de uso").to_string(),
+                Agente::Gemini => crate::tr!("O Gemini chegou ao limite da cota").to_string(),
+                Agente::Claude => crate::tr!("O Claude chegou ao limite do plano").to_string(),
+                outro => crate::tr!("O {nome} chegou ao limite de uso", nome = outro.nome()).to_string(),
             };
             lido.volta = hora_de_volta(cru);
             lido.frase = Some(match &lido.volta {
-                Some(hora) => format!("Volta às {hora}."),
-                None => "Volta quando o limite renovar.".into(),
+                Some(hora) => crate::tr!("Volta às {hora}.", hora = hora).to_string(),
+                None => crate::tr!("Volta quando o limite renovar.").to_string(),
             });
             lido.url_de_uso = urls(cru).into_iter().find(|u| caminho_da_url(u).to_ascii_lowercase().contains("usage")).map(str::to_string);
         }
         TipoDeErro::Login => {
-            let (titulo, frase) = match agente {
-                Agente::Codex => ("O Codex pediu para entrar de novo", "Entre no Codex e tente outra vez."),
-                Agente::Gemini => ("O Gemini pediu para entrar com a conta Google", "Entre no Gemini e tente outra vez."),
-                Agente::Claude => ("O Claude Code perdeu o login desta conta", "Entre nela de novo e tente outra vez."),
+            let (titulo, frase): (String, String) = match agente {
+                Agente::Codex => (crate::tr!("O Codex pediu para entrar de novo").to_string(), crate::tr!("Entre no Codex e tente outra vez.").to_string()),
+                Agente::Gemini => (crate::tr!("O Gemini pediu para entrar com a conta Google").to_string(), crate::tr!("Entre no Gemini e tente outra vez.").to_string()),
+                Agente::Claude => (crate::tr!("O Claude Code perdeu o login desta conta").to_string(), crate::tr!("Entre nela de novo e tente outra vez.").to_string()),
+                outro => (crate::tr!("O {nome} pediu para entrar", nome = outro.nome()).to_string(), crate::tr!("Entre no {nome} e tente outra vez.", nome = outro.nome()).to_string()),
             };
-            (lido.titulo, lido.frase) = (titulo.into(), Some(frase.into()));
+            (lido.titulo, lido.frase) = (titulo, Some(frase));
         }
         TipoDeErro::Rede => {
-            lido.titulo = format!("Sem conexão com o {nome}");
-            lido.frase = Some("A internet caiu ou o serviço não respondeu. Quando voltar, tente outra vez.".into());
+            lido.titulo = crate::tr!("Sem conexão com o {nome}", nome = nome).to_string();
+            lido.frase = Some(crate::tr!("A internet caiu ou o serviço não respondeu. Quando voltar, tente outra vez.").to_string());
         }
         TipoDeErro::Sobrecarga => {
             lido.titulo = if sobrecarregado(&cru.to_ascii_lowercase()) {
-                format!("O serviço do {nome} está sobrecarregado")
+                crate::tr!("O serviço do {nome} está sobrecarregado", nome = nome).to_string()
             } else {
-                format!("O serviço do {nome} respondeu com erro")
+                crate::tr!("O serviço do {nome} respondeu com erro", nome = nome).to_string()
             };
-            lido.frase = Some("Costuma passar em alguns minutos.".into());
+            lido.frase = Some(crate::tr!("Costuma passar em alguns minutos.").to_string());
         }
         TipoDeErro::Contexto => {
-            lido.titulo = "A conversa passou do tamanho que o modelo aceita".into();
+            lido.titulo = crate::tr!("A conversa passou do tamanho que o modelo aceita").to_string();
             lido.frase = Some(match agente {
-                Agente::Claude => "Compacte a conversa e mande de novo.".into(),
-                Agente::Codex | Agente::Gemini => "Comece um chat novo ou mande uma mensagem mais curta.".into(),
+                Agente::Claude => crate::tr!("Compacte a conversa e mande de novo.").to_string(),
+                _ => crate::tr!("Comece um chat novo ou mande uma mensagem mais curta.").to_string(),
             });
         }
         _ if do_processo => {
@@ -159,15 +161,15 @@ pub(super) fn ler_erro(texto: &str, agente_do_chat: Agente, antes: Option<&str>)
             lido.tipo = TipoDeErro::Processo;
             lido.recolhido = false;
             if cru.to_ascii_lowercase().contains("fechou sem resposta") {
-                lido.titulo = format!("O {} fechou sem responder", agente.programa());
+                lido.titulo = crate::tr!("O {nome} fechou sem responder", nome = agente.programa()).to_string();
                 lido.cru = None;
             } else {
-                lido.titulo = format!("O {} fechou no meio do turno", agente.programa());
+                lido.titulo = crate::tr!("O {nome} fechou no meio do turno", nome = agente.programa()).to_string();
             }
         }
         _ => {
             lido.tipo = TipoDeErro::Desconhecido;
-            lido.titulo = format!("O {nome} parou com um erro");
+            lido.titulo = crate::tr!("O {nome} parou com um erro", nome = nome).to_string();
             lido.recolhido = false;
         }
     }
@@ -178,14 +180,14 @@ pub(super) fn ler_erro(texto: &str, agente_do_chat: Agente, antes: Option<&str>)
 fn texto_do_vitral(texto: &str, agente_do_chat: Agente) -> Option<ErroLido> {
     let lido = if let Some(resto) = texto.strip_prefix(PASTA_SUMIU) {
         let pasta = resto.rfind(')').map_or(resto, |fim| &resto[..fim]);
-        let frase = format!("{pasta} não existe mais; a mensagem não foi enviada.");
-        ErroLido::do_vitral(TipoDeErro::PastaSumiu, agente_do_chat, "A pasta deste chat sumiu", Some(frase), texto)
+        let frase = crate::tr!("{pasta} não existe mais; a mensagem não foi enviada.", pasta = pasta).to_string();
+        ErroLido::do_vitral(TipoDeErro::PastaSumiu, agente_do_chat, crate::tr!("A pasta deste chat sumiu").to_string(), Some(frase), texto)
     } else if texto.starts_with(SEM_CODEX) {
-        let frase = texto.contains("não foi enviada").then(|| "A mensagem não foi enviada.".to_string());
-        ErroLido::do_vitral(TipoDeErro::SemAgente, Agente::Codex, SEM_CODEX, frase, texto)
+        let frase = texto.contains("não foi enviada").then(|| crate::tr!("A mensagem não foi enviada.").to_string());
+        ErroLido::do_vitral(TipoDeErro::SemAgente, Agente::Codex, crate::i18n::traduzir(SEM_CODEX).into_owned(), frase, texto)
     } else if texto.starts_with(SEM_GEMINI) {
-        let frase = texto.contains("não foi enviada").then(|| "A mensagem não foi enviada.".to_string());
-        ErroLido::do_vitral(TipoDeErro::SemAgente, Agente::Gemini, SEM_GEMINI, frase, texto)
+        let frase = texto.contains("não foi enviada").then(|| crate::tr!("A mensagem não foi enviada.").to_string());
+        ErroLido::do_vitral(TipoDeErro::SemAgente, Agente::Gemini, crate::i18n::traduzir(SEM_GEMINI).into_owned(), frase, texto)
     } else if texto.starts_with(ABRIR) {
         let (titulo, detalhe) = texto.split_once(": ").unwrap_or((texto, ""));
         let agente = agente_do_erro(titulo, agente_do_chat);
@@ -194,19 +196,19 @@ fn texto_do_vitral(texto: &str, agente_do_chat: Agente) -> Option<ErroLido> {
         lido
     } else if texto.starts_with(AGENTES) {
         let frase = texto.split_once(": ").map(|(_, motivo)| maiuscula_inicial(motivo.trim()));
-        ErroLido::do_vitral(TipoDeErro::Agentes, Agente::Claude, AGENTES, frase, texto)
+        ErroLido::do_vitral(TipoDeErro::Agentes, Agente::Claude, crate::i18n::traduzir(AGENTES).into_owned(), frase, texto)
     } else if texto.starts_with(ULTRACODE) || texto.starts_with(ULTRACODE_ANTIGO) {
-        let titulo = if texto.starts_with(ULTRACODE) { "O Ultracode não ligou" } else { "Este Claude Code é antigo para o Ultracode" };
+        let titulo = if texto.starts_with(ULTRACODE) { crate::tr!("O Ultracode não ligou") } else { crate::tr!("Este Claude Code é antigo para o Ultracode") };
         let frase = texto.split_once(": ").map(|(_, resto)| maiuscula_inicial(resto.trim()));
-        ErroLido::do_vitral(TipoDeErro::Ultracode, Agente::Claude, titulo, frase, texto)
+        ErroLido::do_vitral(TipoDeErro::Ultracode, Agente::Claude, titulo.to_string(), frase, texto)
     } else if texto.starts_with(CICLO) {
-        ErroLido::do_vitral(TipoDeErro::Ciclo, agente_do_chat, "Conversa automática pausada", Some(texto.to_string()), texto)
+        ErroLido::do_vitral(TipoDeErro::Ciclo, agente_do_chat, crate::tr!("Conversa automática pausada").to_string(), Some(texto.to_string()), texto)
     } else if let Some(nome) = conta_sem_login(texto) {
         ErroLido::do_vitral(
             TipoDeErro::Login,
             Agente::Claude,
-            format!("A conta {nome} perdeu o login"),
-            Some("Entre nela de novo e tente outra vez.".into()),
+            crate::tr!("A conta {nome} perdeu o login", nome = nome).to_string(),
+            Some(crate::tr!("Entre nela de novo e tente outra vez.").to_string()),
             texto,
         )
     } else {
@@ -253,15 +255,15 @@ fn dobrado(antes: &str, cru: &str) -> ErroLido {
         para_copiar: format!("{antes}\n\n{cru}"),
     };
     if let Some(nome) = conta_sem_login(antes) {
-        lido.titulo = format!("A conta {nome} perdeu o login");
-        lido.frase = Some("Entre nela de novo e tente outra vez.".into());
+        lido.titulo = crate::tr!("A conta {nome} perdeu o login", nome = nome).to_string();
+        lido.frase = Some(crate::tr!("Entre nela de novo e tente outra vez.").to_string());
     } else {
         lido.tipo = TipoDeErro::Limite;
-        lido.titulo = TODAS_NO_LIMITE.into();
+        lido.titulo = crate::i18n::traduzir(TODAS_NO_LIMITE).into_owned();
         let quando = antes.find(PRIMEIRA_VOLTA).map(|p| antes[p + PRIMEIRA_VOLTA.len()..].trim().trim_end_matches('.'));
         lido.frase = Some(match quando {
-            Some(quando) if !quando.is_empty() => format!("A primeira volta {quando}."),
-            _ => "Volta quando o limite renovar.".into(),
+            Some(quando) if !quando.is_empty() => crate::tr!("A primeira volta {quando}.", quando = quando).to_string(),
+            _ => crate::tr!("Volta quando o limite renovar.").to_string(),
         });
         lido.url_de_uso = urls(cru).into_iter().find(|u| caminho_da_url(u).to_ascii_lowercase().contains("usage")).map(str::to_string);
     }
@@ -550,20 +552,21 @@ pub(super) fn na_faixa(texto_da_execucao: &str, agente_do_chat: Agente) -> (Luci
     match tipo {
         TipoDeErro::Limite => {
             let base = match agente {
-                Agente::Codex => "Limite de uso do Codex",
-                Agente::Gemini => "Cota do Gemini",
-                Agente::Claude => "Limite do plano",
+                Agente::Codex => crate::tr!("Limite de uso do Codex"),
+                Agente::Gemini => crate::tr!("Cota do Gemini"),
+                Agente::Claude => crate::tr!("Limite do plano"),
+                _ => crate::tr!("Limite de uso"),
             };
             let rotulo = match hora_de_volta(texto) {
-                Some(hora) => format!("{base} · volta às {hora}"),
+                Some(hora) => crate::tr!("{limite} · volta às {hora}", limite = base, hora = hora).to_string(),
                 None => base.to_string(),
             };
             (Lucide::Gauge, Some(Cores::vermelho()), rotulo)
         }
-        TipoDeErro::Login => (Lucide::KeyRound, Some(Cores::espera()), format!("Sem login no {}", agente.programa())),
-        TipoDeErro::Rede => (Lucide::WifiOff, None, "Sem conexão".into()),
-        TipoDeErro::Sobrecarga => (Lucide::Clock, None, "Serviço sobrecarregado".into()),
-        TipoDeErro::Contexto => (Lucide::Minimize, Some(Cores::vermelho()), "Conversa longa demais para o modelo".into()),
+        TipoDeErro::Login => (Lucide::KeyRound, Some(Cores::espera()), crate::tr!("Sem login no {nome}", nome = agente.programa()).to_string()),
+        TipoDeErro::Rede => (Lucide::WifiOff, None, crate::tr!("Sem conexão").to_string()),
+        TipoDeErro::Sobrecarga => (Lucide::Clock, None, crate::tr!("Serviço sobrecarregado").to_string()),
+        TipoDeErro::Contexto => (Lucide::Minimize, Some(Cores::vermelho()), crate::tr!("Conversa longa demais para o modelo").to_string()),
         // O resto não se classifica: a primeira linha do erro, curta, diz mais que "O último turno
         // falhou" (rodada de uso, item 3.2); o texto inteiro vai na dica da faixa.
         _ => (Lucide::CircleX, Some(Cores::vermelho()), primeira_linha_curta(texto)),
@@ -581,7 +584,8 @@ pub(super) fn tipo_da_execucao(texto: &str, agente_do_chat: Agente) -> (TipoDeEr
 
 /// A primeira linha com texto, em até 120 letras (a faixa ainda corta com reticências).
 pub(super) fn primeira_linha_curta(texto: &str) -> String {
-    let linha = texto.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("O último turno falhou");
+    let linha = texto.lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string).unwrap_or_else(|| crate::tr!("O último turno falhou").to_string());
+    let linha = linha.as_str();
     if linha.chars().count() > 120 { format!("{}…", linha.chars().take(119).collect::<String>().trim_end()) } else { linha.to_string() }
 }
 

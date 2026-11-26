@@ -43,27 +43,27 @@ pub(super) enum Periodo {
 impl Periodo {
     const TODOS: [Periodo; 3] = [Periodo::Hoje, Periodo::Ontem, Periodo::SeteDias];
 
-    fn rotulo(self) -> &'static str {
+    fn rotulo(self) -> SharedString {
         match self {
-            Periodo::Hoje => "Hoje",
-            Periodo::Ontem => "Ontem",
-            Periodo::SeteDias => "7 dias",
+            Periodo::Hoje => tr!("Hoje"),
+            Periodo::Ontem => tr!("Ontem"),
+            Periodo::SeteDias => tr!("7 dias"),
         }
     }
 
-    fn titulo(self) -> &'static str {
+    fn titulo(self) -> SharedString {
         match self {
-            Periodo::Hoje => "Resumo de hoje",
-            Periodo::Ontem => "Resumo de ontem",
-            Periodo::SeteDias => "Resumo dos últimos 7 dias",
+            Periodo::Hoje => tr!("Resumo de hoje"),
+            Periodo::Ontem => tr!("Resumo de ontem"),
+            Periodo::SeteDias => tr!("Resumo dos últimos 7 dias"),
         }
     }
 
-    fn vazio(self) -> &'static str {
+    fn vazio(self) -> SharedString {
         match self {
-            Periodo::Hoje => "Nenhum chat trabalhou hoje",
-            Periodo::Ontem => "Nenhum chat trabalhou ontem",
-            Periodo::SeteDias => "Nenhum chat trabalhou nos últimos 7 dias",
+            Periodo::Hoje => tr!("Nenhum chat trabalhou hoje"),
+            Periodo::Ontem => tr!("Nenhum chat trabalhou ontem"),
+            Periodo::SeteDias => tr!("Nenhum chat trabalhou nos últimos 7 dias"),
         }
     }
 
@@ -213,14 +213,14 @@ pub(super) fn por_pasta(chats: Vec<(String, ChatNoResumo)>) -> Vec<PastaNoResumo
 
 /// "42 min 10 s em 3 turnos".
 fn tempo_e_turnos(chat: &ChatNoResumo) -> String {
-    format!("{} em {}", duracao_curta(chat.trabalhado), contagem(chat.turnos, "turno", "turnos"))
+    tr!("{tempo} em {turnos}", tempo = duracao_curta(chat.trabalhado), turnos = contagem(chat.turnos, &tr!("turno"), &tr!("turnos"))).to_string()
 }
 
 /// "+10 −2", "novo, +40", ou nada quando a chamada não guardou a conta.
 fn linhas_do_arquivo(a: &ArquivoNoResumo) -> String {
     let mut partes = Vec::new();
     if a.novo {
-        partes.push("novo".to_string());
+        partes.push(tr!("novo").to_string());
     }
     let mut conta = Vec::new();
     if a.entram > 0 {
@@ -240,7 +240,7 @@ fn linhas_do_arquivo(a: &ArquivoNoResumo) -> String {
 pub(super) fn markdown(titulo: &str, pastas: &[PastaNoResumo]) -> String {
     let mut saida = format!("# {titulo}\n");
     if pastas.is_empty() {
-        saida.push_str("\nNenhum chat trabalhou no período.\n");
+        saida.push_str(&format!("\n{}\n", tr!("Nenhum chat trabalhou no período.")));
     }
     for pasta in pastas {
         saida.push_str(&format!("\n## {}\n", pasta.pasta));
@@ -249,12 +249,12 @@ pub(super) fn markdown(titulo: &str, pastas: &[PastaNoResumo]) -> String {
             if !chat.fala.is_empty() {
                 saida.push_str(&format!("{}\n\n", chat.fala));
             }
-            saida.push_str(&format!("- Trabalhou {}\n", tempo_e_turnos(chat)));
+            saida.push_str(&format!("- {}\n", tr!("Trabalhou {tempo}", tempo = tempo_e_turnos(chat))));
             if !chat.pendente.is_empty() {
-                saida.push_str(&format!("- Pendente: {}\n", chat.pendente));
+                saida.push_str(&format!("- {}\n", tr!("Pendente: {estado}", estado = chat.pendente)));
             }
             if !chat.arquivos.is_empty() {
-                saida.push_str(&format!("- {}:\n", contagem(chat.arquivos.len(), "arquivo mudado", "arquivos mudados")));
+                saida.push_str(&format!("- {}:\n", contagem(chat.arquivos.len(), &tr!("arquivo mudado"), &tr!("arquivos mudados"))));
                 for a in &chat.arquivos {
                     let linhas = linhas_do_arquivo(a);
                     if linhas.is_empty() {
@@ -284,7 +284,7 @@ fn montar(motor: &Motor, periodo: Periodo) -> Vec<PastaNoResumo> {
         .filter_map(|c| {
             let pendente = pendencia(super::falas::estado_do_chat(motor, c));
             let chat = do_chat(&c.id, &c.titulo, &c.itens, &c.cwd, &pendente, inicio, fim)?;
-            let pasta = if motor.sem_pasta(c) { "Sem pasta".to_string() } else { super::dialogos::com_til(&c.cwd) };
+            let pasta = if motor.sem_pasta(c) { tr!("Sem pasta").to_string() } else { super::dialogos::com_til(&c.cwd) };
             Some((pasta, chat))
         })
         .collect();
@@ -331,7 +331,7 @@ impl ResumoDoDia {
                         .gap(esp::E6)
                         .font_family(FONTE_MONO)
                         .metadado()
-                        .when(a.novo, |s| s.child(div().text_color(Cores::verde()).child("novo")))
+                        .when(a.novo, |s| s.child(div().text_color(Cores::verde()).child(tr!("novo"))))
                         .when(a.entram > 0, |s| s.child(div().text_color(Cores::verde()).child(format!("+{}", a.entram))))
                         .when(a.saem > 0, |s| s.child(div().text_color(Cores::vermelho()).child(format!("−{}", a.saem)))),
                 )
@@ -353,7 +353,7 @@ impl ResumoDoDia {
                     .cursor_pointer()
                     .hover(|s| s.text_color(Cores::destaque_texto()))
                     .child(chat.titulo.clone())
-                    .dica_no_ponteiro(|window, cx| Tooltip::new("Abrir este chat").build(window, cx))
+                    .dica_no_ponteiro(|window, cx| Tooltip::new(tr!("Abrir este chat")).build(window, cx))
                     .on_click(move |_, window, cx| {
                         window.close_dialog(cx);
                         let _ = janela.update(cx, |this, cx| this.selecionar(Some(id.clone()), window, cx));
@@ -366,11 +366,11 @@ impl ResumoDoDia {
                     .gap_x(esp::E8)
                     .metadado()
                     .text_color(Cores::tenue())
-                    .child(format!("Trabalhou {}", tempo_e_turnos(chat)))
+                    .child(tr!("Trabalhou {tempo}", tempo = tempo_e_turnos(chat)))
                     .when(!chat.pendente.is_empty(), |s| s.child(div().text_color(Cores::espera()).child(chat.pendente.clone()))),
             )
             .when(!chat.arquivos.is_empty(), |s| s.child(v_flex().pt(esp::E4).children(arquivos)))
-            .when(a_mais > 0, |s| s.child(div().metadado().text_color(Cores::tenue()).child(format!("e mais {}", contagem(a_mais, "arquivo", "arquivos")))))
+            .when(a_mais > 0, |s| s.child(div().metadado().text_color(Cores::tenue()).child(tr!("e mais {contagem}", contagem = contagem(a_mais, &tr!("arquivo"), &tr!("arquivos"))))))
             .into_any_element()
     }
 }
@@ -379,14 +379,14 @@ impl Render for ResumoDoDia {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let vista = cx.entity().downgrade();
         let atual = Periodo::TODOS.iter().position(|p| *p == self.periodo).unwrap_or(0);
-        let seletor = ControleSegmentado::new("periodo-do-resumo", Periodo::TODOS.map(Periodo::rotulo), atual, move |i, _, cx| {
+        let seletor = ControleSegmentado::new("periodo-do-resumo", Periodo::TODOS.map(|p| super::componentes::Segmento::new(p.rotulo())), atual, move |i, _, cx| {
             let _ = vista.update(cx, |v, cx| v.trocar(Periodo::TODOS[i.min(2)], cx));
         });
-        let texto = markdown(self.periodo.titulo(), &self.pastas);
-        let copiar = botao_fantasma("copiar-resumo-do-dia", Some(Lucide::Copy.into()), "Copiar como Markdown", TamanhoBotao::Barra, window, cx)
+        let texto = markdown(&self.periodo.titulo(), &self.pastas);
+        let copiar = botao_fantasma("copiar-resumo-do-dia", Some(Lucide::Copy.into()), tr!("Copiar como Markdown"), TamanhoBotao::Barra, window, cx)
             .on_click(move |_, window, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(texto.clone()));
-                window.push_notification(aviso(Tom::Pronto, "Resumo copiado em Markdown."), cx);
+                window.push_notification(aviso(Tom::Pronto, tr!("Resumo copiado em Markdown.")), cx);
             });
         // A altura acompanha a janela, e o corpo rola.
         let altura = (window.viewport_size().height - tam(window, 280.)).max(tam(window, 200.)).min(tam(window, 620.));
@@ -412,7 +412,7 @@ impl Render for ResumoDoDia {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(EstadoVazio::new(Lucide::CalendarClock, self.periodo.vazio()).texto("Só entra o chat em que o agente respondeu ou usou uma ferramenta no período."))
+                .child(EstadoVazio::new(Lucide::CalendarClock, self.periodo.vazio()).texto(tr!("Só entra o chat em que o agente respondeu ou usou uma ferramenta no período.")))
                 .into_any_element()
         } else {
             div()
@@ -443,8 +443,8 @@ impl Janela {
             let v = vista.read(cx);
             let chats: usize = v.pastas.iter().map(|p| p.chats.len()).sum();
             let subtitulo = match chats {
-                0 => "O que os chats fizeram, por pasta".to_string(),
-                n => format!("{} em {}", contagem(n, "chat", "chats"), contagem(v.pastas.len(), "pasta", "pastas")),
+                0 => tr!("O que os chats fizeram, por pasta").to_string(),
+                n => tr!("{chats} em {pastas}", chats = contagem(n, &tr!("chat"), &tr!("chats")), pastas = contagem(v.pastas.len(), &tr!("pasta"), &tr!("pastas"))).to_string(),
             };
             moldura(dialogo, largura::G, window)
                 .title(topo(cabecalho(v.periodo.titulo(), Some(subtitulo))))

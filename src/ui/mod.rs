@@ -4,6 +4,10 @@
 pub mod componentes;
 mod abas_direita;
 mod acentos;
+/// O texto sem acento e em minúscula, para comparar nomes (`/conta automática` e "Automatica").
+pub fn acentos_normalizados(texto: &str) -> String {
+    acentos::normalizar(texto)
+}
 mod agendar;
 pub mod arranjo;
 mod boas_vindas;
@@ -683,7 +687,7 @@ pub struct Janela {
     /// O painel da direita está abaixo de 22 rem: desenho estreito da Equipe.
     direita_estreita: bool,
     /// O texto que a busca da lista mostra vazia, que encurta na lista apertada.
-    dica_busca: &'static str,
+    dica_busca: SharedString,
     /// Popover da caixa aberto (um por vez em toda a janela): painel e qual.
     pop_caixa: Option<(u64, composer::PopCaixa)>,
     /// O histórico do cabeçalho de um painel aberto: o id do painel e se é o "+N" da faixa das
@@ -718,6 +722,8 @@ pub struct Janela {
     vista_da_direita: Entity<vista_mensagens::VistaDaDireita>,
     /// O painel da direita acabou de abrir ou trocar (o fade dele, dentro da vista em cache).
     direita_nova: bool,
+    /// As Tarefas abertas no lugar das conversas (`quadro_ideias`).
+    quadro: Option<Entity<quadro_ideias::QuadroDeIdeias>>,
     /// Os anexos e as citações de todas as conversas, contados no último quadro: quando mudam (um
     /// print colado, uma pílula tirada), o rascunho vai para o disco (item 1.4).
     assinatura_dos_anexos: (usize, usize, usize, usize),
@@ -861,7 +867,7 @@ fn linha_dos_quadros(quadros: u32, campo: Option<(u32, Duration)>) -> String {
 impl Janela {
     pub fn new(motor: Entity<Motor>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         iniciar_contador_de_quadros(cx);
-        let busca = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar"));
+        let busca = cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Buscar")));
         let mut assinaturas = vec![cx.subscribe_in(&busca, window, |this, _, evento, _, cx| {
             if matches!(evento, InputEvent::Change) {
                 // Termo novo: a marca volta ao primeiro resultado (rodada de uso, item 4.1).
@@ -870,21 +876,21 @@ impl Janela {
             }
         })];
         // A busca da aba Arquivos da direita: filtra a árvore enquanto se digita.
-        let busca_arquivos = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar arquivo"));
+        let busca_arquivos = cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Buscar arquivo")));
         assinaturas.push(cx.subscribe_in(&busca_arquivos, window, |_, _, evento, _, cx| {
             if matches!(evento, InputEvent::Change) {
                 cx.notify();
             }
         }));
         // A busca do "Nesta conversa": filtra as mensagens enquanto se digita.
-        let busca_sumario = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar nas mensagens"));
+        let busca_sumario = cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Buscar nas mensagens")));
         assinaturas.push(cx.subscribe_in(&busca_sumario, window, |_, _, evento, _, cx| {
             if matches!(evento, InputEvent::Change) {
                 cx.notify();
             }
         }));
         // A busca dentro do arquivo aberto à direita: o Enter anda pelos achados.
-        let busca_no_arquivo = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar no arquivo"));
+        let busca_no_arquivo = cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Buscar no arquivo")));
         assinaturas.push(cx.subscribe_in(&busca_no_arquivo, window, |this, _, evento, _, cx| match evento {
             InputEvent::PressEnter { shift, .. } => this.andar_na_busca_do_arquivo(if *shift { -1 } else { 1 }, cx),
             InputEvent::Change => cx.notify(),
@@ -992,6 +998,7 @@ impl Janela {
             vista_da_barra,
             vista_da_direita,
             direita_nova: false,
+            quadro: None,
             motor: None,
             selecionado: None,
             filtro: Filtro::Todos,
@@ -1106,7 +1113,7 @@ impl Janela {
             foco_lista: cx.focus_handle(),
             realce_lista: None,
             direita_estreita: false,
-            dica_busca: "Buscar",
+            dica_busca: tr!("Buscar"),
             pop_caixa: None,
             historico_aberto: None,
             aba_do_modelo: None,
@@ -1370,12 +1377,12 @@ impl Janela {
     pub(super) fn botao_lista(&self, id: &'static str, window: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
         let aberta = self.orcamento.lista || self.gaveta == Some(Gaveta::Lista);
         let (icone, dica) = if aberta {
-            (Lucide::PanelLeftClose, "Recolher a lista")
+            (Lucide::PanelLeftClose, tr!("Recolher a lista"))
         } else {
-            (Lucide::PanelLeftOpen, "Mostrar a lista")
+            (Lucide::PanelLeftOpen, tr!("Mostrar a lista"))
         };
         sem_arrastar().child(
-            botao_icone(id, icone, dica, TamanhoBotao::Barra, window, cx)
+            botao_icone(id, icone, dica.clone(), TamanhoBotao::Barra, window, cx)
                 .tooltip_with_action(dica, &AlternarLista, None)
                 .on_click(cx.listener(|this, _, window, cx| this.alternar_lista(window, cx))),
         )
@@ -1866,7 +1873,7 @@ impl Janela {
         let id = match motor.update(cx, |m, cx| m.novo_chat(pasta.as_deref(), "", cx)) {
             Ok(id) => id,
             Err(erro) => {
-                window.push_notification(componentes::aviso(componentes::Tom::Erro, format!("Não abriu o chat: {erro}")), cx);
+                window.push_notification(componentes::aviso(componentes::Tom::Erro, tr!("Não abriu o chat: {erro}", erro = erro)), cx);
                 return;
             }
         };
@@ -1929,14 +1936,14 @@ impl Janela {
         let _ = separar;
         if self.gaveta != Some(Gaveta::Direita) {
             return sem_arrastar().flex_none().child(
-                botao_icone("recolher-painel", Lucide::PanelRightClose, "Fechar o painel", TamanhoBotao::Linha, window, cx)
-                    .tooltip_with_action("Fechar o painel", &AlternarPainel, None)
+                botao_icone("recolher-painel", Lucide::PanelRightClose, tr!("Fechar o painel"), TamanhoBotao::Linha, window, cx)
+                    .tooltip_with_action(tr!("Fechar o painel"), &AlternarPainel, None)
                     .on_click(cx.listener(|this, _, window, cx| this.alternar_painel(window, cx))),
             );
         }
         sem_arrastar().flex_none().child(
-            botao_icone("recolher-gaveta", Lucide::PanelRightClose, "Recolher o painel", TamanhoBotao::Linha, window, cx)
-                .tooltip_with_action("Recolher o painel", &FecharGaveta, Some("Gaveta"))
+            botao_icone("recolher-gaveta", Lucide::PanelRightClose, tr!("Recolher o painel"), TamanhoBotao::Linha, window, cx)
+                .tooltip_with_action(tr!("Recolher o painel"), &FecharGaveta, Some("Gaveta"))
                 .on_click(cx.listener(|this, _, window, cx| this.fechar_gaveta(window, cx))),
         )
     }
@@ -2096,6 +2103,10 @@ impl Janela {
             crate::tema::definir_letra_da_conversa(motor.read(cx).config.letra_da_conversa);
             // As cores da Aparência: este desenho já sai com elas; o tema do kit (menus, campos) e
             // as vistas guardadas (a lista, as mensagens) acompanham no seguinte.
+            // A língua da interface: trocada, todas as vistas se refazem (as em cache também).
+            if crate::i18n::definir(crate::i18n::da_configuracao(&motor.read(cx).config.lingua)) {
+                cx.defer(|cx| cx.refresh_windows());
+            }
             if crate::tema::definir_paleta(&motor.read(cx).config.paleta) {
                 cx.defer(|cx| {
                     crate::tema::reaplicar_cores(cx);
@@ -2312,7 +2323,7 @@ impl Janela {
         for id in planos {
             self.feedback_plano.entry(id).or_insert_with(|| {
                 cx.new(|cx| {
-                    InputState::new(window, cx).placeholder("O que mudar no plano? (opcional)")
+                    InputState::new(window, cx).placeholder(tr!("O que mudar no plano? (opcional)"))
                 })
             });
         }
@@ -2327,7 +2338,9 @@ impl Janela {
         if !perguntas.is_empty() || !self.perguntas.is_empty() {
             self.acertar_perguntas(perguntas, window, cx);
         }
-        self.orcamento = orcamento_da_janela(window, self.paineis.len(), self.lista, self.direita_pedida());
+        // Com as Tarefas no lugar das conversas, a fileira é uma peça só, sem a direita.
+        let (pecas, direita) = if self.quadro.is_some() { (1, false) } else { (self.paineis.len(), self.direita_pedida()) };
+        self.orcamento = orcamento_da_janela(window, pecas, self.lista, direita);
         // A lista saiu de vista (um painel novo a empurrou, Ctrl+B, a janela estreitou) com o foco
         // nela: o foco vai para a caixa do painel ativo. Sem isso o foco ficava num elemento fora
         // da árvore e nenhuma tecla chegava às ações da janela até um clique (teste de
@@ -2625,7 +2638,7 @@ impl Janela {
     /// tenta de novo sozinho). Sem ×: some quando gravar.
     fn faixa_de_gravacao(&self, motor: &Entity<Motor>, cx: &Context<Self>) -> Option<AnyElement> {
         let (erro, _) = motor.read(cx).falha_gravacao.clone()?;
-        let texto = format!("Não estou conseguindo gravar ({erro}). Nada novo começa até voltar a gravar.");
+        let texto = tr!("Não estou conseguindo gravar ({erro}). Nada novo começa até voltar a gravar.", erro = erro);
         Some(
             div()
                 .absolute()
@@ -2653,7 +2666,8 @@ impl Janela {
         self.normalizar_maximizado();
         let ids: Vec<u64> = self.paineis.iter().map(|p| p.id).collect();
         let visiveis = paineis::paineis_a_mostrar(&ids, self.maximizado);
-        let n = visiveis.len().max(1);
+        let quadro = self.quadro.clone();
+        let n = if quadro.is_some() { 1 } else { visiveis.len().max(1) };
         let lista = o.lista;
         let painel = o.direita == Direita::Ancorada;
         // Com outra composição, outro zoom ou outra largura de janela, as divisórias recomeçam
@@ -2665,7 +2679,9 @@ impl Janela {
         let maximizado = self.maximizado.filter(|_| self.paineis.len() > 1);
         // Com um arquivo aberto à direita, a largura dela é a do arquivo (guardada à parte).
         let com_arquivo = painel && matches!(self.aba_visivel(motor.read(cx)), abas_direita::AbaDireita::Arquivo(_));
-        let chave = (n, painel, lista, (o.escala * 100.).round() as u32, o.util.round() as u32, maximizado, com_arquivo);
+        // As Tarefas mudam quantas peças há: a chave muda com elas, e as larguras recomeçam.
+        let pecas = if quadro.is_some() { usize::MAX } else { n };
+        let chave = (pecas, painel, lista, (o.escala * 100.).round() as u32, o.util.round() as u32, maximizado, com_arquivo);
         if self.chave_partes != Some(chave) {
             self.chave_partes = Some(chave);
             self.estado_partes.update(cx, |estado, _| estado.clear());
@@ -2686,9 +2702,15 @@ impl Janela {
         // margem em cima e à direita, e na esquerda e embaixo sem a lista e a barra de baixo. Entre
         // as peças não há vão, só a divisória de 1 px da própria peça (`aresta_encostada`).
         // O id muda com a composição, para o estado de dentro de cada parte não passar a outra.
-        let mut grupo = h_resizable(SharedString::from(format!("partes-{n}-{painel}-{lista}-{}", espremidas.map_or(-1, |k| k as i64))))
-            .with_state(&self.estado_partes)
-            .on_resize(move |estado, _, cx| {
+        let id_do_grupo = if quadro.is_some() {
+            format!("partes-quadro-{lista}")
+        } else {
+            format!("partes-{n}-{painel}-{lista}-{}", espremidas.map_or(-1, |k| k as i64))
+        };
+        let mut grupo = h_resizable(SharedString::from(id_do_grupo)).with_state(&self.estado_partes);
+        // Com as Tarefas, as larguras das conversas não estão à vista: nada se grava.
+        if quadro.is_none() {
+            grupo = grupo.on_resize(move |estado, _, cx| {
                 let tamanhos: Vec<f32> = estado.read(cx).sizes().iter().map(|t| t.as_f32()).collect();
                 let _ = janela.update(cx, |this, _| {
                     if espremidas.is_none() {
@@ -2696,6 +2718,7 @@ impl Janela {
                     }
                 });
             });
+        }
         if let Some(largura) = larguras.lista {
             grupo = grupo.child(
                 resizable_panel()
@@ -2704,6 +2727,23 @@ impl Janela {
                     .fixed()
                     .child(div().size_full().child(AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full()))),
             );
+        }
+        if let Some(quadro) = quadro {
+            // As Tarefas no lugar das conversas e da direita, num cartão só, como a fileira.
+            let cartao = div()
+                .size_full()
+                .rounded(crate::tema::raio_da_peca())
+                .bg(Cores::cartao())
+                .when_some(crate::tema::bordas_finas(), |s, anel| s.shadow(vec![anel]))
+                .overflow_hidden()
+                .child(quadro);
+            grupo = grupo.child(
+                resizable_panel()
+                    .size(px(larguras.conversas.iter().sum::<f32>()))
+                    .child(div().size_full().relative().map(|d| margem_do_cartao(d, true, true, lista)).child(cartao)),
+            );
+            self.direita_vista = None;
+            return grupo;
         }
         if self.paineis.is_empty() {
             // A tela de começar também aceita uma conversa arrastada da lista.
@@ -2881,11 +2921,11 @@ fn grupo_botoes_janela(botoes: Vec<WindowButton>, separar: bool) -> Div {
                 .active(|s| s.bg(rgba(0xffffff40)))
                 .when(!cfg!(windows), |b| {
                     let dica = match botao {
-                        WindowButton::Minimize => "Minimizar",
-                        WindowButton::Maximize => "Maximizar",
-                        WindowButton::Close => "Fechar o Vitral",
+                        WindowButton::Minimize => tr!("Minimizar"),
+                        WindowButton::Maximize => tr!("Maximizar"),
+                        WindowButton::Close => tr!("Fechar o Vitral"),
                     };
-                    gpui_kit::component::tooltip::ManagedTooltipExt::dica_no_ponteiro(b, move |window, cx| gpui_kit::component::tooltip::Tooltip::new(dica).build(window, cx))
+                    gpui_kit::component::tooltip::ManagedTooltipExt::dica_no_ponteiro(b, move |window, cx| gpui_kit::component::tooltip::Tooltip::new(dica.clone()).build(window, cx))
                 })
                 .child(Icon::new(icone).size(r(14.)).text_color(Cores::tenue()))
                 .map(|b| {
@@ -2921,6 +2961,15 @@ pub fn tempo_relativo(instante: u64) -> String {
 }
 
 /// Há quanto tempo (o turno, a tarefa): "19 s", "2 min 13 s", "1 h 05 min".
+/// O mesmo `tempo_relativo`, com o "agora" na língua de agora (quem compara com "agora" usa o
+/// `tempo_relativo`; este é para mostrar).
+pub fn tempo_relativo_na_tela(instante: u64) -> String {
+    match tempo_relativo(instante) {
+        agora if agora == "agora" => tr!("agora").to_string(),
+        outro => outro,
+    }
+}
+
 pub fn duracao(desde: u64) -> String {
     componentes::duracao_curta(modelo::agora().saturating_sub(desde))
 }

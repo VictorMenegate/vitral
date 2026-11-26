@@ -131,7 +131,7 @@ impl VisorImagem {
         let caminho = self.caminho().to_path_buf();
         let varias = self.imagens.len() > 1;
         let cabendo = self.zoom == 1. && self.desloc == Point::default();
-        let (rotulo, icone) = if cabendo { ("Tamanho real", Lucide::Maximize) } else { ("Ajustar à janela", Lucide::Minimize) };
+        let (rotulo, icone) = if cabendo { (tr!("Tamanho real"), Lucide::Maximize) } else { (tr!("Ajustar à janela"), Lucide::Minimize) };
         // A porcentagem é a do tamanho real da imagem, não a do "caber".
         let area = self.area.get().size;
         let porcento = anexo
@@ -166,7 +166,7 @@ impl VisorImagem {
                         .items_center()
                         .gap(esp::E4)
                         .child(
-                            botao_icone("visor-anterior", Lucide::ChevronLeft, "Imagem anterior", TamanhoBotao::Barra, window, cx)
+                            botao_icone("visor-anterior", Lucide::ChevronLeft, tr!("Imagem anterior"), TamanhoBotao::Barra, window, cx)
                                 .disabled(self.atual == 0)
                                 .on_click(cx.listener(|this, _, _, cx| this.andar(false, cx))),
                         )
@@ -174,10 +174,10 @@ impl VisorImagem {
                             div()
                                 .metadado()
                                 .text_color(Cores::tenue())
-                                .child(format!("{} de {}", self.atual + 1, self.imagens.len())),
+                                .child(tr!("{n} de {total}", n = self.atual + 1, total = self.imagens.len())),
                         )
                         .child(
-                            botao_icone("visor-seguinte", Lucide::ChevronRight, "Imagem seguinte", TamanhoBotao::Barra, window, cx)
+                            botao_icone("visor-seguinte", Lucide::ChevronRight, tr!("Imagem seguinte"), TamanhoBotao::Barra, window, cx)
                                 .disabled(self.atual + 1 == self.imagens.len())
                                 .on_click(cx.listener(|this, _, _, cx| this.andar(true, cx))),
                         ),
@@ -189,13 +189,13 @@ impl VisorImagem {
                     .items_center()
                     .gap(esp::E4)
                     .child(
-                        botao_icone("visor-menos", Lucide::ZoomOut, "Afastar", TamanhoBotao::Barra, window, cx)
+                        botao_icone("visor-menos", Lucide::ZoomOut, tr!("Afastar"), TamanhoBotao::Barra, window, cx)
                             .disabled(self.zoom <= ZOOM_MINIMO)
                             .on_click(cx.listener(|this, _, _, cx| this.aproximar(this.zoom / PASSO_DO_ZOOM, None, cx))),
                     )
                     .children(porcento.map(|p| div().min_w(r(40.)).text_center().metadado().text_color(Cores::tenue()).child(p)))
                     .child(
-                        botao_icone("visor-mais", Lucide::ZoomIn, "Aproximar", TamanhoBotao::Barra, window, cx)
+                        botao_icone("visor-mais", Lucide::ZoomIn, tr!("Aproximar"), TamanhoBotao::Barra, window, cx)
                             .disabled(self.zoom >= ZOOM_MAXIMO)
                             .on_click(cx.listener(|this, _, _, cx| this.aproximar(this.zoom * PASSO_DO_ZOOM, None, cx))),
                     ),
@@ -212,11 +212,11 @@ impl VisorImagem {
             )
             .child({
                 let fora = caminho.clone();
-                botao_fantasma("visor-fora", Some(Lucide::ExternalLink.into()), "Abrir fora", TamanhoBotao::Barra, window, cx)
+                botao_fantasma("visor-fora", Some(Lucide::ExternalLink.into()), tr!("Abrir fora"), TamanhoBotao::Barra, window, cx)
                     .on_click(move |_, _, cx| crate::sistema::abrir_pasta(&fora, cx))
             })
             .child(
-                botao_icone("visor-fechar", Lucide::X, "Fechar (Esc)", TamanhoBotao::Barra, window, cx)
+                botao_icone("visor-fechar", Lucide::X, tr!("Fechar (Esc)"), TamanhoBotao::Barra, window, cx)
                     .on_click(|_, window, cx| window.close_dialog(cx)),
             )
     }
@@ -239,7 +239,7 @@ impl Render for VisorImagem {
                 .justify_center()
                 .gap(esp::E8)
                 .child(super::mensagens::icone_de(Lucide::ImageOff, 32.).text_color(Cores::tenue()))
-                .child(div().corpo_ui().text_color(Cores::tenue()).child("Esta imagem não está mais no disco."))
+                .child(div().corpo_ui().text_color(Cores::tenue()).child(tr!("Esta imagem não está mais no disco.")))
                 .child(div().metadado().text_color(Cores::apagado()).child(caminho.display().to_string()))
                 .into_any_element()
         } else {

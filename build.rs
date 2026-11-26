@@ -4,10 +4,122 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    juntar_as_traducoes();
     // O `cfg` de um build.rs é o do sistema que compila; o Vitral do Windows só compila nele (os
     // shaders do GPUI precisam do fxc.exe).
     #[cfg(windows)]
     recursos_do_windows();
+}
+
+/// As traduções (`src/i18n.rs`): cada língua tem uma pasta `locales/<língua>/` com um JSON por
+/// parte da interface ({"texto em português": "tradução"}), e aqui elas viram um JSON só por
+/// língua no `OUT_DIR`, que o Vitral embute. Uma chave repetida em dois arquivos falha o build.
+fn juntar_as_traducoes() {
+    use std::{collections::BTreeMap, env, fs, path::PathBuf};
+    let raiz = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("locales");
+    println!("cargo:rerun-if-changed=locales");
+    let saida = PathBuf::from(env::var("OUT_DIR").unwrap());
+    for lingua in ["en", "es"] {
+        let pasta = raiz.join(lingua);
+        println!("cargo:rerun-if-changed={}", pasta.display());
+        let mut arquivos: Vec<PathBuf> = fs::read_dir(&pasta)
+            .map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "json")).collect())
+            .unwrap_or_default();
+        arquivos.sort();
+        let mut tudo: BTreeMap<String, String> = BTreeMap::new();
+        for arquivo in arquivos {
+            println!("cargo:rerun-if-changed={}", arquivo.display());
+            let texto = fs::read_to_string(&arquivo).unwrap_or_else(|e| panic!("{}: {e}", arquivo.display()));
+            let parte: BTreeMap<String, String> = parse_json_simples(&texto).unwrap_or_else(|e| panic!("{}: {e}", arquivo.display()));
+            for (chave, valor) in parte {
+                if let Some(antes) = tudo.get(&chave)
+                    && *antes != valor
+                {
+                    panic!("{}: \"{chave}\" já foi traduzido de outro jeito em outro arquivo", arquivo.display());
+                }
+                tudo.insert(chave, valor);
+            }
+        }
+        let json = format!(
+            "{{{}}}",
+            tudo.iter().map(|(k, v)| format!("{}:{}", aspas(k), aspas(v))).collect::<Vec<_>>().join(",")
+        );
+        fs::write(saida.join(format!("{lingua}.json")), json).unwrap();
+    }
+}
+
+/// Um JSON de um objeto só, com chaves e valores em texto (sem dependência no build).
+fn parse_json_simples(texto: &str) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let mut chars = texto.trim().chars().peekable();
+    let mut mapa = std::collections::BTreeMap::new();
+    let pular = |c: &mut std::iter::Peekable<std::str::Chars>| {
+        while c.peek().is_some_and(|x| x.is_whitespace()) {
+            c.next();
+        }
+    };
+    let ler_texto = |c: &mut std::iter::Peekable<std::str::Chars>| -> Result<String, String> {
+        if c.next() != Some('"') {
+            return Err("esperava aspas".into());
+        }
+        let mut s = String::new();
+        loop {
+            match c.next().ok_or("texto sem fim")? {
+                '"' => return Ok(s),
+                '\\' => match c.next().ok_or("escape sem fim")? {
+                    'n' => s.push('\n'),
+                    't' => s.push('\t'),
+                    'u' => {
+                        let hex: String = (0..4).filter_map(|_| c.next()).collect();
+                        let n = u32::from_str_radix(&hex, 16).map_err(|e| e.to_string())?;
+                        s.push(char::from_u32(n).ok_or("unicode inválido")?);
+                    }
+                    outro => s.push(outro),
+                },
+                outro => s.push(outro),
+            }
+        }
+    };
+    pular(&mut chars);
+    if chars.next() != Some('{') {
+        return Err("esperava {".into());
+    }
+    loop {
+        pular(&mut chars);
+        if chars.peek() == Some(&'}') {
+            break;
+        }
+        let chave = ler_texto(&mut chars)?;
+        pular(&mut chars);
+        if chars.next() != Some(':') {
+            return Err(format!("esperava : depois de {chave}"));
+        }
+        pular(&mut chars);
+        let valor = ler_texto(&mut chars)?;
+        mapa.insert(chave, valor);
+        pular(&mut chars);
+        match chars.next() {
+            Some(',') => continue,
+            Some('}') => break,
+            _ => return Err("esperava , ou }".into()),
+        }
+    }
+    Ok(mapa)
+}
+
+fn aspas(texto: &str) -> String {
+    let mut s = String::from("\"");
+    for c in texto.chars() {
+        match c {
+            '"' => s.push_str("\\\""),
+            '\\' => s.push_str("\\\\"),
+            '\n' => s.push_str("\\n"),
+            '\t' => s.push_str("\\t"),
+            outro if (outro as u32) < 0x20 => s.push_str(&format!("\\u{:04x}", outro as u32)),
+            outro => s.push(outro),
+        }
+    }
+    s.push('"');
+    s
 }
 
 #[cfg(windows)]

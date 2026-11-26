@@ -75,13 +75,13 @@ fn porcento(fracao: f32) -> u32 {
 pub fn resumo_uso(cinco_h: Option<f32>, semana: Option<f32>) -> String {
     let partes: Vec<String> = [
         cinco_h.map(|f| format!("5 h {}%", porcento(f))),
-        semana.map(|f| format!("semana {}%", porcento(f))),
+        semana.map(|f| tr!("semana {pct}%", pct = porcento(f)).to_string()),
     ]
     .into_iter()
     .flatten()
     .collect();
     if partes.is_empty() {
-        "uso ainda não lido".into()
+        tr!("uso ainda não lido").to_string()
     } else {
         partes.join(" · ")
     }
@@ -106,14 +106,14 @@ pub fn dica_uso(
         })
     };
     let partes: Vec<String> = [
-        janela(cinco_h, "do limite de 5 h", renova_5h),
-        janela(semana, "da semana", renova_semana),
+        janela(cinco_h, &tr!("do limite de 5 h"), renova_5h),
+        janela(semana, &tr!("da semana"), renova_semana),
     ]
     .into_iter()
     .flatten()
     .collect();
     if partes.is_empty() {
-        format!("{servico}: uso ainda não lido")
+        tr!("{servico}: uso ainda não lido", servico = servico).to_string()
     } else {
         format!("{servico}: {}", partes.join(" · "))
     }

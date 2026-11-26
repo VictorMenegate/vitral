@@ -104,10 +104,10 @@ pub(super) fn o_que_o_turno_fez(itens: &[Item]) -> String {
     }
     let mut partes = Vec::new();
     if !editados.is_empty() {
-        partes.push(super::componentes::contagem(editados.len(), "editado", "editados"));
+        partes.push(super::componentes::contagem(editados.len(), &crate::tr!("editado"), &crate::tr!("editados")));
     }
     if comandos > 0 {
-        partes.push(super::componentes::contagem(comandos, "comando", "comandos"));
+        partes.push(super::componentes::contagem(comandos, &crate::tr!("comando"), &crate::tr!("comandos")));
     }
     partes.join(" · ")
 }
@@ -118,19 +118,19 @@ pub(super) fn o_que_o_turno_fez(itens: &[Item]) -> String {
 pub(super) fn estado_do_chat(motor: &Motor, chat: &Chat) -> String {
     match motor.execucao(&chat.id) {
         Execucao::EsperandoVoce => match motor.permissoes.iter().find(|p| p.chat == chat.id) {
-            Some(p) if p.ferramenta == "ExitPlanMode" => "Plano para aprovar".into(),
+            Some(p) if p.ferramenta == "ExitPlanMode" => crate::tr!("Plano para aprovar").to_string(),
             Some(p) if p.ferramenta == "AskUserQuestion" => match p.entrada["questions"][0]["question"].as_str().map(str::trim) {
-                Some(pergunta) if !pergunta.is_empty() => format!("Pergunta · {pergunta}"),
-                _ => "Pergunta".into(),
+                Some(pergunta) if !pergunta.is_empty() => crate::tr!("Pergunta · {pergunta}", pergunta = pergunta).to_string(),
+                _ => crate::tr!("Pergunta").to_string(),
             },
-            Some(p) => format!("Permissão · {}", crate::claude::resumo_ferramenta(&p.ferramenta, &p.entrada)),
-            None => "Esperando você".into(),
+            Some(p) => crate::tr!("Permissão · {ferramenta}", ferramenta = crate::claude::resumo_ferramenta(&p.ferramenta, &p.entrada)).to_string(),
+            None => crate::tr!("Esperando você").to_string(),
         },
-        Execucao::Rodando { .. } => "Rodando".into(),
-        Execucao::Erro(texto) => format!("Erro · {}", primeira_frase(&texto)),
+        Execucao::Rodando { .. } => crate::tr!("Rodando").to_string(),
+        Execucao::Erro(texto) => crate::tr!("Erro · {motivo}", motivo = primeira_frase(&texto)).to_string(),
         _ => match motor.parada(&chat.id) {
-            Some(motivo) => format!("Parada · {}", super::componentes::motivo_curto(&motivo)),
-            None if motor.nao_lido(chat) => "Terminou".into(),
+            Some(motivo) => crate::tr!("Parada · {motivo}", motivo = super::componentes::motivo_curto(&motivo)).to_string(),
+            None if motor.nao_lido(chat) => crate::tr!("Terminou").to_string(),
             None => String::new(),
         },
     }
@@ -144,7 +144,7 @@ pub(super) fn estado_e_fala(motor: &Motor, chat: &Chat) -> String {
     match (estado.is_empty(), fala.is_empty()) {
         (true, _) => fala,
         (false, true) => estado,
-        (false, false) if estado.starts_with("Permissão") || estado.starts_with("Erro") => estado,
+        (false, false) if estado.starts_with(&*crate::tr!("Permissão")) || estado.starts_with(&*crate::tr!("Erro")) => estado,
         (false, false) => format!("{estado} · {fala}"),
     }
 }

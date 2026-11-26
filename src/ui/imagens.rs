@@ -89,7 +89,10 @@ pub fn tamanho_curto(bytes: u64) -> String {
     match bytes {
         0..1024 => format!("{bytes} B"),
         1024..1_048_576 => format!("{} KB", (bytes as f64 / 1024.).round() as u64),
-        _ => format!("{:.1} MB", bytes as f64 / 1_048_576.).replace('.', ","),
+        _ => {
+            let mb = format!("{:.1} MB", bytes as f64 / 1_048_576.);
+            if crate::i18n::lingua() == crate::i18n::Lingua::Ingles { mb } else { mb.replace('.', ",") }
+        },
     }
 }
 
@@ -290,7 +293,11 @@ fn caminho_de_imagem(uri: &str, base: Option<&Path>) -> Option<PathBuf> {
         return None;
     }
     let caminho = if let Some(resto) = texto.strip_prefix("file://") {
-        PathBuf::from(sem_porcentagem(resto))
+        let resto = sem_porcentagem(resto.strip_prefix("localhost").unwrap_or(resto));
+        // "file:///C:/x": no Windows, sem a barra da frente (como nos links).
+        let b = resto.as_bytes();
+        let com_unidade = b.len() > 3 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':' && b[3] == b'/';
+        PathBuf::from(if com_unidade { resto[1..].to_string() } else { resto.to_string() })
     } else if let Some(resto) = texto.strip_prefix("~/") {
         dirs::home_dir()?.join(sem_porcentagem(resto))
     } else {

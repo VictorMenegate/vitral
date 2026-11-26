@@ -70,7 +70,7 @@ impl Vista {
         let procurada = self.ultima_procura.map(|t| {
             let quando = uso_plano::local(t as i64);
             let texto = uso_plano::quando(quando, hoje);
-            if quando.0 == hoje { format!("hoje {texto}") } else { texto }
+            if quando.0 == hoje { tr!("hoje {texto}", texto = texto).to_string() } else { texto }
         });
         let proxima = self.proxima.map(|t| uso_plano::quando(uso_plano::local(t as i64), hoje));
         (procurada, proxima)
@@ -94,18 +94,18 @@ pub(super) fn linha_da_versao(v: &Vista, procurada: Option<&str>, proxima: Optio
         Permissao::ForaDaPasta => Some("Aberto fora da pasta do app · sem atualização automática"),
     };
     let quando = || match procurada {
-        Some(p) => format!("procurada {p}"),
-        None if v.modo == Modo::Desligadas => "não procura sozinho".to_string(),
-        None => "ainda não procurou".to_string(),
+        Some(p) => tr!("procurada {p}", p = p).to_string(),
+        None if v.modo == Modo::Desligadas => tr!("não procura sozinho").to_string(),
+        None => tr!("ainda não procurou").to_string(),
     };
     let (texto, andando) = match &v.estado {
-        Estado::Procurando => ("Procurando…".to_string(), true),
-        Estado::Baixando { versao, feito, total } => (format!("Baixando {versao} · {}", megas(*feito, *total)), true),
-        Estado::Instalando { versao } => (format!("Instalando a {versao}…"), true),
-        Estado::EmDia => (format!("{} é a mais nova · {}", v.versao, quando()), false),
-        Estado::Pronta(n) => (format!("A {} está pronta; vale quando reiniciar", n.versao), false),
-        Estado::Disponivel(n) if n.pela_pagina => (format!("A {} precisa ser instalada pela página", n.versao), false),
-        Estado::Disponivel(n) => (format!("Há a {} no GitHub", n.versao), false),
+        Estado::Procurando => (tr!("Procurando…").to_string(), true),
+        Estado::Baixando { versao, feito, total } => (tr!("Baixando {versao} · {progresso}", versao = versao, progresso = megas(*feito, *total)).to_string(), true),
+        Estado::Instalando { versao } => (tr!("Instalando a {versao}…", versao = versao).to_string(), true),
+        Estado::EmDia => (tr!("{versao} é a mais nova · {quando}", versao = v.versao, quando = quando()).to_string(), false),
+        Estado::Pronta(n) => (tr!("A {versao} está pronta; vale quando reiniciar", versao = n.versao).to_string(), false),
+        Estado::Disponivel(n) if n.pela_pagina => (tr!("A {versao} precisa ser instalada pela página", versao = n.versao).to_string(), false),
+        Estado::Disponivel(n) => (tr!("Há a {versao} no GitHub", versao = n.versao).to_string(), false),
         // A procura que falhou não conta: sem nenhuma que deu certo, fica só a versão.
         Estado::Erro(_) if procurada.is_none() => (v.versao.clone(), false),
         Estado::Parado | Estado::Erro(_) => (format!("{} · {}", v.versao, quando()), false),
@@ -120,8 +120,8 @@ pub(super) fn linha_da_versao(v: &Vista, procurada: Option<&str>, proxima: Optio
 /// O erro numa linha; o de rede diz quando tenta de novo.
 pub(super) fn texto_do_erro(erro: &Erro, proxima: Option<&str>) -> String {
     match (erro, proxima) {
-        (Erro::Rede(_), Some(quando)) => format!("Sem conexão com o GitHub; tento de novo {quando}"),
-        (Erro::Rede(_), None) => "Sem conexão com o GitHub.".to_string(),
+        (Erro::Rede(_), Some(quando)) => tr!("Sem conexão com o GitHub; tento de novo {quando}", quando = quando).to_string(),
+        (Erro::Rede(_), None) => tr!("Sem conexão com o GitHub.").to_string(),
         (erro, _) => erro.texto(),
     }
 }
@@ -140,7 +140,7 @@ pub(super) fn megas(feito: u64, total: u64) -> String {
             format!("{}", if baixo { valor.floor() } else { valor.round() })
         }
     };
-    format!("{} de {} MB", em_mb(feito, true), em_mb(total, false))
+    tr!("{feito} de {total} MB", feito = em_mb(feito, true), total = em_mb(total, false)).to_string()
 }
 
 /// O que a linha "Versão" oferece à direita.
@@ -208,9 +208,9 @@ pub(super) fn grupo(v: &Vista, trabalhando: usize, estreito: bool, window: &Wind
     let ancora = if estreito { Anchor::TopLeft } else { Anchor::TopRight };
     let com = |linha: LinhaDeOpcao, controle: AnyElement| if estreito { linha.campo(controle) } else { linha.controle(controle) };
     let modos = vec![
-        Opcao::new("automaticas", "Automáticas").descricao("Baixa e instala sozinho; vale quando você reiniciar"),
-        Opcao::new("so_avisar", "Só avisar").descricao("Avisa da versão nova; você escolhe quando instalar"),
-        Opcao::new("desligadas", "Desligadas").descricao("Não procura versões novas"),
+        Opcao::new("automaticas", tr!("Automáticas")).descricao(tr!("Baixa e instala sozinho; vale quando você reiniciar")),
+        Opcao::new("so_avisar", tr!("Só avisar")).descricao(tr!("Avisa da versão nova; você escolhe quando instalar")),
+        Opcao::new("desligadas", tr!("Desligadas")).descricao(tr!("Não procura versões novas")),
     ];
     let modo = menu_escolha(
         "cfg-atualizacoes",
@@ -222,13 +222,13 @@ pub(super) fn grupo(v: &Vista, trabalhando: usize, estreito: bool, window: &Wind
         window,
         cx,
     );
-    let mut grupo = GrupoDeOpcoes::new(Some("Atualizações".into())).linha(com(
-        LinhaDeOpcao::new("cfg-atualizacoes", "Atualizações")
+    let mut grupo = GrupoDeOpcoes::new(Some(tr!("Atualizações").into())).linha(com(
+        LinhaDeOpcao::new("cfg-atualizacoes", tr!("Atualizações"))
             .info(
-                "O Vitral procura no GitHub a cada 6 h, confere a assinatura antes de instalar e nunca reinicia \
-                 sozinho: a versão nova vale quando você reiniciar.",
+                tr!("O Vitral procura no GitHub a cada 6 h, confere a assinatura antes de instalar e nunca reinicia \
+                 sozinho: a versão nova vale quando você reiniciar."),
             )
-            .info("Vale para o app todo."),
+            .info(tr!("Vale para o app todo.")),
         modo,
     ));
     let (procurada, proxima) = v.horas();
@@ -236,7 +236,7 @@ pub(super) fn grupo(v: &Vista, trabalhando: usize, estreito: bool, window: &Wind
     let descricao = div()
         .flex()
         .flex_col()
-        .when_some(linha.origem, |d, origem| d.child(origem))
+        .when_some(linha.origem, |d, origem| d.child(SharedString::from(crate::i18n::traduzir(origem))))
         .child(
             div()
                 .flex()
@@ -250,23 +250,23 @@ pub(super) fn grupo(v: &Vista, trabalhando: usize, estreito: bool, window: &Wind
         .when_some(linha.erro, |d, (texto, grave)| {
             d.child(div().text_color(if grave { Cores::vermelho() } else { Cores::ambar() }).child(texto))
         });
-    grupo = grupo.linha(com(LinhaDeOpcao::new("cfg-versao", "Versão").descricao(descricao), controles(v, window, cx)));
+    grupo = grupo.linha(com(LinhaDeOpcao::new("cfg-versao", tr!("Versão")).descricao(descricao), controles(v, window, cx)));
     let mexendo = matches!(v.estado, Estado::Baixando { .. } | Estado::Instalando { .. } | Estado::Pronta(_));
     if let Some(volta) = v.volta.as_ref().filter(|_| !mexendo) {
-        let rotulo = format!("Voltar para a {}…", volta.para);
+        let rotulo = tr!("Voltar para a {versao}…", versao = volta.para);
         let botao = botao_fantasma("cfg-voltar", None, rotulo, TamanhoBotao::Caixa, window, cx).h(r(26.));
-        let linha = LinhaDeOpcao::new("cfg-voltar", "Versão anterior");
+        let linha = LinhaDeOpcao::new("cfg-voltar", tr!("Versão anterior"));
         grupo = grupo.linha(if volta.le_o_disco {
             let (de, para) = (v.versao.clone(), volta.para.clone());
             com(
-                linha.descricao(format!("A {para} continua instalada; voltar não instala a {de} de novo sozinho.")),
+                linha.descricao(tr!("A {para} continua instalada; voltar não instala a {de} de novo sozinho.", para = para, de = de)),
                 botao
                     .on_click(move |_, window, cx| confirmar_volta(de.clone(), para.clone(), trabalhando, window, cx))
                     .into_any_element(),
             )
         } else {
             com(
-                linha.desabilitada(format!("A {} não lê as conversas do formato novo.", volta.para)),
+                linha.desabilitada(tr!("A {versao} não lê as conversas do formato novo.", versao = volta.para)),
                 botao.disabled(true).into_any_element(),
             )
         });
@@ -282,36 +282,36 @@ fn controles(v: &Vista, window: &Window, cx: &App) -> AnyElement {
         _ => None,
     };
     let novidades = novidade.filter(|_| com_novidades).map(|n| {
-        botao_fantasma("cfg-novidades", None, "Novidades", TamanhoBotao::Caixa, window, cx).h(r(26.)).bg(Cores::preto()).on_click(move |_, window, cx| {
+        botao_fantasma("cfg-novidades", None, tr!("Novidades"), TamanhoBotao::Caixa, window, cx).h(r(26.)).bg(Cores::preto()).on_click(move |_, window, cx| {
             let (notas, pagina) = notas_e_pagina(&n, cx);
             abrir_novidades(&n.versao, notas, pagina, window, cx)
         })
     });
     let principal: Option<Button> = match botao {
         Botao::Procurar { ocupado } => Some(
-            botao_fantasma("cfg-procurar", None, "Procurar agora", TamanhoBotao::Caixa, window, cx).h(r(26.))
+            botao_fantasma("cfg-procurar", None, tr!("Procurar agora"), TamanhoBotao::Caixa, window, cx).h(r(26.))
                 .bg(Cores::preto())
                 .when(ocupado, |b| b.disabled(true))
                 .on_click(|_, _, cx| atualizacao::procurar_agora(cx)),
         ),
         Botao::Instalar => Some(
-            botao_primario("cfg-instalar", None, "Instalar", TamanhoBotao::Caixa, window, cx).h(r(26.))
+            botao_primario("cfg-instalar", None, tr!("Instalar"), TamanhoBotao::Caixa, window, cx).h(r(26.))
                 .on_click(|_, _, cx| atualizacao::instalar_agora(cx)),
         ),
         Botao::InstalarComoApp(versao) => Some(
-            botao_primario("cfg-instalar", None, format!("Instalar a {versao} como app"), TamanhoBotao::Caixa, window, cx).h(r(26.))
+            botao_primario("cfg-instalar", None, tr!("Instalar a {versao} como app", versao = versao), TamanhoBotao::Caixa, window, cx).h(r(26.))
                 .on_click(|_, _, cx| atualizacao::instalar_agora(cx)),
         ),
         Botao::Baixar(url) => Some(
-            botao_primario("cfg-baixar", None, "Baixar", TamanhoBotao::Caixa, window, cx).h(r(26.))
+            botao_primario("cfg-baixar", None, tr!("Baixar"), TamanhoBotao::Caixa, window, cx).h(r(26.))
                 .on_click(move |_, _, cx| cx.open_url(&url)),
         ),
         Botao::Pagina(url) => Some(
-            botao_fantasma("cfg-pagina", None, "Abrir a página", TamanhoBotao::Caixa, window, cx).h(r(26.))
+            botao_fantasma("cfg-pagina", None, tr!("Abrir a página"), TamanhoBotao::Caixa, window, cx).h(r(26.))
                 .on_click(move |_, _, cx| cx.open_url(&url)),
         ),
         Botao::Reiniciar => Some(
-            botao_primario("cfg-reiniciar", None, "Reiniciar", TamanhoBotao::Caixa, window, cx).h(r(26.))
+            botao_primario("cfg-reiniciar", None, tr!("Reiniciar"), TamanhoBotao::Caixa, window, cx).h(r(26.))
                 .on_click(|_, window, cx| reiniciar_pela_janela(window, cx)),
         ),
         Botao::Nenhum => None,
@@ -322,21 +322,21 @@ fn controles(v: &Vista, window: &Window, cx: &App) -> AnyElement {
 /// Voltar à mão pede o clique (o Enter só fecha) e conta o que para no meio.
 fn confirmar_volta(de: String, para: String, trabalhando: usize, window: &mut Window, cx: &mut App) {
     let mut detalhes: Vec<(Icon, SharedString, bool)> =
-        vec![(Lucide::ShieldOff.into(), format!("A {de} não é instalada de novo sozinha").into(), false)];
+        vec![(Lucide::ShieldOff.into(), tr!("A {de} não é instalada de novo sozinha", de = de), false)];
     if trabalhando > 0 {
-        let param = if trabalhando == 1 { "ela para" } else { "elas param" };
-        let texto = format!("{}: {param} no meio, com Retomar", conversas_trabalhando(trabalhando));
+        let param = if trabalhando == 1 { tr!("ela para") } else { tr!("elas param") };
+        let texto = tr!("{conversas}: {param} no meio, com Retomar", conversas = conversas_trabalhando(trabalhando), param = param);
         detalhes.push((Lucide::TriangleAlert.into(), texto.into(), true));
     }
     confirmar(
         Confirmacao {
             tom: TomConfirmacao::Atencao,
             icone: Lucide::RotateCcw.into(),
-            titulo: format!("Voltar para a {para}?").into(),
-            texto: format!("O Vitral reinicia na {para}. Os chats ficam como estão.").into(),
+            titulo: tr!("Voltar para a {para}?", para = para),
+            texto: tr!("O Vitral reinicia na {para}. Os chats ficam como estão.", para = para),
             detalhes,
-            ok: format!("Voltar para a {para}").into(),
-            cancelar: "Cancelar".into(),
+            ok: tr!("Voltar para a {para}", para = para),
+            cancelar: tr!("Cancelar").into(),
             ok_perigo: true,
         },
         |window, cx| match atualizacao::voltar_a_mao(cx) {
@@ -351,14 +351,14 @@ fn confirmar_volta(de: String, para: String, trabalhando: usize, window: &mut Wi
 
 /// Novidades de uma versão: o Markdown do NOVIDADES e o link do release.
 pub(super) fn abrir_novidades(versao: &str, notas: String, pagina: String, window: &mut Window, cx: &mut App) {
-    let titulo = format!("Novidades da {versao}");
+    let titulo = tr!("Novidades da {versao}", versao = versao);
     let id = SharedString::from(format!("novidades-{versao}"));
     window.open_dialog(cx, move |dialogo, window, cx| {
         let corpo = if notas.trim().is_empty() {
             div()
                 .corpo_ui()
                 .text_color(Cores::tenue())
-                .child("Esta versão não trouxe notas; a página do release tem o que mudou.")
+                .child(tr!("Esta versão não trouxe notas; a página do release tem o que mudou."))
                 .into_any_element()
         } else {
             div()
@@ -377,11 +377,11 @@ pub(super) fn abrir_novidades(versao: &str, notas: String, pagina: String, windo
             .footer(
                 RodapeDialogo::new()
                     .esquerda(
-                        botao_fantasma("novidades-github", Some(Lucide::ExternalLink.into()), "Ver no GitHub", TamanhoBotao::Controle, window, cx)
+                        botao_fantasma("novidades-github", Some(Lucide::ExternalLink.into()), tr!("Ver no GitHub"), TamanhoBotao::Controle, window, cx)
                             .on_click(move |_, _, cx| cx.open_url(&url)),
                     )
                     .principal(
-                        botao_primario("novidades-fechar", None, "Fechar", TamanhoBotao::Controle, window, cx)
+                        botao_primario("novidades-fechar", None, tr!("Fechar"), TamanhoBotao::Controle, window, cx)
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     ),
             )
@@ -393,7 +393,7 @@ fn icone_do_aviso() -> Icon {
 }
 
 /// A segunda linha dos avisos de versão nova: o que vale e o link das Novidades.
-fn linha_com_novidades(texto: &'static str, versao: SharedString, notas: SharedString, pagina: SharedString) -> AnyElement {
+fn linha_com_novidades(texto: SharedString, versao: SharedString, notas: SharedString, pagina: SharedString) -> AnyElement {
     h_flex()
         .gap(esp::E4)
         .text_size(r(13.))
@@ -407,7 +407,7 @@ fn linha_com_novidades(texto: &'static str, versao: SharedString, notas: SharedS
                 .cursor_pointer()
                 .text_color(Cores::destaque_texto())
                 .hover(|s| s.underline())
-                .child("Novidades")
+                .child(tr!("Novidades"))
                 .on_click(move |_, window, cx| abrir_novidades(&versao, notas.to_string(), pagina.to_string(), window, cx)),
         )
         .into_any_element()
@@ -419,8 +419,8 @@ pub(super) fn aviso_pronta(versao: &str, notas: String, pagina: String) -> Notif
     let (v, n, p) = (SharedString::from(versao.to_string()), SharedString::from(notas), SharedString::from(pagina));
     Notification::new()
         .icon(icone_do_aviso())
-        .title(format!("Versão {versao} pronta"))
-        .content(move |_, _, _| linha_com_novidades("Vale quando reiniciar", v.clone(), n.clone(), p.clone()))
+        .title(tr!("Versão {versao} pronta", versao = versao))
+        .content(move |_, _, _| linha_com_novidades(tr!("Vale quando reiniciar"), v.clone(), n.clone(), p.clone()))
         .action(|_, _, cx| {
             botao_do_aviso("Reiniciar", cx).on_click(cx.listener(|aviso, _, window, cx| {
                 aviso.dismiss(window, cx);
@@ -435,8 +435,8 @@ pub(super) fn aviso_disponivel(versao: &str, notas: String, pagina: String) -> N
     let (v, n, p) = (SharedString::from(versao.to_string()), SharedString::from(notas), SharedString::from(pagina));
     Notification::new()
         .icon(icone_do_aviso())
-        .title(format!("Há a {versao} no GitHub"))
-        .content(move |_, _, _| linha_com_novidades("Você escolhe quando instalar", v.clone(), n.clone(), p.clone()))
+        .title(tr!("Há a {versao} no GitHub", versao = versao))
+        .content(move |_, _, _| linha_com_novidades(tr!("Você escolhe quando instalar"), v.clone(), n.clone(), p.clone()))
         .action(|_, _, cx| {
             botao_do_aviso("Instalar", cx).on_click(cx.listener(|aviso, _, window, cx| {
                 aviso.dismiss(window, cx);
@@ -449,9 +449,9 @@ pub(super) fn aviso_disponivel(versao: &str, notas: String, pagina: String) -> N
 /// O que a saúde contou ao abrir, numa linha.
 pub(super) fn texto_do_aviso(aviso: &Aviso) -> String {
     match aviso {
-        Aviso::Atualizada { versao } => format!("Atualizado para a {versao}"),
-        Aviso::Voltou { de, para, automatica: true } => format!("A {de} não abriu duas vezes; voltei para a {para}"),
-        Aviso::Voltou { de, para, automatica: false } => format!("De volta à {para}; a {de} não é instalada de novo sozinha"),
+        Aviso::Atualizada { versao } => tr!("Atualizado para a {versao}", versao = versao).to_string(),
+        Aviso::Voltou { de, para, automatica: true } => tr!("A {de} não abriu duas vezes; voltei para a {para}", de = de, para = para).to_string(),
+        Aviso::Voltou { de, para, automatica: false } => tr!("De volta à {para}; a {de} não é instalada de novo sozinha", para = para, de = de).to_string(),
     }
 }
 

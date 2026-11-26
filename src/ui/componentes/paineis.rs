@@ -355,8 +355,6 @@ impl Render for PreviaArrasto {
             .max_w(r(280.))
             .px(esp::E12)
             .flutuante(cx)
-            .border_1()
-            .border_color(Cores::borda_forte())
             .children(simbolo)
             .child(div().min_w_0().truncate().rotulo().text_color(Cores::forte()).child(self.titulo.clone()))
     }

@@ -344,7 +344,17 @@ impl Element for RecorteNoAlto {
         cx: &mut App,
     ) {
         let mascara = self.mascara(limites);
-        window.with_content_mask(Some(mascara), |window| self.filho.prepaint(window, cx));
+        // Na área das mensagens, o que passaria do pé dela sobe o que falta para caber (com 4 de
+        // folga), em vez de ser cortado: a barra de ações da última resposta, com a conversa no
+        // fim (dono, 26/11/2026: "deixar um pouco mais pra cima pra quando ficar embaixo não
+        // cortar"). Nunca acima do alto da área.
+        let subir = self.area.as_ref().map(|a| a.get()).filter(|a| a.size.height > px(0.)).map_or(px(0.), |area| {
+            let falta = limites.bottom() - (area.bottom() - px(4.));
+            falta.min(limites.top() - area.top()).max(px(0.))
+        });
+        window.with_element_offset(point(px(0.), -subir), |window| {
+            window.with_content_mask(Some(mascara), |window| self.filho.prepaint(window, cx))
+        });
     }
 
     fn paint(

@@ -139,16 +139,36 @@ pub fn pedido_de_revisao(principal: Agente, foco: &[String], instrucoes: &str) -
     pedido
 }
 
-/// Põe o revisor na vez: o parceiro do chat (criado agora, se o chat era de um agente só).
+/// Põe o revisor na vez: o parceiro do chat (criado agora, se o chat era de um agente só), o
+/// outro agente do chat. Só os testes: o motor abre com a escolha das Configurações.
+#[cfg(test)]
 pub fn abrir(chat: &mut Chat) -> EmCurso {
+    let revisor = chat.agente.outro();
+    abrir_com(chat, revisor, None)
+}
+
+/// Como `abrir`, com o revisor e o modelo escolhidos nas Configurações. Num chat que já é uma
+/// dupla, quem revisa é o parceiro dele, com o modelo dele.
+pub fn abrir_com(chat: &mut Chat, revisor: Agente, modelo: Option<String>) -> EmCurso {
+    let criou_o_parceiro = chat.parceiro.is_none();
+    let revisor = match &chat.parceiro {
+        Some(p) => p.agente,
+        None if revisor == chat.agente => chat.agente.outro(),
+        None => revisor,
+    };
     let em_curso = EmCurso {
         desde_item: chat.itens.len(),
         principal: chat.agente,
-        criou_o_parceiro: chat.parceiro.is_none(),
+        criou_o_parceiro,
         atualizado_antes: chat.atualizado_em,
+        revisor: Some(revisor),
     };
     if em_curso.criou_o_parceiro {
-        iniciar_dupla(chat, em_curso.principal.outro());
+        iniciar_dupla(chat, revisor);
+        // O parceiro nasceu agora e já está na vez: o modelo dele é o do revisor.
+        if modelo.is_some() {
+            chat.modelo = modelo;
+        }
     } else {
         chat.trocar_vez();
     }
@@ -192,7 +212,7 @@ pub fn desfazer_as_cortadas(chats: &mut [Chat]) -> Vec<String> {
             em_curso.desde_item = chat.itens.len();
             fechar(chat, &em_curso, None);
         } else {
-            let aviso = resultado(em_curso.principal.outro(), &[], CORTADA_AO_FECHAR, true);
+            let aviso = resultado(em_curso.revisor(), &[], CORTADA_AO_FECHAR, true);
             fechar(chat, &em_curso, Some(aviso));
             chat.turno_aberto = false;
             chat.atualizado_em = chat.atualizado_em.min(em_curso.atualizado_antes.max(chat.lido_em));
@@ -260,10 +280,29 @@ pub fn entrega_ao_principal(revisor: Agente, texto: &str) -> (String, String) {
 }
 
 impl Motor {
-    /// O outro agente deste chat pode revisar agora: se está instalado e se bateu o limite do plano.
+    /// Quem revisa este chat: o parceiro, num chat que já é uma dupla; senão o escolhido nas
+    /// Configurações (`Config.revisao_agente`) ou, sem escolha ou num chat do próprio escolhido, o
+    /// outro agente.
+    pub fn revisor_para(&self, chat: &Chat) -> Agente {
+        if let Some(p) = &chat.parceiro {
+            return p.agente;
+        }
+        Agente::TODOS
+            .into_iter()
+            .find(|a| a.nome().eq_ignore_ascii_case(self.config.revisao_agente.trim()))
+            .filter(|a| *a != chat.agente)
+            .unwrap_or(chat.agente.outro())
+    }
+
+    /// O modelo escolhido para o revisor `agente` (vazio: o padrão dele).
+    fn modelo_do_revisor(&self, agente: Agente) -> Option<String> {
+        self.config.revisao_modelos.get(&agente.nome().to_lowercase()).map(|m| m.trim().to_string()).filter(|m| !m.is_empty())
+    }
+
+    /// O revisor deste chat pode revisar agora: se está instalado e se bateu o limite do plano.
     fn revisor_do_chat(&self, chat: &Chat) -> (Agente, bool, bool) {
         let limite = |uso: Uso| uso.bloqueado || uso.cinco_horas.is_some_and(|f| f >= 1.0) || uso.semana.is_some_and(|f| f >= 1.0);
-        match chat.agente.outro() {
+        match self.revisor_para(chat) {
             Agente::Codex => {
                 let no_limite = self.codex.as_ref().is_some_and(|c| limite(c.uso));
                 (Agente::Codex, crate::agente_codex::instalado(), no_limite)
@@ -273,15 +312,16 @@ impl Motor {
                 let conta = self.conta_padrao();
                 (Agente::Claude, self.versao_claude.is_some() || claude::binario_claude().is_file(), limite(self.uso_da_conta(&conta.id)))
             }
-            // O Gemini não é o outro de ninguém (`Agente::outro`); fica aqui só para o match.
-            Agente::Gemini => (Agente::Gemini, Agente::Gemini.instalado(), false),
+            // O Gemini e os ACP novos revisam quando são os escolhidos; o uso do plano deles não diz
+            // o limite.
+            outro => (outro, outro.instalado(), false),
         }
     }
 
     /// Quem está revisando o último turno deste chat agora (a linha de estado diz, discreta).
     pub fn revisando_o_par(&self, chat: &str) -> Option<Agente> {
         let em_curso = self.revisoes_do_par.get(chat)?;
-        self.com_turno(chat).then(|| em_curso.principal.outro())
+        self.com_turno(chat).then(|| em_curso.revisor())
     }
 
     /// Desde que item a conversa esconde o que o revisor está fazendo (ele vira o cartão no fim).
@@ -350,11 +390,15 @@ impl Motor {
     /// no começo do turno) e o pedido de revisão, que não aparece na conversa. O turno roda em
     /// Planejar (`comecar_turno_com` vê a revisão em curso), que no Codex é o sandbox `read-only`.
     fn comecar_revisao_do_par(&mut self, chat_id: &str, cx: &mut Context<Self>) -> bool {
+        let Some(revisor) = self.chat(chat_id).map(|c| self.revisor_para(c)) else {
+            return false;
+        };
+        let modelo = self.modelo_do_revisor(revisor);
         let Some(c) = self.chat_mut(chat_id) else {
             return false;
         };
         let principal = c.agente;
-        let em_curso = abrir(c);
+        let em_curso = abrir_com(c, revisor, modelo);
         self.revisoes_do_par.insert(chat_id.to_string(), em_curso);
         let entrada = Entrada {
             de: Some("Vitral".into()),
@@ -399,7 +443,7 @@ impl Motor {
         let mostrar_nada = self.config.revisao_mostra_nada;
         if let Some(c) = self.chat_mut(chat_id) {
             let desde = em_curso.desde_item.min(c.itens.len());
-            let item = resultado(em_curso.principal.outro(), &c.itens[desde..], fim, erro);
+            let item = resultado(em_curso.revisor(), &c.itens[desde..], fim, erro);
             let achou = matches!(item, Item::Revisao { .. });
             // "Mostrar 'nada a acrescentar'" desligado: a linha de quem não achou nada não entra.
             let item = Some(item).filter(|i| mostrar_nada || !e_resultado_de_revisao(i) || matches!(i, Item::Revisao { .. }));
@@ -594,6 +638,26 @@ mod testes {
 
     /// O revisor entra como o parceiro do chat e, no fim, o turno dele some da conversa, o
     /// resultado entra no lugar e o chat volta a quem era: de um agente só, com a sessão dele.
+    /// O revisor escolhido nas Configurações (26/11/2026): o Gemini num chat do Claude, com o
+    /// modelo dele; o escolhido que é o próprio agente do chat cede a vez ao outro.
+    #[test]
+    fn o_revisor_escolhido_entra_com_o_modelo_dele() {
+        let mut chat = Chat::novo("c".into(), "t", std::env::temp_dir());
+        chat.modelo = Some("opus".into());
+        let em_curso = abrir_com(&mut chat, Agente::Gemini, Some("gemini-3.8-flash".into()));
+        assert_eq!(em_curso.revisor(), Agente::Gemini);
+        assert_eq!((chat.agente, chat.modelo.as_deref()), (Agente::Gemini, Some("gemini-3.8-flash")));
+        fechar(&mut chat, &em_curso, None);
+        assert_eq!((chat.agente, chat.modelo.as_deref()), (Agente::Claude, Some("opus")), "o chat volta com o modelo dele");
+        assert!(chat.parceiro.is_none());
+        let mut chat = Chat::novo("d".into(), "t", std::env::temp_dir());
+        let em_curso = abrir_com(&mut chat, Agente::Claude, None);
+        assert_eq!(em_curso.revisor(), Agente::Codex, "num chat do Claude, o Claude escolhido cede ao Codex");
+        // Uma revisão gravada antes do campo: o revisor é o outro agente.
+        let antiga = EmCurso { revisor: None, ..em_curso };
+        assert_eq!(antiga.revisor(), Agente::Codex);
+    }
+
     #[test]
     fn a_revisao_entra_e_sai_sem_mexer_no_agente_do_chat() {
         let mut chat = Chat::novo("c".into(), "t", std::env::temp_dir());
@@ -601,7 +665,10 @@ mod testes {
         chat.sessao = "sessao-do-claude".into();
         chat.sessao_criada = true;
         let em_curso = abrir(&mut chat);
-        assert_eq!(em_curso, EmCurso { desde_item: 3, principal: Agente::Claude, criou_o_parceiro: true, atualizado_antes: chat.atualizado_em });
+        assert_eq!(
+            em_curso,
+            EmCurso { desde_item: 3, principal: Agente::Claude, criou_o_parceiro: true, atualizado_antes: chat.atualizado_em, revisor: Some(Agente::Codex) }
+        );
         assert_eq!(chat.agente, Agente::Codex, "o revisor está na vez");
         assert_ne!(chat.sessao, "sessao-do-claude", "na sessão dele");
         assert_eq!(chat.parceiro.as_ref().map(|p| (p.agente, p.sessao.as_str())), Some((Agente::Claude, "sessao-do-claude")));

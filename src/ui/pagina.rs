@@ -111,7 +111,7 @@ impl Render for BarraDaSelecao {
                     .pr(crate::tema::linear::ITEM_LADO)
                     .gap(esp::E6)
                     .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(Lucide::AtSign, 14., window)))
-                    .child("Mencionar")
+                    .child(tr!("Mencionar"))
                     .children(faixa.map(|f| div().flex_none().text_color(Cores::tenue()).tabular().child(f)))
                     .on_mouse_down(MouseButton::Left, acao(|j, w, cx| j.mencionar_da_pagina(w, cx))),
             )
@@ -121,7 +121,7 @@ impl Render for BarraDaSelecao {
                     .pr(crate::tema::linear::ITEM_LADO)
                     .gap(esp::E6)
                     .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(Lucide::Copy, 14., window)))
-                    .child("Copiar")
+                    .child(tr!("Copiar"))
                     .on_mouse_down(MouseButton::Left, acao(|j, _, cx| j.copiar_da_pagina(cx))),
             );
         // Entra como os menus, a cada seleção nova (a barra-trecho do protótipo).
@@ -303,12 +303,12 @@ impl Janela {
             _ => r(2.),
         };
         let nome: SharedString = match b.tipo {
-            Tipo::Divisor => "Divisor".into(),
-            Tipo::Tabela => "Tabela".into(),
+            Tipo::Divisor => tr!("Divisor"),
+            Tipo::Tabela => tr!("Tabela"),
             _ => pagina_md::ler_linha(&b.texto).texto.chars().take(40).collect::<String>().into(),
         };
         // A alça: o "+" põe um bloco embaixo (com o menu do "/"), os pontos arrastam.
-        let botao_da_alca = |id_el: &'static str, icone: Lucide, dica: &'static str| {
+        let botao_da_alca = |id_el: &'static str, icone: Lucide, dica: SharedString| {
             div()
                 .id(id_el)
                 .w(r(21.))
@@ -321,7 +321,7 @@ impl Janela {
                 .cursor_pointer()
                 .hover(|s| s.bg(Cores::cartao_elevado()).text_color(Cores::texto_da_fala()))
                 .child(super::componentes::icone(icone, 13., window))
-                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica).build(window, cx))
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
         };
         let alca = h_flex()
             .absolute()
@@ -329,9 +329,9 @@ impl Janela {
             .top(alca_topo)
             .opacity(0.)
             .group_hover(grupo.clone(), |s| s.opacity(1.))
-            .child(botao_da_alca("b-mais", Lucide::Plus, "Bloco abaixo").on_click(cx.listener(move |this, _, window, cx| this.bloco_abaixo(id, window, cx))))
+            .child(botao_da_alca("b-mais", Lucide::Plus, tr!("Bloco abaixo")).on_click(cx.listener(move |this, _, window, cx| this.bloco_abaixo(id, window, cx))))
             .child(
-                botao_da_alca("b-arrastar", Lucide::GripVertical, "Arraste para mover")
+                botao_da_alca("b-arrastar", Lucide::GripVertical, tr!("Arraste para mover"))
                     .cursor_grab()
                     .on_drag(ArrastoDeBloco { id, nome }, |arrasto, _, _, cx| cx.new(|_| arrasto.clone())),
             );
@@ -431,7 +431,7 @@ impl Janela {
                 .overflow_x_hidden()
                 .children(b.texto.split('\n').map(|l| div().min_h(r(19.)).child(l.to_string())))
                 .into_any_element(),
-            _ if vazio => div().text_color(Cores::apagado()).child(if b.tipo == Tipo::Texto { "" } else { b.tipo.marcador() }).into_any_element(),
+            _ if vazio => div().text_color(Cores::apagado()).child(if b.tipo == Tipo::Texto { SharedString::default() } else { b.tipo.marcador() }).into_any_element(),
             _ => div().child(texto).into_any_element(),
         };
         let _ = janela;
@@ -561,7 +561,7 @@ impl Janela {
                         .font_weight(FontWeight::SEMIBOLD)
                         .map(|s| if tipo == Tipo::Tarefa { s.child(super::componentes::icone(Lucide::Check, 11., window)) } else { s.child(sigla) }),
                 )
-                .child(nome)
+                .child(crate::i18n::traduzir(nome))
                 .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                 .on_click(cx.listener(move |this, _, window, cx| this.escolher_tipo(tipo, window, cx)))
         });
@@ -574,7 +574,7 @@ impl Janela {
                     .rounded(raio::CARTAO)
                     // Chapado, sem fio claro nem sombra (o `.menu-flutua` do protótipo).
                     .bg(Cores::preto())
-                    .child(div().px(esp::E6).py(esp::E4).text_size(r(11.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::tenue()).child("Blocos"))
+                    .child(div().px(esp::E6).py(esp::E4).text_size(r(11.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::tenue()).child(tr!("Blocos")))
                     .children(itens),
                 "entra-menu-da-barra",
                 super::movimento::De::Cima,

@@ -645,6 +645,8 @@ pub struct LinhaDeOpcao {
     titulo: SharedString,
     arco_iris: bool,
     simbolo: Option<(Lucide, Hsla)>,
+    /// O glifo colorido de uma IA antes do título (a lista das IAs nas Configurações).
+    marca: Option<super::base::Marca>,
     descricao: Option<AnyElement>,
     aviso: Option<SharedString>,
     info: Option<SharedString>,
@@ -671,6 +673,7 @@ impl LinhaDeOpcao {
             titulo: titulo.into(),
             arco_iris: false,
             simbolo: None,
+            marca: None,
             descricao: None,
             aviso: None,
             info: None,
@@ -736,6 +739,12 @@ impl LinhaDeOpcao {
         self
     }
 
+    /// O glifo colorido de uma IA antes do título.
+    pub fn marca(mut self, marca: super::base::Marca) -> Self {
+        self.marca = Some(marca);
+        self
+    }
+
 
     /// Uma linha em âmbar embaixo da descrição (custo, carga); some com a linha desabilitada.
     pub fn aviso(mut self, a: impl Into<SharedString>) -> Self {
@@ -771,6 +780,7 @@ impl RenderOnce for LinhaDeOpcao {
                 (None, _) => Cores::texto(),
             })
             .when_some(self.simbolo, |d, (icone, _)| d.child(Icon::new(icone).with_size(tam(window, 14.))))
+            .when_some(self.marca, |d, marca| d.child(marca.glifo(14.)))
             .map(|d| {
                 if self.arco_iris {
                     d.child(texto_arco_iris(&self.titulo))
@@ -956,6 +966,10 @@ pub struct ListaDeEscolha {
     /// Num diálogo (a paleta, as mensagens, a pasta do chat novo): a lista vai no fundo da lista,
     /// mais alta que num popover.
     em_dialogo: bool,
+    /// Sem o campo de busca (o seletor de modelo do protótipo: a lista é curta).
+    sem_busca: bool,
+    /// Cada item numa linha só, o título e a descrição lado a lado (o seletor de modelo).
+    uma_linha: bool,
 }
 
 impl EventEmitter<EventoEscolha> for ListaDeEscolha {}
@@ -980,7 +994,19 @@ impl ListaDeEscolha {
             ficha_no_escolhido: false,
             cursor: None,
             em_dialogo: false,
+            sem_busca: false,
+            uma_linha: false,
         }
+    }
+
+    /// Sem o campo de busca: as setas e o Enter continuam valendo.
+    pub fn sem_busca(&mut self, sim: bool) {
+        self.sem_busca = sim;
+    }
+
+    /// Cada item numa linha só (ver `uma_linha`).
+    pub fn uma_linha(&mut self, sim: bool) {
+        self.uma_linha = sim;
     }
 
     /// A lista de um diálogo: no fundo da lista (o metal, o véu e o buraco, como as colunas do
@@ -1052,8 +1078,13 @@ fn posicao(grupos: &[GrupoDeEscolha], chave: &str) -> Option<IndexPath> {
 
 /// Passo de 48 com descrição e 32 sem; o check fica à direita, na coluna dos selos. Com `ficha`,
 /// o escolhido vai na ficha de metal, que sangra pela margem de 8 da linha do `Command` até a
-/// borda dela (em cima do véu, só `forte` e `texto`).
-fn linha_de_escolha(item: &ItemDeEscolha, escolhido: bool, ficha: bool, window: &Window) -> Div {
+/// borda dela (em cima do véu, só `forte` e `texto`). Com `uma_linha`, o jeito do seletor de
+/// modelo do protótipo: 28 de altura, símbolo 16, o título e a descrição lado a lado, e a seta de
+/// abrir na coluna da direita.
+fn linha_de_escolha(item: &ItemDeEscolha, escolhido: bool, ficha: bool, uma_linha: bool, window: &Window) -> Div {
+    if uma_linha {
+        return linha_unica(item, escolhido, ficha, window);
+    }
     let descrito = item.descricao.is_some();
     let na_ficha = ficha && escolhido;
     let sangria = tam(window, 8.);
@@ -1130,6 +1161,62 @@ fn linha_de_escolha(item: &ItemDeEscolha, escolhido: bool, ficha: bool, window: 
         )
 }
 
+fn linha_unica(item: &ItemDeEscolha, escolhido: bool, ficha: bool, window: &Window) -> Div {
+    let na_ficha = ficha && escolhido;
+    let sangria = tam(window, 8.);
+    div()
+        .relative()
+        .when(na_ficha, |d| d.child(div().absolute().top_0().bottom_0().left(-sangria).right(-sangria).child(ficha_de_metal(28.))))
+        .flex()
+        .items_center()
+        .gap(esp::E8)
+        .w_full()
+        .h(altura::BARRA)
+        .children(item.simbolo.as_ref().and_then(Simbolo::copia).map(|s| s.desenhar(16., window)))
+        .child(
+            div()
+                .flex_none()
+                .max_w(relative(0.7))
+                .truncate()
+                .text_size(r(13.))
+                .line_height(r(18.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(if escolhido { Cores::forte() } else { Cores::texto() })
+                .child(item.titulo.clone()),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .metadado()
+                .text_color(if na_ficha { Cores::texto() } else { Cores::tenue() })
+                .children(item.descricao.clone()),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(esp::E4)
+                .children(item.selos.iter().cloned())
+                .when(escolhido, |d| {
+                    d.child(
+                        div()
+                            .text_color(if na_ficha { Cores::forte() } else { Cores::tenue() })
+                            .child(Icon::new(Lucide::Check).with_size(tam(window, 14.))),
+                    )
+                })
+                .when_some(item.seta, |d, aberta| {
+                    d.child(
+                        div()
+                            .text_color(Cores::tenue())
+                            .child(Icon::new(if aberta { Lucide::ChevronDown } else { Lucide::ChevronRight }).with_size(tam(window, 14.))),
+                    )
+                }),
+        )
+}
+
 impl Render for ListaDeEscolha {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Até 440, mas cabendo na janela com o resto do popover em volta (abas, rodapé, a caixa
@@ -1145,13 +1232,15 @@ impl Render for ListaDeEscolha {
         let grupos = self.filtrados.clone().unwrap_or_else(|| self.grupos.clone());
         let escolhido = self.escolhido.clone();
         let ficha = self.ficha_no_escolhido;
+        let uma_linha = self.uma_linha;
         let mut comando = Command::new(&self.estado)
+            .searchable(!self.sem_busca)
             .placeholder(self.placeholder.clone())
             .bordered(false)
             .max_h(teto)
             .empty(|estado, _, cx| {
-                EstadoVazio::new(Lucide::Search, "Nada encontrado")
-                    .texto(format!("Nada encontrado para “{}”", estado.query(cx)))
+                EstadoVazio::new(Lucide::Search, tr!("Nada encontrado"))
+                    .texto(tr!("Nada encontrado para “{termo}”", termo = estado.query(cx)))
             });
         for (g, grupo) in grupos.iter().enumerate() {
             let mut grupo_cmd = CommandGroup::new();
@@ -1173,7 +1262,7 @@ impl Render for ListaDeEscolha {
                     // O escolhido já tem a ficha de metal: o realce claro do ponteiro não vai
                     // por baixo dela (sobrava nos cantos e lavava o metal).
                     .sem_realce(marcado && ficha)
-                    .child(move |window, _| linha_de_escolha(&grupos[g].itens[i], marcado, ficha, window));
+                    .child(move |window, _| linha_de_escolha(&grupos[g].itens[i], marcado, ficha, uma_linha, window));
                 if let Some(termos) = &item.termos {
                     linha = linha.keywords([termos.clone()]);
                 }

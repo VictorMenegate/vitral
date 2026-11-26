@@ -274,28 +274,47 @@ pub struct RevisaoEmCurso {
     pub criou_o_parceiro: bool,
     /// O `atualizado_em` de antes: a revisão sem achado não deixa o chat como não lido.
     pub atualizado_antes: u64,
+    /// Quem revisa (o agente escolhido nas Configurações). Sem ele (uma revisão gravada por uma
+    /// versão de antes), o outro agente do chat.
+    #[serde(default)]
+    pub revisor: Option<Agente>,
 }
 
-/// Quem responde num chat: o Claude Code, o Codex (CLI da OpenAI) ou o Gemini (o Antigravity CLI
-/// do Google, `agy`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+impl RevisaoEmCurso {
+    /// Quem está revisando.
+    pub fn revisor(&self) -> Agente {
+        self.revisor.unwrap_or(self.principal.outro())
+    }
+}
+
+/// Quem responde num chat: o Claude Code, o Codex (CLI da OpenAI), o Gemini (o Antigravity CLI do
+/// Google, `agy`) e, desde 26/11/2026, os que falam ACP (`agente_acp`): GitHub Copilot CLI, Cursor
+/// Agent, OpenCode, Qwen Code, Kimi Code e Grok Build.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Agente {
     #[default]
     Claude,
     Codex,
     Gemini,
+    Copilot,
+    Cursor,
+    OpenCode,
+    Qwen,
+    Kimi,
+    Grok,
 }
 
 impl Agente {
-    /// Os três, na ordem das abas e dos menus.
-    pub const TODOS: [Agente; 3] = [Agente::Claude, Agente::Codex, Agente::Gemini];
+    /// Todos, na ordem das abas e dos menus.
+    pub const TODOS: [Agente; 9] =
+        [Agente::Claude, Agente::Codex, Agente::Gemini, Agente::Copilot, Agente::Cursor, Agente::OpenCode, Agente::Qwen, Agente::Kimi, Agente::Grok];
 
-    /// O parceiro padrão de uma dupla: o Codex para o Claude, e o Claude para os outros dois.
+    /// O parceiro padrão de uma dupla: o Codex para o Claude, e o Claude para os outros.
     pub fn outro(self) -> Agente {
         match self {
             Agente::Claude => Agente::Codex,
-            Agente::Codex | Agente::Gemini => Agente::Claude,
+            _ => Agente::Claude,
         }
     }
 
@@ -305,6 +324,12 @@ impl Agente {
             Agente::Claude => "Claude",
             Agente::Codex => "Codex",
             Agente::Gemini => "Gemini",
+            Agente::Copilot => "Copilot",
+            Agente::Cursor => "Cursor",
+            Agente::OpenCode => "OpenCode",
+            Agente::Qwen => "Qwen",
+            Agente::Kimi => "Kimi",
+            Agente::Grok => "Grok",
         }
     }
 
@@ -314,7 +339,18 @@ impl Agente {
             Agente::Claude => "Claude Code",
             Agente::Codex => "Codex",
             Agente::Gemini => "Antigravity CLI",
+            Agente::Copilot => "GitHub Copilot CLI",
+            Agente::Cursor => "Cursor Agent",
+            Agente::OpenCode => "OpenCode",
+            Agente::Qwen => "Qwen Code",
+            Agente::Kimi => "Kimi Code",
+            Agente::Grok => "Grok Build",
         }
+    }
+
+    /// Fala o ACP: o Gemini e os novos, pelo mesmo protocolo (`agente_gemini::Protocolo`).
+    pub fn acp(self) -> bool {
+        !matches!(self, Agente::Claude | Agente::Codex)
     }
 
     /// Os agentes que dá para escolher neste computador: o Claude sempre, e os outros instalados.
@@ -328,6 +364,7 @@ impl Agente {
             Agente::Claude => true,
             Agente::Codex => crate::agente_codex::instalado(),
             Agente::Gemini => crate::agente_gemini::instalado(),
+            outro => crate::agente_acp::perfil(outro).is_some_and(crate::agente_acp::PerfilAcp::instalado),
         }
     }
 }
@@ -451,6 +488,9 @@ pub struct Chat {
     /// Conta do Claude (id, ou "auto"); `None` segue a configuração.
     #[serde(default)]
     pub conta: Option<String>,
+    /// Conta do Codex (id em `contas_codex`); `None` segue a configuração (`Config.conta_codex`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conta_codex: Option<String>,
     /// Tokens no contexto e tamanho da janela, do último turno.
     #[serde(default)]
     pub contexto: Option<u64>,
@@ -532,6 +572,7 @@ impl Chat {
             permitidas: Vec::new(),
             esforco: None,
             conta: None,
+            conta_codex: None,
             contexto: None,
             janela: None,
             comandos: Vec::new(),
@@ -747,6 +788,14 @@ pub struct Config {
     /// Os anéis de uso do plano flutuando no canto de baixo, à direita, da janela. Desligado,
     /// somem da tela (o uso continua em Contas do Claude).
     pub uso_no_canto: bool,
+    /// Um chat com conta escolhida à mão que bate no limite do plano passa sozinho para a conta
+    /// com mais folga, e fica nela (como o Zerosub do Paseo; dono, 26/11/2026: "melhora a troca de
+    /// conta"). Desligado, só a Automática troca, e as outras mostram o "Continuar na…".
+    pub trocar_conta_no_limite: bool,
+    /// A conta do Codex dos chats novos (id em `contas_codex`; vazio é a principal).
+    pub conta_codex: String,
+    /// A língua da interface (`crate::i18n`): vazio segue o sistema; "pt", "en" ou "es".
+    pub lingua: String,
     /// Modo foco: as conversas mostram só as mensagens, sem as chamadas de ferramenta. Vale para
     /// todos os chats (era por painel; dono, 18/11/2026: "ser pra todos os chats").
     pub modo_foco: bool,
@@ -785,6 +834,12 @@ pub struct Config {
     pub revisao_manda_sozinha: bool,
     /// A linha "Codex revisou: nada a acrescentar" aparece na conversa.
     pub revisao_mostra_nada: bool,
+    /// Quem revisa: vazio é o outro agente (o Codex num chat do Claude, o Claude nos outros);
+    /// "claude", "codex" ou "gemini" fixam o revisor. Num chat do próprio revisor, vale o outro
+    /// (dono, 26/11/2026: "faz dar pra escolher que IA uso na revisão e qual modelo").
+    pub revisao_agente: String,
+    /// O modelo de cada revisor, pelo agente ("claude" → "opus"); sem a chave, o padrão dele.
+    pub revisao_modelos: std::collections::BTreeMap<String, String>,
     /// As cores do tema, o fundo animado e as bordas finas (Configurações › Aparência › Cores).
     pub paleta: crate::paleta::Paleta,
     /// O endereço do servidor ai-memory da equipe (`memoria_equipe`); vazio é sem memória da
@@ -915,6 +970,9 @@ impl Default for Config {
             mcp_trabalhadores: false,
             arquivar_apos_dias: 0,
             uso_no_canto: true,
+            lingua: String::new(),
+            conta_codex: String::new(),
+            trocar_conta_no_limite: true,
             modo_foco: false,
             transparencia: crate::tema::TRANSPARENCIA_PADRAO,
             pasta_de_trabalho: None,
@@ -930,6 +988,8 @@ impl Default for Config {
             revisao_instrucoes: String::new(),
             revisao_manda_sozinha: false,
             revisao_mostra_nada: true,
+            revisao_agente: String::new(),
+            revisao_modelos: std::collections::BTreeMap::new(),
             paleta: crate::paleta::Paleta::default(),
             memoria_da_equipe: String::new(),
             avisos_no_app: true,

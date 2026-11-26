@@ -1,6 +1,8 @@
 # Vitral
 
-> A porta de entrada do projeto é o [README.md](README.md) (o que o Vitral é, como instalar, como
+> English: [docs/MANUAL.en.md](docs/MANUAL.en.md)
+
+> A porta de entrada do projeto é o [README.pt-BR.md](README.pt-BR.md) (o que o Vitral é, como instalar, como
 > conferir o que baixou). Este arquivo é o manual de dentro: como cada parte funciona, o que já foi
 > decidido e as pegadinhas.
 
@@ -136,6 +138,26 @@ componentes do GPUI Kit.
   conta, sem comandos de barra nem `/compact`, e sem as ferramentas do Vitral: o agy só aceita
   servidor MCP local. Instalar e entrar (`uso_plano::instalar_gemini`) abre o terminal com o
   instalador oficial e o `agy acp --login`. Conferido no agy 1.5.15 com uma conta pessoal.
+- **Os agentes ACP novos** (26/11/2026; dono: "GitHub Copilot CLI, Cursor Agent, OpenCode, Qwen
+  Code, Kimi e grok"): `Agente::{Copilot, Cursor, OpenCode, Qwen, Kimi, Grok}`, cada um com um
+  perfil de dados em `src/agente_acp.rs` (o binário e onde o instalador o põe, os argumentos do
+  servidor ACP, o instalador oficial do Linux/Mac e do Windows, o login, o atualizar, a cor da
+  marca) e o mesmo protocolo do Gemini (`agente_gemini::Protocolo`, que passou a valer por agente).
+  O que muda dos ACP para o agy: o prompt de sistema vai na frente do primeiro pedido (só o agy
+  aceita o `_meta`), a conversa guardada volta pelo `session/resume` ou o `session/load` que o
+  `initialize` disser, o `authenticate` com o primeiro dos `authMethods` é tentado uma vez quando a
+  sessão pede login (o Cursor exige, mesmo com o `agent login` feito), o esforço vai como veio
+  quando o agente o oferece (o OpenCode tem de low a max, na opção `effort` da categoria
+  `thought_level`), as opções vão pelo id de verdade (achado pela categoria), as ferramentas sem
+  nome viram as do Claude Code pelo `kind` (read, edit, execute, search, fetch) e, no Sem perguntar
+  de quem não tem a opção própria, o Vitral aprova cada pedido sozinho. Os modelos vêm das opções
+  da última sessão de cada agente (antes dela, o seletor mostra o Padrão). A marca é um disco na
+  cor do agente com a inicial (`Marca::Agente`). Aparecem na lateral do seletor de modelo quando
+  instalados (a busca pula atalhos de outros programas, como o `copilot` do VS Code em /usr/bin),
+  em Configurações > Agentes (com Instalar, Atualizar no terminal e Entrar) e no passo IAs do
+  Início. Sem anel de uso, sem `/compact` e sem contas extras ainda. Conferido em 26/11/2026 com o
+  OpenCode 2.2.3 (sessão, modelos, esforço, modo e `session/load` de verdade) e o Cursor Agent (o
+  `initialize` e o pedido de login); Copilot, Qwen, Kimi e Grok seguem a documentação de cada um.
 - **Claude e Codex no mesmo chat (a dupla).** `Chat.parceiro` guarda a sessão, o modelo e o uso do
   outro agente; `Chat::trocar_vez` troca os dois de lugar, então todo o resto do turno (conta,
   modelo, retomar a sessão) continua lendo `chat.agente` e `chat.sessao` como sempre. Em
@@ -577,10 +599,13 @@ componentes do GPUI Kit.
     ainda refaz as mensagens de todos os painéis: saber qual painel mudou pede uma assinatura do
     que cada um desenha.
 - **Boas-vindas.** Na primeira abertura (sem pasta de trabalho e sem chat nenhum; `VITRAL_BOAS_VINDAS=1`
-  força), `src/ui/boas_vindas.rs` mostra quatro passos: a apresentação, a pasta de trabalho (as
-  pastas em que o Claude Code já tem conversas vêm como sugestão) e o básico (permissões, quem
-  responde quando o Codex está instalado, modelo do Claude e trazer as conversas que já existem)
-  e a conexão opcional à memória da equipe.
+  força), `src/ui/boas_vindas.rs` mostra cinco passos: a apresentação, a pasta de trabalho (as
+  pastas em que o Claude Code já tem conversas vêm como sugestão), as IAs (Claude Code, Codex e
+  Gemini, cada uma com "Pronto" ou o **Instalar**, que abre o instalador oficial no terminal; a
+  linha se relê a cada 2 s enquanto o passo está à vista), o básico (permissões, quem responde,
+  modelo do Claude e, num cartão, trazer as conversas que já existem, a revisão automática, a
+  sugestão da próxima mensagem e o aviso dentro do app; dono, 26/11/2026: "coloca mais
+  configurações importantes na parte de início") e a conexão opcional à memória da equipe.
 - **Memória da equipe.** No primeiro uso, no menu do logo e nas Configurações, cada pessoa informa
   o endereço de um servidor ai-memory e sua chave. **Testar e ligar** confere o servidor antes de
   guardar a conexão; **Consultar memória** busca entre os projetos acessíveis e abre o texto das
@@ -1809,6 +1834,30 @@ onde ele muda. A lista tem altura de uns 230 px e rola por dentro.
 
 ## Contas e uso dos planos
 
+Trocar a conta de um chat (26/11/2026, no jeito do Zerosub do Paseo): o seletor de modelo, como
+antes, ou **`/conta`** na caixa, que o Vitral resolve sem mandar ao Claude Code. Sozinho, diz as
+contas, a em uso e como está cada uma (livre, 5 h em N%, no limite, sem login); com um nome (ou o
+começo dele), **`/conta automática`** ou **`/conta padrão`** (volta a seguir a padrão), troca a
+deste chat, e vale no próximo turno. **Trocar sozinho no limite** (Configurações > Agentes >
+Claude Code, ligada de fábrica): um chat com a conta escolhida à mão que bate no limite passa para
+a conta com mais folga, repete o turno nela e fica nela, com o aviso na conversa; desligada, só a
+Automática troca, e as outras mostram o **Continuar na…**.
+
+**Contas do Codex** (26/11/2026; `src/contas_codex.rs` e `src/motor/contas_do_codex.rs`): em
+Configurações > Agentes > Codex, **Contas do Codex** lista a principal (o login normal, em
+`~/.codex` ou `$CODEX_HOME`) e as extras, cada uma com o login (ou **Entrar…**, que abre o `codex
+login` da conta no terminal), **Usar nos novos** (a padrão dos chats novos, `Config.conta_codex`) e,
+nas extras, a lixeira. **Adicionar…** cria a conta ("Codex 2", "Codex 3"…) e abre o login dela. Cada
+extra é uma pasta em `~/.config/vitral/contas-codex/<id>` usada como `CODEX_HOME`, onde só o
+`auth.json` é dela: `config.toml`, `AGENTS.md`, prompts, skills e as sessões são links para a
+principal, e o processo leva `CODEX_SQLITE_HOME` da principal. A conta de um chat do Codex se troca
+no seletor de modelo (a linha da conta, com mais de uma) ou com `/conta <nome>` e `/conta padrão`.
+O Codex não continua uma conversa noutra conta: com a sessão já aberta, a troca começa uma sessão
+nova, e a conversa até ali, exportada num arquivo, vai como nota junto da próxima mensagem. Com
+**Trocar sozinho no limite**, o limite do plano numa conta passa o chat para outra conta do Codex
+com login e repete o turno nela. O anel de uso do Codex continua um só (as sessões são as mesmas).
+No Windows as contas extras ainda não funcionam (os links pedem o Modo de Desenvolvedor).
+
 No canto de cima, à direita, da janela, logo abaixo do ×, flutua um anel de 30 por serviço, um em cima do
 outro, cada um num disco opaco da peça (`uso_no_canto`, em `src/ui/uso_plano.rs`): cada um só com a conta daquele serviço conectada (o do Codex,
 também com uso lido). Cada um é o disco da marca com **um** anel em volta (com a fenda
@@ -1817,8 +1866,8 @@ embaixo), que mostra a janela mais apertada das duas (5 h ou semana), na cor do 
 porcentagens ficam na dica e no popover. Com mais de uma conta, o do Claude leva a inicial da
 conta em uso. **Uso do plano no canto da janela**, em Configurações > Aparência
 (`Config.uso_no_canto`, ligada por padrão), esconde os anéis; o uso continua em **Contas do
-Claude**. Sem o Codex instalado, o anel dele não aparece: **Instalar o Codex…**, no menu do logo,
-abre o terminal com o instalador oficial e o login. O clique num anel abre o popover de detalhes,
+Claude**. Sem o Codex instalado, o anel dele não aparece: o **Instalar…** dele, em Configurações >
+Agentes, abre o terminal com o instalador oficial e o login. O clique num anel abre o popover de detalhes,
 para cima, alinhado à direita: o plano, as duas janelas, cada uma com um anel de 44 que enche ao
 abrir, a porcentagem no meio (em âmbar ou vermelho a partir de 70%) e, ao lado, o rótulo e a hora
 em que renova ("renova em 2 h 13 min · 15:59"; uma janela sem leitura fica só com o rótulo e "sem
@@ -2284,8 +2333,12 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
 - **Configurações** (Ctrl+,), gravando na hora, valem para todos os chats (o caminho do
   `config.json` fica na dica do subtítulo). Desde 23/11/2026 são um diálogo largo
   (`LARGURA_DAS_CONFIGURACOES`) com uma coluna à esquerda das partes (`Parte`: Chats, Agentes,
-  Revisão, Notificações, Memória, Aparência, Atalhos, Claude Code, Codex, Gemini e Atualizações; as
-  contas do Claude ficam em Claude Code; no diálogo estreito, só os ícones) e, à
+  Revisão, Notificações, Memória, Aparência, Atalhos e Atualizações; no diálogo estreito, só os
+  ícones). Desde 26/11/2026, **Agentes** junta todas as IAs no alto, na lista **IAs** (dono: "uma
+  aba que junte todas"): cada uma com a marca, a versão instalada ou "Não instalado", o
+  **Instalar…** quando falta (o instalador oficial no terminal; o do Claude Code entrou junto) e a
+  seta que abre a parte dela (Claude Code, com as contas do Claude; Codex; Gemini), com a seta de
+  voltar no cabeçalho. Os "Instalar…" saíram do menu do logo. À
   direita, as opções da parte escolhida, que rolam sozinhas numa altura que nunca passa da da
   janela (`altura_do_corpo`: 520 a 100%, ou a janela menos a folga do cabeçalho; a navegação e o
   cabeçalho ficam parados e só a coluna rola). O que mora em cada
@@ -2460,33 +2513,56 @@ por pasta e, em cada chat, a frase, o tempo, a pendência e os arquivos).
   dias, do começo do dia de seis dias atrás até agora. O resumo é montado ao abrir e ao trocar de
   período, não a cada quadro.
 
-## Quadro de ideias (Ctrl+I)
+## Tarefas (Ctrl+I)
 
-A lista do que você quer fazer no futuro, num kanban (`src/ideias.rs`, `src/motor/ideias.rs` e
-`src/ui/quadro_ideias.rs`). Só você anota: nenhum chat põe ideia no quadro sozinho (dono,
-18/11/2026: "essas ideias é pra ser coisas do futuro que vou colocando pra não esquecer"). Abre
-pelo Ctrl+I, pelo **Quadro de ideias** do menu do logo e por **Ideias deste chat** no menu de uma
-conversa (o botão direito na lista ou no cabeçalho, ou Shift+F10), que diz quantas ela tem.
+Todos os chats e as ideias num quadro só, no jeito do Better Paseo, o plugin do Paseo que põe os
+agentes num quadro (`src/ideias.rs`, `src/motor/ideias.rs` e `src/ui/quadro_ideias.rs`; dono,
+26/11/2026: "faz o quadro de ideias ser tipo esse better paseo, pode trocar o nome também, e faz
+ele abrir no lugar dos chats e ainda ter como salvar as ideias"). Era o Quadro de ideias, num
+diálogo. Abre pelo Ctrl+I (de novo, volta às conversas), pelo item **Tarefas** da lista, embaixo
+de Conversas e Arquivos, e por **Ideias deste chat** no menu de uma conversa (o botão direito na
+lista ou no cabeçalho, ou Shift+F10), que mostra só as ideias dela e o cartão dela.
 
-O diálogo ocupa quase a janela, com 16 de margem. Em cima, uma linha só: "Ideias", o chip do chat
-quando o quadro é de um (com o × que mostra todas), como está o Linear (com o ⟳ e a tomada) e o
-fechar. Embaixo, as quatro colunas, **Ideias**, **Próximas**, **Fazendo** e **Feitas**: o nome
-com o número de cartões e, no fundo da lista (o metal, o véu azul e o buraco, como os balões da
-conversa), os cartões, que rolam por coluna. O campo do alto de Ideias anota com o Enter; a ideia
-entra no alto da coluna, na pasta do chat à vista (sem chat, na pasta de trabalho), ou, no quadro
-de um chat, já dele.
+O quadro ocupa o lugar das conversas e da direita, num cartão só; a lista fica. O ×, o Esc (o
+primeiro limpa a busca), o item **Conversas** e abrir qualquer conversa voltam a elas. Em cima, o
+nome, como está o Linear (com o ⟳ e a tomada) e o fechar; embaixo, os filtros: o agente (Todos,
+Claude, Codex, Gemini, só os que têm chat), a pasta, a origem das ideias (com o Linear ligado) e a
+busca, que procura no título, na pasta, no modelo e no primeiro pedido dos chats, e no título, no
+pedido e no porquê das ideias.
 
-- **Cartão:** como uma linha da lista, um véu claro que acende com o ponteiro. O título (13, até 3
-  linhas), o porquê ou o começo do pedido (2 linhas) e uma linha de fatos, cortada na borda sem
-  reticências: o chat da ideia com o estado dele (ou a pasta), o código da issue e o responsável.
-  Com o ponteiro em cima, o botão de mandar.
+São cinco raias, que dividem a largura e rolam de lado abaixo de 180 cada:
+
+- **Ideias:** o kanban das ideias. Só você anota: nenhum chat põe ideia no quadro sozinho (dono,
+  18/11/2026: "essas ideias é pra ser coisas do futuro que vou colocando pra não esquecer"). O
+  campo do alto anota com o Enter; a ideia entra na pasta do filtro, na do chat à vista (sem chat,
+  na pasta de trabalho), ou, no quadro de um chat, já dele. As Próximas vêm primeiro, com o selo.
+- **Esperando você:** os chats com pedido de permissão, plano, pergunta, erro ou parada. A
+  permissão se responde no cartão (**Negar** e **Permitir**; um comando perigoso ou comprido leva à
+  conversa, como no aviso).
+- **Trabalhando:** os chats com turno andando, com o que fazem agora ("Leu admin.py") e quantos
+  subagentes trabalham; a ideia em Fazendo sem chat também fica aqui.
+- **Para ver:** as respostas que você ainda não viu.
+- **Feitas:** os chats parados das últimas duas semanas, até 30 (**Mostrar mais** traz o resto; com
+  busca ou pasta, vêm todos), e as ideias feitas sem chat.
+
+O cartão de um chat não se arrasta: a raia sai do estado dele. Ele mostra o estado, a marca do
+agente e a pasta, o título, o que pede ou faz (ou a primeira linha da última resposta), os selos
+(o modelo, "Ideia" quando uma ideia virou ele, os subagentes, Fixada) e há quanto tempo mexeu. Com
+o ponteiro, **Parar** (trabalhando) ou **Arquivar**; o clique abre a conversa; o botão direito
+tem abrir, parar, fixar e arquivar. A ideia que virou chat (Fazendo ou Feita, com o chat vivo)
+aparece só no cartão do chat.
+
+- **Cartão de ideia:** o cinza dos cartões sobre o preto da raia, um degrau mais claro com o
+  ponteiro, sem borda. O título (até 2 linhas), o porquê ou o começo do pedido (2 linhas) e uma
+  linha de fatos, cortada na borda sem reticências: o chat da ideia com o estado dele (ou a
+  pasta), o código da issue e o responsável. Com o ponteiro em cima, o botão de mandar.
 - **Ideia de um chat:** a escolha **Chat** da edição liga a ideia a uma conversa (as 40 mexidas por
   último) ou a deixa para **Um chat novo**. **Mandar no chat** põe o pedido na fila da conversa
   dela, sem cortar o turno que estiver rodando, e abre a conversa; sem chat, **Abrir chat** cria
   um na pasta do cartão, com o pedido como primeira mensagem, e liga o cartão a ele. Nos dois
   casos o cartão vai para Fazendo. O botão direito de um cartão com chat tem os dois.
-- **Arrastar:** solto numa coluna, o cartão vai para o fim dela; solto em cima de outro, entra
-  logo antes dele (a ordem de uma coluna é a `ordem` de cada cartão, crescente).
+- **Arrastar:** o cartão de ideia vai para Ideias, Trabalhando (Fazendo) ou Feitas; solto em cima
+  de outro, entra logo antes dele (a ordem de uma coluna é a `ordem` de cada cartão, crescente).
 - **Clique:** abre a edição, com a seta de voltar: título, **Pedido para o chat** (vazio, vai o
   título), **Chat**, **Pasta** (só para o chat novo), **Coluna**, **Apagar** (com Desfazer no
   aviso), o código no Linear, **Ir ao chat** e **Mandar no chat** ou **Abrir chat**. O texto se
@@ -2524,6 +2600,22 @@ do Vitral, guardados no cartão.
   também fica só no Vitral (o campo diz "Nova ideia só no Vitral"). O quadro abre no último filtro
   escolhido, até fechar o app. Sem o Linear ligado, o filtro não aparece.
 - **Desligar** (o ícone da tomada) apaga a chave; os cartões das issues saem do quadro.
+
+## Línguas
+
+Português, inglês e espanhol (26/11/2026; dono: "faz várias línguas pra escolher"). A escolha fica
+em Configurações, Aparência (e na tela inicial), em `Config.lingua`: vazio segue o sistema, e fora
+das três o Vitral cai no inglês. O agente recebe no prompt de sistema o pedido de responder na
+língua escolhida; os pedidos internos do Vitral aos agentes continuam em português.
+
+- **Texto novo na tela:** `tr!("Texto em português")`, ou `tr!("Fila · {n}", n = total)`. Em
+  português o texto é a própria chave; nas outras, vem de `locales/en/*.json` e `locales/es/*.json`
+  (o `build.rs` junta os arquivos de cada língua e para a compilação se a mesma chave tiver duas
+  traduções diferentes). Tabela `const` usa `crate::i18n::traduzir(texto)` na hora de mostrar.
+- **O teste `todo_tr_tem_traducao`** acusa `tr!` sem tradução em inglês ou espanhol.
+- **Comparação com texto:** compare com a chave em português (o `tempo_relativo` devolve "agora"
+  sempre) e traduza só ao mostrar; comparar o traduzido com a chave quebra fora do português.
+- Os textos do kit de componentes vêm do `vendor/gpui-component/locales/ui.yml` (pt-BR, en, es).
 
 ## Compilar e rodar
 
@@ -2945,7 +3037,8 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `ferramentas/logo/` | O logo: `v-do-dono.png` (o V que o dono mandou), `rasterizar.py` (tira o V dele e grava o `assets/vitral-v.png`), `icones.py` (o metal com o V por cima: os `assets/vitral-*.png`, o `vitral.ico` e os dois SVG com o PNG embutido) e `previa.py` (a conta do metal em Python, que o `icones.py` usa); ver **Logo**, em **Acabamento** |
 | `ferramentas/instalar-dev.sh` | Só desenvolvimento: compila e instala no layout do app como `<próxima>-dev.<commit>` |
 | `.github/` | `workflows/ci.yml`, `workflows/release.yml`, `workflows/windows-prints.yml` (à mão: prints num Windows de verdade, pelo `ferramentas/prints-windows.ps1`; o instalador de uma rodada do release, pelo `ferramentas/instalador-windows.ps1`; e o atualizador, da versão publicada a três do ramo num release falso, pelo `ferramentas/atualizador-windows.ps1`) e `dependabot.yml` |
-| `build.rs` | No Windows, o ícone e a versão no `vitral.exe` (o manifesto vem do GPUI); fora dele, nada |
+| `build.rs` | No Windows, o ícone e a versão no `vitral.exe` (o manifesto vem do GPUI); em todos, junta as traduções de `locales/<língua>/*.json` num arquivo só por língua |
+| `src/i18n.rs` e `locales/` | As línguas da interface: o `tr!`, a escolha (`Config.lingua`) e as traduções em inglês e espanhol |
 | `tests/versao.rs` | `--versao` e `--versao --json` sem tela (o binário de verdade, sem DISPLAY nem WAYLAND_DISPLAY) |
 | `tests/instalar.rs` | `--instalar` com o binário de verdade num HOME temporário em `target/tmp`: o layout, o link, o `.desktop`, o `~/.local/bin` e reinstalar sem duplicar |
 | `README.md`, `docs/imagens/` | A porta de entrada do GitHub (o que é, instalar, conferir o download, limites) e os prints dela, tirados na bancada com `RAIZ_SINTETICA=1` e `CLAUDE_FALSO=1`, recortados e com paleta de 256 cores |

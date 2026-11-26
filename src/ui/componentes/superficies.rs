@@ -21,10 +21,8 @@ use super::base::Simbolo;
 use super::controles::{TamanhoBotao, botao_fantasma, botao_primario, variante_fantasma};
 use super::dialogo::{RodapeDialogo, largura::ALERTA};
 use super::estado::Selo;
-use super::graficos::fio_de_pontos;
-use super::textos::etiqueta_de_secao;
 use crate::tema::{
-    Cores, FONTE_MONO, Lucide, Tipo as _, aresta_de_poco, aresta_de_tecla, aresta_de_vidro, dentro_da_borda, esp,
+    Cores, FONTE_MONO, Lucide, Tipo as _, aresta_de_poco, aresta_de_vidro, dentro_da_borda, esp,
     gradiente_reflexo, r, raio, tam,
 };
 
@@ -229,13 +227,16 @@ fn linha_escolha(
     direita: Option<AnyElement>,
     window: &Window,
 ) -> Div {
+    // Linear (26/11/2026): o rótulo do protótipo (`.rot`): a letra da interface em 11,5,
+    // seminegrito e apagado, sem caixa alta nem fio de pontos; o que vai à direita (o atalho) no fim.
+    let _ = window;
     div()
         .flex()
         .items_center()
         .gap(r(8.))
         .min_h(r(20.))
         .children(simbolo)
-        .child(etiqueta_de_secao(titulo))
+        .child(div().text_size(r(11.5)).font_semibold().text_color(Cores::apagado()).child(titulo))
         .when_some(valor, |s, (valor, cor)| {
             s.child(
                 div()
@@ -245,7 +246,7 @@ fn linha_escolha(
                     .child(valor),
             )
         })
-        .child(div().flex_1().min_w(esp::E8).flex().items_center().child(fio_de_pontos(Cores::fio(), window)))
+        .child(div().flex_1())
         .children(direita)
 }
 
@@ -308,8 +309,8 @@ impl RenderOnce for CorpoPopover {
             .children(cabecalho)
             .children(self.corpo)
             .when(tem_rodape, |s| {
-                s.child(fio_de_pontos(Cores::fio(), window))
-                    .child(div().flex().flex_col().gap(r(8.)).children(self.rodape))
+                // Linear (26/11/2026): sem o fio de pontos: o rodapé se separa pelo espaço.
+                s.child(div().flex().flex_col().gap(r(8.)).children(self.rodape))
             })
     }
 }
@@ -361,8 +362,6 @@ pub fn cabecalho_objeto_com_dica(
 pub enum OndeAtalho {
     /// Num contexto só (ou fora de contexto, com `None`).
     Contexto(Option<&'static str>),
-    /// No caminho de foco do elemento, que acha predicados com `>` ("Composer > Input").
-    Foco(FocusHandle),
 }
 
 /// Cabeçalho de escolha (modo, conta): o rótulo de seção (mono 11 em caixa alta) e, à direita, as teclas do atalho do keymap
@@ -376,43 +375,14 @@ pub fn cabecalho_escolha(
         let direita = atalho.as_ref().and_then(|(acao, onde, depois)| {
             let kbd = match onde {
                 OndeAtalho::Contexto(contexto) => Kbd::binding_for_action(acao.as_ref(), *contexto, window),
-                OndeAtalho::Foco(foco) => Kbd::binding_for_action_in(acao.as_ref(), foco, window),
             }?;
-            Some(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(esp::E6)
-                    .metadado()
-                    .text_color(Cores::tenue())
-                    .child(desenho_teclas(kbd.partes()))
-                    .child(*depois)
-                    .into_any_element(),
-            )
+            // O atalho em texto simples, como no protótipo ("Esforço  Ctrl E").
+            let _ = depois;
+            Some(div().text_size(r(11.5)).font_weight(FontWeight::MEDIUM).text_color(Cores::apagado()).child(kbd.partes().join(" ")).into_any_element())
         });
         // A linha fixa vai de borda a borda (o `Static` do kit sangra): a margem é daqui.
-        div().pt(esp::E8).px(esp::E16).child(linha_escolha(None, titulo.clone(), None, direita, window).h(r(28.)))
+        div().pt(esp::E4).px(esp::E8).child(linha_escolha(None, titulo.clone(), None, direita, window).h(r(22.)))
     })
-}
-
-/// O azulejo de 28 do ícone de um item de escolha: uma tecla em relevo; no escolhido (sobre a
-/// ficha de metal), um poço escuro, para a cor do ícone continuar à vista.
-pub fn azulejo_de_escolha(conteudo: AnyElement, sobre_placa: bool) -> Div {
-    div()
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .size(r(28.))
-        .rounded(raio::de(28.))
-        .map(|s| {
-            if sobre_placa {
-                s.bg(Cores::preto_puro().opacity(0.35)).shadow(aresta_de_poco())
-            } else {
-                s.bg(Cores::recuo_no_flutuante()).shadow(aresta_de_tecla())
-            }
-        })
-        .child(conteudo)
 }
 
 /// A ficha do escolhido (o item marcado numa lista de escolha, a aba escolhida de um segmentado
@@ -433,14 +403,7 @@ pub fn ficha_do_escolhido(raio: Pixels) -> Div {
     div().absolute().top_0().left_0().size_full().rounded(raio).bg(Cores::selecao())
 }
 
-/// Marca o item de `altura` como escolhido (o visto à direita) e, se for, põe a ficha de metal
-/// debaixo dele.
-pub fn escolhido_em_ficha(item: PopupMenuItem, escolhido: bool, altura: f32) -> PopupMenuItem {
-    item.checked(escolhido).when(escolhido, |item| item.fundo(move |_, _| ficha_de_metal(altura)))
-}
-
-/// Item de duas linhas (48): o ícone num azulejo de 28, título 14/500 em branco e descrição 12
-/// tênue; o escolhido vai na ficha de metal (a descrição passa a `texto`), com o visto à direita.
+/// Item de escolha: o ícone, o título e a descrição numa linha; o escolhido na cor da seleção.
 /// Sem `.icon()`, para não reservar coluna vazia nos outros itens.
 pub fn item_descrito(
     simbolo: Option<Simbolo>,
@@ -449,38 +412,34 @@ pub fn item_descrito(
     escolhido: bool,
 ) -> PopupMenuItem {
     let (titulo, descricao) = (titulo.into(), descricao.into());
+    // Linear (26/11/2026): uma linha, como o menu de modo do protótipo (`.menu-modelo .mi`): o
+    // ícone solto, na cor dele, o nome e a descrição lado a lado; o escolhido na cor da seleção,
+    // sem o visto. Eram duas linhas de 48 com o ícone num azulejo.
     let item = PopupMenuItem::element(move |window, _| {
         div()
             .flex()
             .items_center()
-            .gap(esp::E12)
-            .h(r(48.))
+            .gap(esp::E8)
+            .h(r(28.))
             .min_w_0()
-            .children(simbolo.as_ref().and_then(Simbolo::copia).map(|s| azulejo_de_escolha(s.desenhar(16., window), escolhido)))
+            .children(simbolo.as_ref().and_then(Simbolo::copia).map(|s| div().flex_none().child(s.desenhar(16., window))))
             .child(
                 div()
-                    .flex()
-                    .flex_col()
+                    .flex_none()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(Cores::forte())
+                    .child(titulo.clone()),
+            )
+            .child(
+                div()
                     .min_w_0()
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(r(14.))
-                            .line_height(r(20.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(Cores::forte())
-                            .child(titulo.clone()),
-                    )
-                    .child(
-                        div()
-                            .truncate()
-                            .metadado()
-                            .text_color(if escolhido { Cores::texto() } else { Cores::tenue() })
-                            .child(descricao.clone()),
-                    ),
+                    .truncate()
+                    .text_size(r(12.))
+                    .text_color(if escolhido { Cores::texto() } else { Cores::tenue() })
+                    .child(descricao.clone()),
             )
     });
-    escolhido_em_ficha(item, escolhido, 48.)
+    item.when(escolhido, |item| item.fundo(move |_, _| ficha_de_metal(28.)))
 }
 
 /// A faixa do pé do menu: 32 de altura, de borda a borda (o `Static` do kit sangra até a
@@ -665,7 +624,7 @@ impl RenderOnce for Alerta {
                         .icon(Lucide::X)
                         .xsmall()
                         .rounded(raio::de(20.))
-                        .tooltip("Fechar")
+                        .tooltip(tr!("Fechar"))
                         .on_click(move |_, window, cx| f(window, cx)),
                 )
             })
@@ -852,7 +811,7 @@ pub fn botao_do_aviso(rotulo: &'static str, cx: &App) -> Button {
         .h(r(28.))
         .px(esp::E12)
         .rounded(raio::de(28.))
-        .child(div().text_size(r(13.)).font_semibold().child(rotulo))
+        .child(div().text_size(r(13.)).font_semibold().child(SharedString::from(crate::i18n::traduzir(rotulo))))
 }
 
 /// "Não deu para …": o resumo no título, a primeira linha da causa no texto e "Detalhes", que
@@ -868,13 +827,13 @@ pub fn aviso_erro(resumo: impl Into<SharedString>, erro: &anyhow::Error) -> Noti
             let copiar = completa.clone();
             let rodape = RodapeDialogo::new()
                 .esquerda(
-                    botao_fantasma("detalhes-copiar", Some(Lucide::Copy.into()), "Copiar", TamanhoBotao::Controle, window, cx)
+                    botao_fantasma("detalhes-copiar", Some(Lucide::Copy.into()), tr!("Copiar"), TamanhoBotao::Controle, window, cx)
                         .on_click(move |_, _, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(copiar.to_string()))
                         }),
                 )
                 .principal(
-                    botao_primario("detalhes-fechar", None, "Fechar", TamanhoBotao::Controle, window, cx)
+                    botao_primario("detalhes-fechar", None, tr!("Fechar"), TamanhoBotao::Controle, window, cx)
                         .on_click(|_, window, cx| window.close_dialog(cx)),
                 );
             alerta
@@ -882,7 +841,6 @@ pub fn aviso_erro(resumo: impl Into<SharedString>, erro: &anyhow::Error) -> Noti
                 .width(tam(window, ALERTA))
                 .p(r(24.))
                 .rounded(raio::PECA)
-                .border_color(Cores::borda_forte())
                 .title(div().titulo_tela().text_color(Cores::forte()).child(titulo.clone()))
                 .description(
                     div()

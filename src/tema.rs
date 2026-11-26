@@ -129,6 +129,10 @@ pub mod linear {
     pub const CAIXA_BAIXO: Rems = r(5.);
     pub const CONTROLES_VAO: Rems = r(1.);
     pub const CONTROLE_LADO: Rems = r(5.);
+    /// O respiro de cima das pastilhas de número: o algarismo, centrado pela altura da linha,
+    /// ficava meio pixel acima do meio da pastilha (medido no print a 130%; dono, 26/11/2026:
+    /// "não tá centralizado"). Um de respiro em cima desce o centro meio.
+    pub const AJUSTE_DO_NUMERO: Rems = r(1.);
     /// O contexto: o anel e a porcentagem com 5 entre eles.
     pub const CONTEXTO_VAO: Rems = r(5.);
     /// A linha de estado embaixo da caixa: 8 na esquerda, 9 na direita.
@@ -620,6 +624,7 @@ gpui_kit::assets::icon_assets!(
         FileX,
         Files,
         Focus,
+        FoldVertical,
         FolderInput,
         FolderPlus,
         FolderSearch,
@@ -644,6 +649,7 @@ gpui_kit::assets::icon_assets!(
         LayoutGrid,
         Link,
         LockKeyholeOpen,
+        LogIn,
         ListChecks,
         ListTodo,
         ListTree,
@@ -676,11 +682,13 @@ gpui_kit::assets::icon_assets!(
         ShieldOff,
         ShieldQuestionMark,
         Shuffle,
+        Slash,
         Sparkles,
         SquareCheck,
         SquareSlash,
         Tag,
         Terminal,
+        TextAlignStart,
         TextCursorInput,
         TextSearch,
         TextWrap,

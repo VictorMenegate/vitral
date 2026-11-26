@@ -21,7 +21,7 @@ use crate::{
     ActiveTheme, Placement, StyledExt,
     animation::{EffectTransition, ease_in_out_cubic, ease_out_cubic},
     kbd::{Kbd, desenho_de_teclas},
-    styled::{anel_neutro, toast_shadow},
+    styled::toast_shadow,
     text::Text,
 };
 
@@ -139,8 +139,7 @@ impl Render for Tooltip {
                 .m_3()
                 .bg(cx.theme().tokens.popover)
                 .text_color(cx.theme().popover_foreground)
-                .border_1()
-                .border_color(anel_neutro(cx))
+                // Vitral (26/11/2026): sem a borda clara, como os menus e os diálogos.
                 .shadow(toast_shadow(1.))
                 // Vitral: o raio de cartão do Vitral (14): a dica de uma linha sai em pílula.
                 .rounded(px(14.))

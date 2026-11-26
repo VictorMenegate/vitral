@@ -105,33 +105,33 @@ impl Direto {
         use Direto::*;
         let chat = m.chat.as_ref();
         match self {
-            MandarDepois => "Mandar depois, na fila".into(),
-            PerguntarAoOutro => format!("Perguntar também ao {}", chat.map_or(Agente::Codex, |c| c.agente.outro()).nome()),
-            Compactar => "Compactar a conversa".into(),
-            Agentes => "Agentes desta conversa".into(),
-            SessaoNova => "Sessão nova".into(),
-            Bifurcar => "Continuar em outro chat a partir da última resposta".into(),
-            Renomear => "Renomear a conversa…".into(),
-            Fixar if chat.is_some_and(|c| c.fixado) => "Desafixar a conversa".into(),
-            Fixar => "Fixar a conversa".into(),
-            Arquivar if chat.is_some_and(|c| c.arquivado) => "Desarquivar a conversa".into(),
-            Arquivar => "Arquivar a conversa".into(),
-            NovoChatEmOutraPasta => "Novo chat em outra pasta…".into(),
-            Importar => "Importar do Claude Code…".into(),
+            MandarDepois => tr!("Mandar depois, na fila").to_string(),
+            PerguntarAoOutro => tr!("Perguntar também ao {agente}", agente = chat.map_or(Agente::Codex, |c| c.agente.outro()).nome()).to_string(),
+            Compactar => tr!("Compactar a conversa").to_string(),
+            Agentes => tr!("Agentes desta conversa").to_string(),
+            SessaoNova => tr!("Sessão nova").to_string(),
+            Bifurcar => tr!("Continuar em outro chat a partir da última resposta").to_string(),
+            Renomear => tr!("Renomear a conversa…").to_string(),
+            Fixar if chat.is_some_and(|c| c.fixado) => tr!("Desafixar a conversa").to_string(),
+            Fixar => tr!("Fixar a conversa").to_string(),
+            Arquivar if chat.is_some_and(|c| c.arquivado) => tr!("Desarquivar a conversa").to_string(),
+            Arquivar => tr!("Arquivar a conversa").to_string(),
+            NovoChatEmOutraPasta => tr!("Novo chat em outra pasta…").to_string(),
+            Importar => tr!("Importar do Claude Code…").to_string(),
             // O antigo "modo foco": esconde as ferramentas em todos os chats. O nome "Modo foco" é do
             // Ctrl+. desde o Linear (25/11/2026).
-            ModoFoco if chat.is_some_and(|c| c.modo_foco) => "Mostrar as ferramentas (todos os chats)".into(),
-            ModoFoco => "Esconder ferramentas (todos os chats)".into(),
-            PastaDeTrabalho => "Escolher a pasta de trabalho…".into(),
-            Contas => "Contas do Claude".into(),
-            ServidoresMcp => "Servidores MCP".into(),
-            MemoriaDaEquipe => "Memória da equipe…".into(),
-            ConsultarMemoria => "Consultar memória".into(),
+            ModoFoco if chat.is_some_and(|c| c.modo_foco) => tr!("Mostrar as ferramentas (todos os chats)").to_string(),
+            ModoFoco => tr!("Esconder ferramentas (todos os chats)").to_string(),
+            PastaDeTrabalho => tr!("Escolher a pasta de trabalho…").to_string(),
+            Contas => tr!("Contas do Claude").to_string(),
+            ServidoresMcp => tr!("Servidores MCP").to_string(),
+            MemoriaDaEquipe => tr!("Memória da equipe…").to_string(),
+            ConsultarMemoria => tr!("Consultar memória").to_string(),
             Reiniciar => match &m.versao_pronta {
-                Some(versao) => format!("Reiniciar para a {versao}"),
-                None => "Reiniciar para a versão nova".into(),
+                Some(versao) => tr!("Reiniciar para a {versao}", versao = versao).to_string(),
+                None => tr!("Reiniciar para a versão nova").to_string(),
             },
-            PastaDeDados => "Abrir a pasta de dados".into(),
+            PastaDeDados => tr!("Abrir a pasta de dados").to_string(),
         }
     }
 
@@ -164,26 +164,26 @@ impl Direto {
     /// Por que ele não vale agora; `None` quando vale.
     fn motivo(self, m: &Momento) -> Option<String> {
         use Direto::*;
-        let sem_conversa = || "Abra uma conversa no painel ativo".to_string();
+        let sem_conversa = || tr!("Abra uma conversa no painel ativo").to_string();
         match self {
             NovoChatEmOutraPasta | Importar | PastaDeTrabalho | Contas | ServidoresMcp | MemoriaDaEquipe | PastaDeDados => None,
-            ConsultarMemoria => (!m.memoria_ligada).then(|| "Ligue antes a memória da equipe".into()),
-            Reiniciar => m.versao_pronta.is_none().then(|| "Não há versão nova esperando".into()),
+            ConsultarMemoria => (!m.memoria_ligada).then(|| tr!("Ligue antes a memória da equipe").to_string()),
+            Reiniciar => m.versao_pronta.is_none().then(|| tr!("Não há versão nova esperando").to_string()),
             _ => {
                 let Some(c) = m.chat.as_ref() else {
                     return Some(sem_conversa());
                 };
                 match self {
-                    MandarDepois if !c.dirige => Some("Só com o turno rodando (parado, o Enter já envia)".into()),
-                    MandarDepois if c.caixa_vazia => Some("Escreva a mensagem na caixa antes".into()),
-                    PerguntarAoOutro if !c.outro_instalado => Some(format!("O {} não está instalado", c.agente.outro().nome())),
-                    PerguntarAoOutro if c.caixa_vazia || c.caixa_com_barra => Some("Escreva a pergunta na caixa antes".into()),
-                    Compactar if c.agente == Agente::Gemini => Some("O Gemini não tem o /compact".into()),
-                    Compactar if !c.com_sessao => Some("A conversa ainda não tem sessão".into()),
-                    Agentes if !c.tem_agentes => Some("Esta conversa não abriu agentes".into()),
-                    SessaoNova if c.rodando => Some("Espere o turno terminar".into()),
-                    Bifurcar if !c.tem_resposta => Some("A conversa ainda não tem resposta".into()),
-                    Bifurcar if c.rodando => Some("Espere o turno terminar".into()),
+                    MandarDepois if !c.dirige => Some(tr!("Só com o turno rodando (parado, o Enter já envia)").to_string()),
+                    MandarDepois if c.caixa_vazia => Some(tr!("Escreva a mensagem na caixa antes").to_string()),
+                    PerguntarAoOutro if !c.outro_instalado => Some(tr!("O {agente} não está instalado", agente = c.agente.outro().nome()).to_string()),
+                    PerguntarAoOutro if c.caixa_vazia || c.caixa_com_barra => Some(tr!("Escreva a pergunta na caixa antes").to_string()),
+                    Compactar if c.agente.acp() => Some(tr!("O {agente} não tem o /compact", agente = c.agente.nome()).to_string()),
+                    Compactar if !c.com_sessao => Some(tr!("A conversa ainda não tem sessão").to_string()),
+                    Agentes if !c.tem_agentes => Some(tr!("Esta conversa não abriu agentes").to_string()),
+                    SessaoNova if c.rodando => Some(tr!("Espere o turno terminar").to_string()),
+                    Bifurcar if !c.tem_resposta => Some(tr!("A conversa ainda não tem resposta").to_string()),
+                    Bifurcar if c.rodando => Some(tr!("Espere o turno terminar").to_string()),
                     _ => None,
                 }
             }
@@ -253,22 +253,22 @@ fn motivo_do_contexto(contexto: Option<&str>) -> Option<&'static str> {
 /// Todas as linhas da paleta: as da tabela de atalhos com rótulo, depois os comandos de menu. Em
 /// cada seção, o que vale agora vem antes do que está apagado.
 fn entradas(m: &Momento) -> Vec<Entrada> {
-    let busca_de = |titulo: &str, termos: &str, grupo: Grupo| acentos::normalizar(&format!("{titulo} {termos} {}", grupo.titulo()));
+    let busca_de = |titulo: &str, termos: &str, grupo: Grupo| acentos::normalizar(&format!("{titulo} {termos} {}", grupo.nome()));
     let mut todas: Vec<Entrada> = atalhos::linhas()
         .into_iter()
         .enumerate()
         .filter(|(_, l)| !l.rotulo.is_empty())
         .map(|(i, l)| Entrada {
             chave: format!("atalho:{i}"),
-            titulo: l.rotulo.to_string(),
+            titulo: crate::i18n::traduzir(l.rotulo).into_owned(),
             grupo: l.grupo,
             teclas: Some(l.partes()),
             motivo: if l.rotulo == ROTULO_DA_PALETA {
-                Some("É esta lista".into())
+                Some(tr!("É esta lista").to_string())
             } else {
-                motivo_do_contexto(l.contexto).map(str::to_string)
+                motivo_do_contexto(l.contexto).map(|m| crate::i18n::traduzir(m).into_owned())
             },
-            busca: busca_de(l.rotulo, "", l.grupo),
+            busca: busca_de(&crate::i18n::traduzir(l.rotulo), "", l.grupo),
         })
         .collect();
     todas.extend(Direto::TODOS.iter().enumerate().map(|(i, d)| {
@@ -284,14 +284,14 @@ fn entradas(m: &Momento) -> Vec<Entrada> {
     }));
     // Um "ir para" por arranjo salvo: trocar de frente de trabalho sem passar pelo menu do logo.
     todas.extend(m.arranjos.iter().map(|nome| {
-        let titulo = format!("Arranjo: {nome}");
+        let titulo = tr!("Arranjo: {nome}", nome = nome).to_string();
         Entrada {
             chave: format!("arranjo:{nome}"),
             busca: busca_de(&titulo, "painéis trocar frente de trabalho", Grupo::Paineis),
             titulo,
             grupo: Grupo::Paineis,
             teclas: None,
-            motivo: (m.arranjo_em_uso.as_ref() == Some(nome)).then(|| "É o arranjo em uso".to_string()),
+            motivo: (m.arranjo_em_uso.as_ref() == Some(nome)).then(|| tr!("É o arranjo em uso").to_string()),
         }
     }));
     // Estável: dentro de cada metade, a ordem da tabela.
@@ -315,7 +315,7 @@ fn grupos(todas: &[Entrada], busca: &str) -> Vec<GrupoDeEscolha> {
                     ..ItemDeEscolha::new(e.chave.clone(), e.titulo.clone())
                 })
                 .collect();
-            (!itens.is_empty()).then(|| GrupoDeEscolha { titulo: Some(grupo.titulo().into()), itens })
+            (!itens.is_empty()).then(|| GrupoDeEscolha { titulo: Some(grupo.nome()), itens })
         })
         .collect()
 }
@@ -357,7 +357,7 @@ fn grupos_com_achados(todas: &[Entrada], conversas: &[ConversaNaPaleta], arquivo
         })
         .collect();
     if !achadas.is_empty() {
-        saida.push(GrupoDeEscolha { titulo: Some(GRUPO_CONVERSAS.into()), itens: achadas });
+        saida.push(GrupoDeEscolha { titulo: Some(SharedString::from(crate::i18n::traduzir(GRUPO_CONVERSAS))), itens: achadas });
     }
     // As linhas são as do "@" e do Ctrl+P (o nome em cima, a pasta embaixo), com a chave da paleta.
     let achados: Vec<ItemDeEscolha> = if arquivos.is_empty() {
@@ -371,14 +371,15 @@ fn grupos_com_achados(todas: &[Entrada], conversas: &[ConversaNaPaleta], arquivo
             .collect()
     };
     if !achados.is_empty() {
-        saida.push(GrupoDeEscolha { titulo: Some(GRUPO_ARQUIVOS.into()), itens: achados });
+        saida.push(GrupoDeEscolha { titulo: Some(SharedString::from(crate::i18n::traduzir(GRUPO_ARQUIVOS))), itens: achados });
     }
     saida
 }
 
 /// O rodapé das listas: o fio e as teclas com o que o Enter faz ("faz", "abre").
-fn rodape_das_teclas(enter: &'static str) -> impl Fn(&mut Window, &mut App) -> AnyElement + 'static {
+fn rodape_das_teclas(enter: SharedString) -> impl Fn(&mut Window, &mut App) -> AnyElement + 'static {
     move |window, _| {
+        let enter = enter.clone();
         v_flex()
             .w_full()
             .gap(r(6.))
@@ -390,7 +391,7 @@ fn rodape_das_teclas(enter: &'static str) -> impl Fn(&mut Window, &mut App) -> A
                     .gap(r(12.))
                     .w_full()
                     .child(div().flex_1())
-                    .child(dica_teclas(&["↑", "↓"], "escolhe"))
+                    .child(dica_teclas(&["↑", "↓"], tr!("escolhe")))
                     .child(dica_teclas(&["Enter"], enter)),
             )
             .into_any_element()
@@ -398,7 +399,7 @@ fn rodape_das_teclas(enter: &'static str) -> impl Fn(&mut Window, &mut App) -> A
 }
 
 /// "↑ ↓ escolher": as teclas da lista e o que fazem, no rodapé.
-fn dica_teclas(teclas: &[&'static str], texto: &'static str) -> impl IntoElement {
+fn dica_teclas(teclas: &[&'static str], texto: SharedString) -> impl IntoElement {
     div()
         .flex()
         .items_center()
@@ -466,11 +467,11 @@ impl Janela {
         chats
             .into_iter()
             .map(|c| {
-                let pasta = if m.sem_pasta(c) { "Sem pasta".to_string() } else { nome_da_pasta(&c.cwd) };
+                let pasta = if m.sem_pasta(c) { tr!("Sem pasta").to_string() } else { nome_da_pasta(&c.cwd) };
                 ConversaNaPaleta {
                     id: c.id.clone(),
                     titulo: c.titulo.clone(),
-                    onde: if c.arquivado { format!("{pasta} · arquivada") } else { pasta },
+                    onde: if c.arquivado { tr!("{pasta} · arquivada", pasta = pasta).to_string() } else { pasta },
                 }
             })
             .collect()
@@ -508,13 +509,13 @@ impl Janela {
     /// acento). O Enter abre o arquivo no painel da direita.
     pub(super) fn abrir_arquivo_pelo_nome(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(pasta) = self.pasta_do_chat_ativo(cx) else {
-            window.push_notification(aviso(Tom::Info, "Abra uma conversa para escolher um arquivo da pasta dela."), cx);
+            window.push_notification(aviso(Tom::Info, tr!("Abra uma conversa para escolher um arquivo da pasta dela.")), cx);
             return;
         };
         let vista = cx.new(|cx| {
-            let mut vista = ListaDeEscolha::new("Nome do arquivo…", window, cx);
+            let mut vista = ListaDeEscolha::new(&tr!("Nome do arquivo…"), window, cx);
             vista.em_dialogo();
-            vista.rodape(rodape_das_teclas("abre"));
+            vista.rodape(rodape_das_teclas(tr!("abre")));
             vista
         });
         let alvo = vista.downgrade();
@@ -551,7 +552,7 @@ impl Janela {
         let onde = com_til(&pasta);
         window.open_dialog(cx, move |dialogo, window, _| {
             moldura(dialogo, largura::G, window)
-                .title(topo(cabecalho("Abrir arquivo", Some(onde.clone()))))
+                .title(topo(cabecalho(tr!("Abrir arquivo"), Some(onde.clone()))))
                 .child(no_dialogo.clone())
                 .on_ok(|_, _, _| false)
         });
@@ -568,7 +569,7 @@ impl Janela {
             None => Rc::default(),
         };
         let vista = cx.new(|cx| {
-            let mut vista = ListaDeEscolha::new("Comando, conversa ou arquivo…", window, cx);
+            let mut vista = ListaDeEscolha::new(&tr!("Comando, conversa ou arquivo…"), window, cx);
             vista.em_dialogo();
             vista.definir(grupos(&todas, ""), None, cx);
             let filtro = todas.clone();
@@ -576,7 +577,7 @@ impl Janela {
                 let lidos = arquivos.borrow().clone();
                 grupos_com_achados(&filtro, &conversas, lidos.as_deref().map_or(&[], Vec::as_slice), busca)
             });
-            vista.rodape(rodape_das_teclas("faz"));
+            vista.rodape(rodape_das_teclas(tr!("faz")));
             vista
         });
         self._assinatura_dialogo = Some(cx.subscribe_in(&vista, window, |this, _, evento: &EventoEscolha, window, cx| {
@@ -592,7 +593,7 @@ impl Janela {
         let no_dialogo = vista.clone();
         window.open_dialog(cx, move |dialogo, window, _| {
             moldura(dialogo, largura::G, window)
-                .title(topo(cabecalho("Paleta de comandos", Some("Tudo o que o Vitral faz, com o atalho de cada coisa".into()))))
+                .title(topo(cabecalho(tr!("Paleta de comandos"), Some(tr!("Tudo o que o Vitral faz, com o atalho de cada coisa").to_string()))))
                 .child(no_dialogo.clone())
                 .on_ok(|_, _, _| false)
         });
@@ -708,7 +709,7 @@ mod testes {
             assert_eq!(entrada.teclas, Some(linha.partes()), "{}", linha.rotulo);
         }
         // Os que entraram por último também: o quadro de ideias e a busca das enviadas.
-        assert!(acha(&todas, "Quadro de ideias").motivo.is_none());
+        assert!(acha(&todas, "Tarefas").motivo.is_none());
         assert!(todas.iter().any(|e| e.titulo.starts_with("Buscar nas suas mensagens")));
         // Cada chave uma vez só, e toda linha numa seção que a paleta desenha.
         let mut chaves: Vec<&str> = todas.iter().map(|e| e.chave.as_str()).collect();

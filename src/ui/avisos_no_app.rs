@@ -13,7 +13,7 @@ use gpui_kit::*;
 
 use super::{
     Janela, QualFlutuante, movimento,
-    componentes::{Flutuante as _, TamanhoBotao, botao_fantasma, botao_icone, botao_primario, contagem},
+    componentes::{Flutuante as _, TamanhoBotao, botao_fantasma, botao_icone, botao_primario},
     mensagens::{icone_de, trechos_perigosos},
 };
 use crate::{
@@ -106,8 +106,8 @@ impl Janela {
 
     /// Três ou mais de uma vez viram um aviso só, que abre o sino.
     fn aviso_da_rajada(&self, n: usize, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let texto = format!("{} precisam de você", contagem(n, "chat", "chats"));
-        let ver = botao_primario("aviso-rajada-ver", None, "Ver", TamanhoBotao::Barra, window, cx).on_click(cx.listener(|this, _, _, cx| {
+        let texto = if n == 1 { tr!("{n} chat precisa de você", n = n) } else { tr!("{n} chats precisam de você", n = n) };
+        let ver = botao_primario("aviso-rajada-ver", None, tr!("Ver"), TamanhoBotao::Barra, window, cx).on_click(cx.listener(|this, _, _, cx| {
             this.so_um_flutuante(QualFlutuante::Sino);
             this.caixa_aberta = true;
             cx.notify();
@@ -130,13 +130,13 @@ impl Janela {
         let chat = m.chat(p.chat())?;
         let chave = chave_do_aviso(p)?;
         let (icone, cor, detalhe) = match p {
-            Pendencia::Permissao { ferramenta, resumo, .. } => (Lucide::ShieldAlert, Cores::espera(), format!("Permissão · {ferramenta} · {resumo}")),
-            Pendencia::Plano { .. } => (Lucide::Map, Cores::espera(), "Plano pronto para aprovar".to_string()),
-            Pendencia::Pergunta { pergunta, .. } => (Lucide::MessageCircleQuestionMark, Cores::espera(), format!("Pergunta · {pergunta}")),
+            Pendencia::Permissao { ferramenta, resumo, .. } => (Lucide::ShieldAlert, Cores::espera(), tr!("Permissão · {ferramenta} · {resumo}", ferramenta = ferramenta, resumo = resumo).to_string()),
+            Pendencia::Plano { .. } => (Lucide::Map, Cores::espera(), tr!("Plano pronto para aprovar").to_string()),
+            Pendencia::Pergunta { pergunta, .. } => (Lucide::MessageCircleQuestionMark, Cores::espera(), tr!("Pergunta · {pergunta}", pergunta = pergunta).to_string()),
             Pendencia::Erro { texto, .. } => (
                 Lucide::CircleX,
                 Cores::vermelho(),
-                format!("Falhou · {}", texto.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default()),
+                tr!("Falhou · {motivo}", motivo = texto.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default()).to_string(),
             ),
             _ => return None,
         };
@@ -158,33 +158,33 @@ impl Janela {
                 let comprido = comando.as_deref().is_some_and(|c| c.lines().count() > 2 || c.chars().count() > 160);
                 let (m1, m2, p1, p2) = (motor.clone(), motor.clone(), pedido.clone(), pedido.clone());
                 botoes.push(
-                    botao_fantasma(id("aviso-negar"), None, "Negar", TamanhoBotao::Barra, window, cx)
+                    botao_fantasma(id("aviso-negar"), None, tr!("Negar"), TamanhoBotao::Barra, window, cx)
                         .on_click(move |_, _, cx| m1.update(cx, |m, cx| m.responder_permissao(&p1, false, None, cx)))
                         .into_any_element(),
                 );
                 botoes.push(if perigoso || comprido {
-                    botao_fantasma(id("aviso-ver"), Some(Lucide::ArrowRight.into()), "Ver o comando…", TamanhoBotao::Barra, window, cx)
+                    botao_fantasma(id("aviso-ver"), Some(Lucide::ArrowRight.into()), tr!("Ver o comando…"), TamanhoBotao::Barra, window, cx)
                         .on_click(abrir())
                         .into_any_element()
                 } else {
-                    botao_primario(id("aviso-permitir"), None, "Permitir", TamanhoBotao::Barra, window, cx)
+                    botao_primario(id("aviso-permitir"), None, tr!("Permitir"), TamanhoBotao::Barra, window, cx)
                         .on_click(move |_, _, cx| m2.update(cx, |m, cx| m.responder_permissao(&p2, true, None, cx)))
                         .into_any_element()
                 });
             }
             Pendencia::Plano { .. } => botoes.push(
-                botao_primario(id("aviso-plano"), None, "Ver plano", TamanhoBotao::Barra, window, cx).on_click(abrir()).into_any_element(),
+                botao_primario(id("aviso-plano"), None, tr!("Ver plano"), TamanhoBotao::Barra, window, cx).on_click(abrir()).into_any_element(),
             ),
             // A pergunta se responde no cartão dela, na conversa.
             Pendencia::Pergunta { .. } => botoes.push(
-                botao_primario(id("aviso-pergunta"), None, "Ver pergunta", TamanhoBotao::Barra, window, cx).on_click(abrir()).into_any_element(),
+                botao_primario(id("aviso-pergunta"), None, tr!("Ver pergunta"), TamanhoBotao::Barra, window, cx).on_click(abrir()).into_any_element(),
             ),
             Pendencia::Erro { pode_tentar, .. } => {
-                botoes.push(botao_fantasma(id("aviso-abrir"), None, "Abrir", TamanhoBotao::Barra, window, cx).on_click(abrir()).into_any_element());
+                botoes.push(botao_fantasma(id("aviso-abrir"), None, tr!("Abrir"), TamanhoBotao::Barra, window, cx).on_click(abrir()).into_any_element());
                 if *pode_tentar {
                     let (motor, chat) = (motor.clone(), chat.id.clone());
                     botoes.push(
-                        botao_primario(id("aviso-tentar"), Some(Lucide::RotateCw.into()), "Tentar de novo", TamanhoBotao::Barra, window, cx)
+                        botao_primario(id("aviso-tentar"), Some(Lucide::RotateCw.into()), tr!("Tentar de novo"), TamanhoBotao::Barra, window, cx)
                             .on_click(move |_, _, cx| motor.update(cx, |m, cx| m.tentar_de_novo(&chat, cx)))
                             .into_any_element(),
                     );
@@ -194,7 +194,7 @@ impl Janela {
         }
         let fechar = {
             let chave = chave.clone();
-            botao_icone(id("aviso-fechar"), Lucide::X, "Dispensar este aviso", TamanhoBotao::Linha, window, cx).on_click(cx.listener(
+            botao_icone(id("aviso-fechar"), Lucide::X, tr!("Dispensar este aviso"), TamanhoBotao::Linha, window, cx).on_click(cx.listener(
                 move |this, _, _, cx| {
                     this.avisos_dispensados.insert(chave.clone());
                     cx.notify();
@@ -237,8 +237,6 @@ fn moldura(chave: &str, cx: &App) -> Stateful<Div> {
         .p(esp::E12)
         .flutuante(cx)
         .rounded(raio::CARTAO)
-        .border_1()
-        .border_color(Cores::borda_forte())
         .occlude()
 }
 

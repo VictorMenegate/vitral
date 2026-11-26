@@ -86,7 +86,7 @@ pub(super) fn linhas_do_sumario(itens: &[Item]) -> Vec<LinhaDoSumario> {
             let Item::Usuario { texto, anexos, em, .. } = &itens[item] else { return None };
             let texto = match (comeco(texto), anexos.len()) {
                 (t, 0) if t.is_empty() => return None,
-                (t, n) if t.is_empty() => super::componentes::contagem(n, "anexo", "anexos"),
+                (t, n) if t.is_empty() => super::componentes::contagem(n, &tr!("anexo"), &tr!("anexos")),
                 (t, _) => t,
             };
             // O turno vai até a sua mensagem seguinte: a conta é a das chamadas desse pedaço.
@@ -143,6 +143,11 @@ pub(super) struct Sumario {
     /// A mensagem para a qual o clique levou, realçada até a hora guardada.
     realce: Option<(String, usize, Instant)>,
     rolagem: ScrollHandle,
+    /// O chat que a lista mostrou por último e quantos desenhos ela ainda desce até a última linha:
+    /// ao trocar de chat ela abre no fim, nas mensagens mais novas (dono, 26/11/2026: "tá focando
+    /// em cima e não sempre no último"). Alguns desenhos seguidos, porque no primeiro as linhas
+    /// ainda não foram medidas.
+    descer: (Option<String>, u8),
     /// As linhas do último desenho, com o chat e o número de itens dele: a conversa que não
     /// cresceu não refaz a conta a cada quadro.
     linhas: Option<(String, usize, Rc<Vec<LinhaDoSumario>>)>,
@@ -158,6 +163,13 @@ impl Janela {
     /// A mensagem do chat que está sendo lida no painel dele, pelas posições do último desenho.
     fn a_vista_no_painel(&self, chat: &Chat) -> Option<usize> {
         let p = &self.paineis[self.painel_do_sumario(&chat.id)?];
+        // Com a conversa no fim (acompanhando o que chega), a marca é a sua última mensagem, e a
+        // lista desce até ela. Pela posição, a marcada era a última que começa no alto da vista,
+        // quase sempre uma de antes (dono, 26/11/2026: "tá focando em cima e não sempre no último").
+        let no_fim = p.seguindo || -p.rolagem.offset().y >= p.rolagem.max_offset().y - px(2.);
+        if no_fim {
+            return chat.itens.iter().rposition(|i| matches!(i, Item::Usuario { .. }));
+        }
         let topo = -p.rolagem.offset().y;
         mensagem_a_vista(&p.posicoes.borrow(), |i| matches!(chat.itens.get(i), Some(Item::Usuario { .. })), topo)
     }
@@ -352,6 +364,13 @@ impl Janela {
                 .on_click(cx.listener(move |this, _, _, cx| this.ir_a_mensagem_do_sumario(&chat_id, item, cx)));
             filhos.push(filho.into_any_element());
         }
+        if self.sumario.descer.0.as_deref() != Some(chat.id.as_str()) {
+            self.sumario.descer = (Some(chat.id.clone()), 3);
+        }
+        if self.sumario.descer.1 > 0 && !filhos.is_empty() {
+            self.sumario.descer.1 -= 1;
+            self.sumario.rolagem.scroll_to_item(filhos.len() - 1);
+        }
         let marcada = a_vista.map(|item| (chat.id.clone(), item));
         if self.sumario.a_vista != marcada {
             // A marca mudou: a lista do sumário rola até a linha dela.
@@ -360,14 +379,14 @@ impl Janela {
             }
             self.sumario.a_vista = marcada;
         }
-        let contagem = if termo.is_empty() { total.to_string() } else { format!("{} de {total}", linhas.len()) };
+        let contagem = if termo.is_empty() { total.to_string() } else { tr!("{feitos} de {total}", feitos = linhas.len(), total = total).to_string() };
         let vazio = linhas.is_empty().then(|| {
             div()
                 .px(esp::E8)
                 .py(esp::E4)
                 .text_size(r(12.5))
                 .text_color(Cores::tenue())
-                .child(format!("Nenhuma mensagem com “{}”", self.busca_sumario.read(cx).value().trim()))
+                .child(tr!("Nenhuma mensagem com “{termo}”", termo = self.busca_sumario.read(cx).value().trim()))
         });
         // A lista rola por dentro e a rolagem fica nela: no GPUI a roda vai a todo rolável embaixo
         // do ponteiro, e o painel do Este chat rolava junto com ela (dono, 26/11/2026: "melhora a
@@ -401,7 +420,7 @@ impl Janela {
             }))
             .child(super::componentes::campo_de_busca_pequeno("busca-do-sumario", &self.busca_sumario, window, cx));
         Some(super::este_chat::grupo_da_direita(
-            "Nesta conversa",
+            tr!("Nesta conversa"),
             Some(contagem),
             None,
             vec![busca.into_any_element(), lista.into_any_element()],

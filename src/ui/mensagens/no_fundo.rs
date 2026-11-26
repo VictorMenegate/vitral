@@ -14,7 +14,7 @@ use crate::motor::fundo::Linha;
 pub(in crate::ui) fn acao_ao_vivo(atividade: &str) -> String {
     let atividade = atividade.trim();
     if atividade.is_empty() {
-        return "Começando…".to_string();
+        return crate::tr!("Começando…").to_string();
     }
     let (nome, detalhe) = match atividade.split_once(" · ") {
         Some((nome, detalhe)) if !nome.contains(' ') => (nome, detalhe.trim().trim_end_matches('…').trim_end()),
@@ -22,9 +22,9 @@ pub(in crate::ui) fn acao_ao_vivo(atividade: &str) -> String {
         None if !atividade.contains(' ') => (atividade, ""),
         _ => return atividade.to_string(),
     };
-    let verbo = verbo_da_ferramenta(nome, true);
+    let verbo = verbo_na_tela(nome, true);
     // O que não é uma ferramenta conhecida (o verbo volta o próprio nome) fica como veio.
-    if verbo == nome_curto(nome) {
+    if verbo_da_ferramenta(nome, true) == nome_curto(nome) {
         return atividade.to_string();
     }
     // Os passos já dizem tudo no verbo ("Atualizando os passos").
@@ -45,13 +45,14 @@ pub(in crate::ui) fn tempo_do_agente(segundos: u64) -> String {
 }
 
 /// As partes da linha do fim: a palavra ("Terminou", "Falhou"), a descrição e quanto levou.
-fn partes_do_fim(descricao: &str, erro: bool, durou: u64) -> (&'static str, String, Option<String>) {
+fn partes_do_fim(descricao: &str, erro: bool, durou: u64) -> (String, String, Option<String>) {
     let descricao = match descricao.trim() {
-        "" => "o agente",
+        "" => "",
         descricao => descricao,
     };
     let tempo = tempo_do_agente(durou);
-    (if erro { "Falhou" } else { "Terminou" }, descricao.to_string(), (!tempo.is_empty()).then_some(tempo))
+    let descricao = if descricao.is_empty() { crate::tr!("o agente").to_string() } else { descricao.to_string() };
+    (if erro { crate::tr!("Falhou") } else { crate::tr!("Terminou") }.to_string(), descricao, (!tempo.is_empty()).then_some(tempo))
 }
 
 /// A linha do fim de um agente: "Terminou: Mapear o carrinho · 25 min", "Falhou: …".
@@ -67,9 +68,9 @@ pub(in crate::ui) fn texto_do_fim(descricao: &str, erro: bool, durou: u64) -> St
 /// aparece com a conversa rolada para cima): o agente e o que ele faz, ou quantos são.
 pub(in crate::ui) fn atividade_no_fundo(linhas: &[Linha]) -> String {
     match linhas {
-        [] => "Agentes trabalhando em segundo plano…".to_string(),
+        [] => crate::tr!("Agentes trabalhando em segundo plano…").to_string(),
         [uma] => format!("{}: {}", uma.descricao, acao_ao_vivo(&uma.atividade)),
-        varias => format!("{} agentes trabalhando em segundo plano…", varias.len()),
+        varias => crate::tr!("{n} agentes trabalhando em segundo plano…", n = varias.len()).to_string(),
     }
 }
 
@@ -79,7 +80,7 @@ impl Janela {
     /// a conversa dele numa aba (quando o cartão dele está nesta conversa).
     pub(super) fn linha_do_agente(&self, contexto: &Contexto, n: usize, linha: &Linha, cx: &Context<Self>) -> AnyElement {
         let estreita = minima(contexto.nivel);
-        let acao = if linha.fluxo && linha.atividade.trim().is_empty() { "Fluxo de agentes".to_string() } else { sem_marcacao(&acao_ao_vivo(&linha.atividade)) };
+        let acao = if linha.fluxo && linha.atividade.trim().is_empty() { crate::tr!("Fluxo de agentes").to_string() } else { sem_marcacao(&acao_ao_vivo(&linha.atividade)) };
         let abre = linha
             .chamada
             .clone()
@@ -88,10 +89,10 @@ impl Janela {
         let modelo = linha.modelo.as_deref().map(super::super::composer::nome_curto_modelo);
         let dica = SharedString::from(
             [
-                Some(format!("{} · há {}", linha.descricao, tempo_do_agente(linha.segundos.max(1)))),
+                Some(crate::tr!("{descricao} · há {tempo}", descricao = linha.descricao, tempo = tempo_do_agente(linha.segundos.max(1))).to_string()),
                 Some(acao.clone()),
-                modelo.map(|m| format!("Modelo: {m}")),
-                abre.is_some().then(|| "Clique para abrir a conversa dele numa aba".to_string()),
+                modelo.map(|m| crate::tr!("Modelo: {modelo}", modelo = m).to_string()),
+                abre.is_some().then(|| crate::tr!("Clique para abrir a conversa dele numa aba").to_string()),
             ]
             .into_iter()
             .flatten()
@@ -154,7 +155,7 @@ impl Janela {
                 let dica = SharedString::from(format!(
                     "{}\n{}",
                     texto_do_fim(&descricao_inteira, *erro, *durou),
-                    if aberto { "Clique para recolher o relatório" } else { "Clique para ver o relatório dele" }
+                    if aberto { crate::tr!("Clique para recolher o relatório") } else { crate::tr!("Clique para ver o relatório dele") }
                 ));
                 s.cursor_pointer()
                     .hover(|s| s.bg(Cores::hover()))
@@ -187,7 +188,7 @@ impl Janela {
                                     .right(esp::E6)
                                     .invisible()
                                     .group_hover("relatorio", |s| s.visible())
-                                    .child(BotaoCopiar::new(SharedString::from(format!("copiar-relatorio-do-fim-{chave}")), relatorio).dica("Copiar o relatório")),
+                                    .child(BotaoCopiar::new(SharedString::from(format!("copiar-relatorio-do-fim-{chave}")), relatorio).dica(crate::tr!("Copiar o relatório"))),
                             ),
                     ),
                 ))

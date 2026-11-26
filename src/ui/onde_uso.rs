@@ -10,7 +10,7 @@ use gpui_kit::*;
 
 use super::{
     Janela,
-    componentes::{ControleSegmentado, contagem, etiqueta_de_secao, formatar_custo, icone},
+    componentes::{ControleSegmentado, Segmento, etiqueta_de_secao, formatar_custo, icone},
     dialogos::{com_til, nome_da_pasta},
 };
 use crate::{
@@ -26,16 +26,21 @@ use crate::{
 const PASTAS: usize = 8;
 const CHATS: usize = 5;
 
+/// A vírgula decimal do português e do espanhol; o inglês usa o ponto.
+fn virgula(numero: String) -> String {
+    if crate::i18n::lingua() == crate::i18n::Lingua::Ingles { numero } else { numero.replace('.', ",") }
+}
+
 /// "850", "1,8 mil", "8 mil", "182 mil", "1,2 mi": uma quantidade de tokens em poucas letras.
 pub(super) fn quantia_curta(n: u64) -> String {
     // Uma casa, sem o ",0" de enfeite.
-    let decimal = |valor: f64| format!("{valor:.1}").trim_end_matches(".0").replace('.', ",");
+    let decimal = |valor: f64| virgula(format!("{valor:.1}").trim_end_matches(".0").to_string());
     match n {
         0..=999 => n.to_string(),
-        1_000..=9_949 => format!("{} mil", decimal(n as f64 / 1e3)),
-        9_950..=999_499 => format!("{} mil", (n as f64 / 1e3).round() as u64),
-        999_500..=9_949_999 => format!("{} mi", decimal(n as f64 / 1e6)),
-        _ => format!("{} mi", (n as f64 / 1e6).round() as u64),
+        1_000..=9_949 => tr!("{valor} mil", valor = decimal(n as f64 / 1e3)).to_string(),
+        9_950..=999_499 => tr!("{valor} mil", valor = (n as f64 / 1e3).round() as u64).to_string(),
+        999_500..=9_949_999 => tr!("{valor} mi", valor = decimal(n as f64 / 1e6)).to_string(),
+        _ => tr!("{valor} mi", valor = (n as f64 / 1e6).round() as u64).to_string(),
     }
 }
 
@@ -46,27 +51,27 @@ pub(super) fn memoria_curta(bytes: u64) -> String {
     if megas < 1024. {
         format!("{} MB", megas.round() as u64)
     } else {
-        format!("{:.1} GB", megas / 1024.).replace('.', ",")
+        virgula(format!("{:.1} GB", megas / 1024.))
     }
 }
 
 /// A dica do relógio do turno: "Memória deste chat: 3,1 GB", com o que o número conta.
 pub(super) fn dica_da_memoria(bytes: u64) -> String {
-    format!("Memória deste chat: {}\nO agente e tudo o que ele abriu (comandos, testes, servidores)", memoria_curta(bytes))
+    tr!("Memória deste chat: {memoria}\nO agente e tudo o que ele abriu (comandos, testes, servidores)", memoria = memoria_curta(bytes)).to_string()
 }
 
 /// "850 tokens", "1,8 mil tokens", "182 mil tokens", "1,2 mi tokens".
 pub(super) fn tokens_curtos(n: u64) -> String {
-    format!("{} {}", quantia_curta(n), if n == 1 { "token" } else { "tokens" })
+    format!("{} {}", quantia_curta(n), if n == 1 { tr!("token") } else { tr!("tokens") })
 }
 
 /// Os três números de um turno: a entrada nova (a sem desconto e a que foi gravada no cache), o
 /// que foi lido do cache e a saída.
 pub(super) fn partes_dos_tokens(tokens: &Tokens) -> [String; 3] {
     [
-        format!("{} de entrada nova", quantia_curta(tokens.entrada + tokens.cache_criado)),
-        format!("{} lidos do cache", quantia_curta(tokens.cache_lido)),
-        format!("{} de saída", quantia_curta(tokens.saida)),
+        tr!("{n} de entrada nova", n = quantia_curta(tokens.entrada + tokens.cache_criado)).to_string(),
+        tr!("{n} lidos do cache", n = quantia_curta(tokens.cache_lido)).to_string(),
+        tr!("{n} de saída", n = quantia_curta(tokens.saida)).to_string(),
     ]
 }
 
@@ -86,7 +91,7 @@ pub(super) fn dica_com_gasto(dica: &str, gasto: Option<&Gasto>) -> String {
 /// uma casa; daí em diante, como a duração do turno.
 pub(super) fn tempo_curto(milis: u64) -> String {
     if milis < 9_950 {
-        return format!("{} s", format!("{:.1}", milis as f64 / 1e3).trim_end_matches(".0").replace('.', ","));
+        return format!("{} s", virgula(format!("{:.1}", milis as f64 / 1e3).trim_end_matches(".0").to_string()));
     }
     super::mensagens::duracao_do_turno((milis as f64 / 1e3).round() as u64)
 }
@@ -111,23 +116,23 @@ pub(super) fn dica_do_turno(dica: &str, gasto: Option<&Gasto>, estatistica: Opti
         return linhas.join("\n");
     };
     if let Some(porcento) = gasto.and_then(|g| fatia_do_cache(&g.tokens)) {
-        linhas.push(format!("{porcento}% da entrada veio do cache"));
+        linhas.push(tr!("{porcento}% da entrada veio do cache", porcento = porcento).to_string());
     }
     let mut do_modelo = Vec::new();
     if !modelo.is_empty() {
         do_modelo.push(nome_do_modelo(modelo));
     }
     if tempos.passos > 0 {
-        do_modelo.push(contagem(tempos.passos as usize, "passo", "passos"));
+        do_modelo.push(if tempos.passos == 1 { tr!("{n} passo", n = tempos.passos) } else { tr!("{n} passos", n = tempos.passos) }.to_string());
     }
-    let do_tempo: Vec<String> = [(tempos.total_ms, "no total"), (tempos.modelo_ms, "de modelo"), (tempos.ttft_ms, "até a primeira palavra")]
+    let do_tempo: Vec<String> = [(tempos.total_ms, tr!("no total")), (tempos.modelo_ms, tr!("de modelo")), (tempos.ttft_ms, tr!("até a primeira palavra"))]
         .into_iter()
         .filter(|(milis, _)| *milis > 0)
         .map(|(milis, o_que)| format!("{} {o_que}", tempo_curto(milis)))
         .collect();
     linhas.extend([do_modelo, do_tempo].into_iter().filter(|partes| !partes.is_empty()).map(|partes| partes.join(" · ")));
     if let Some(subida) = tempos.subida_ms() {
-        linhas.push(format!("{} para abrir o Claude Code", tempo_curto(subida)));
+        linhas.push(tr!("{tempo} para abrir o Claude Code", tempo = tempo_curto(subida)).to_string());
     }
     linhas.join("\n")
 }
@@ -142,10 +147,10 @@ fn nome_do_modelo(modelo: &str) -> String {
 /// segundos. Os minutos arredondam para cima (com 2 min 10 s ainda são "3 min").
 pub(super) fn estado_do_cache(restante: u64) -> String {
     match restante {
-        0 => "cache frio".to_string(),
-        1..60 => format!("cache quente por mais {restante} s"),
-        60..=3540 => format!("cache quente por mais {} min", restante.div_ceil(60)),
-        _ => format!("cache quente por mais {} h", restante.div_ceil(3600)),
+        0 => tr!("cache frio").to_string(),
+        1..60 => tr!("cache quente por mais {restante} s", restante = restante).to_string(),
+        60..=3540 => tr!("cache quente por mais {n} min", n = restante.div_ceil(60)).to_string(),
+        _ => tr!("cache quente por mais {n} h", n = restante.div_ceil(3600)).to_string(),
     }
 }
 
@@ -163,7 +168,7 @@ pub(super) fn linha_do_cache(turno: &Turno, rodando: bool, agora: u64) -> Option
 /// os tokens dele.
 pub(super) fn ultimo_turno(motor: &Motor, chat: &str) -> Option<AnyElement> {
     let turno = motor.gastos().ultimo(chat).filter(|t| t.tokens.total() > 0)?;
-    let linha = |rotulo: &'static str, valores: Vec<String>| {
+    let linha = |rotulo: SharedString, valores: Vec<String>| {
         h_flex()
             .items_start()
             .gap(esp::E8)
@@ -182,8 +187,8 @@ pub(super) fn ultimo_turno(motor: &Motor, chat: &str) -> Option<AnyElement> {
     // O cache tem a linha dele, com o rótulo na coluna dos rótulos: a frase inteira na coluna dos
     // valores não cabia ("cache quente por mais 57 min" quebrava em duas linhas).
     let cache = linha_do_cache(turno, motor.execucao(chat).rodando(), agora())
-        .map(|estado| linha("Cache", vec![estado.trim_start_matches("cache ").to_string()]));
-    Some(v_flex().child(linha("Último turno", partes_dos_tokens(&turno.tokens).to_vec())).children(cache).into_any_element())
+        .map(|estado| linha(tr!("Cache"), vec![estado.trim_start_matches(&*tr!("cache ")).to_string()]));
+    Some(v_flex().child(linha(tr!("Último turno"), partes_dos_tokens(&turno.tokens).to_vec())).children(cache).into_any_element())
 }
 
 /// "182 mil tokens · US$ 0,84": o gasto numa linha. Sem custo (o Codex não diz), só os tokens;
@@ -295,7 +300,7 @@ impl OndeOUsoFoi {
                                 .text_size(r(13.))
                                 .line_height(r(18.))
                                 .text_color(if existe { Cores::texto() } else { Cores::apagado() })
-                                .child(titulo.unwrap_or_else(|| "Chat apagado".into())),
+                                .child(titulo.unwrap_or_else(|| tr!("Chat apagado").to_string())),
                         )
                         .child(div().flex_none().metadado().text_color(Cores::tenue()).child(gasto_curto(&c.gasto))),
                 )
@@ -323,7 +328,7 @@ impl OndeOUsoFoi {
                         .py(esp::E6)
                         .metadado()
                         .text_color(Cores::tenue())
-                        .child(format!("e mais {} · {}", contagem(resto, "chat", "chats"), gasto_curto(&soma))),
+                        .child(tr!("e mais {chats} · {gasto}", chats = if resto == 1 { tr!("{n} chat", n = resto) } else { tr!("{n} chats", n = resto) }, gasto = gasto_curto(&soma))),
                 )
             })
             .into_any_element()
@@ -345,7 +350,7 @@ impl Render for OndeOUsoFoi {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let resumo = resumir(self.motor.read(cx).gastos().turnos(), desde(self.periodo, agora()));
         let entidade = cx.entity().downgrade();
-        let seletor = ControleSegmentado::new("gasto-periodo", vec!["Hoje", "7 dias"], self.periodo, move |novo, _, cx| {
+        let seletor = ControleSegmentado::new("gasto-periodo", vec![Segmento::new(tr!("Hoje")), Segmento::new(tr!("7 dias"))], self.periodo, move |novo, _, cx| {
             let _ = entidade.update(cx, |this, cx| {
                 this.periodo = novo;
                 cx.notify();
@@ -360,7 +365,7 @@ impl Render for OndeOUsoFoi {
                 .py(esp::E12)
                 .metadado()
                 .text_color(Cores::tenue())
-                .child(if self.periodo == 0 { "Nenhum turno terminou hoje." } else { "Nenhum turno terminou nos últimos 7 dias." })
+                .child(if self.periodo == 0 { tr!("Nenhum turno terminou hoje.") } else { tr!("Nenhum turno terminou nos últimos 7 dias.") })
                 .into_any_element()
         } else {
             v_flex()
@@ -379,20 +384,20 @@ impl Render for OndeOUsoFoi {
                             .py(esp::E8)
                             .metadado()
                             .text_color(Cores::tenue())
-                            .child(format!("e mais {}", contagem(resto, "pasta", "pastas"))),
+                            .child(tr!("e mais {pastas}", pastas = if resto == 1 { tr!("{n} pasta", n = resto) } else { tr!("{n} pastas", n = resto) })),
                     )
                 })
                 .into_any_element()
         };
         let total = (resumo.total.turnos > 0)
-            .then(|| format!("{} · {}", contagem(resumo.total.turnos, "turno", "turnos"), gasto_curto(&resumo.total)));
+            .then(|| tr!("{turnos} · {gasto}", turnos = if resumo.total.turnos == 1 { tr!("{n} turno", n = resumo.total.turnos) } else { tr!("{n} turnos", n = resumo.total.turnos) }, gasto = gasto_curto(&resumo.total)).to_string());
         v_flex()
             .pt(esp::E16)
             .gap(esp::E6)
             .child(
                 h_flex()
                     .gap(esp::E8)
-                    .child(div().flex_1().min_w_0().child(etiqueta_de_secao("Onde o uso foi").px(esp::E4)))
+                    .child(div().flex_1().min_w_0().child(etiqueta_de_secao(tr!("Onde o uso foi")).px(esp::E4)))
                     .children(total.map(|t| div().flex_none().metadado().text_color(Cores::tenue()).child(t)))
                     .child(div().flex_none().child(seletor)),
             )
@@ -412,7 +417,7 @@ impl Render for OndeOUsoFoi {
                     .px(esp::E4)
                     .metadado()
                     .text_color(Cores::tenue())
-                    .child("Custo estimado pelo preço da API, contado desde que esta versão foi instalada."),
+                    .child(tr!("Custo estimado pelo preço da API, contado desde que esta versão foi instalada.")),
             )
     }
 }

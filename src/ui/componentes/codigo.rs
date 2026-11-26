@@ -207,7 +207,7 @@ impl RenderOnce for CaixaDeCodigo {
                                 .text_color(Cores::destaque_texto())
                                 .cursor_pointer()
                                 .hover(|s| s.underline())
-                                .child(format!("Mostrar tudo ({fora} linhas acima)"))
+                                .child(tr!("Mostrar tudo ({fora} linhas acima)", fora = fora))
                                 .on_click(move |_, _, cx| tudo.update(cx, |v, cx| {
                                     *v = true;
                                     cx.notify();

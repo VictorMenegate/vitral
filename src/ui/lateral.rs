@@ -200,7 +200,7 @@ impl MotivoDaPrevia {
 
     /// O curto (lista estreita) fica sem rótulo: o sinal já diz o quê.
     fn rotulo(&self, curto: bool) -> String {
-        if curto { String::new() } else { self.rotulo.to_string() }
+        if curto { String::new() } else { crate::i18n::traduzir(self.rotulo).into_owned() }
     }
 }
 
@@ -422,8 +422,8 @@ fn recorte(texto: &str, busca: &str) -> Option<(String, Range<usize>)> {
 fn achado_na_conversa(chat: &Chat, busca: &str) -> Option<(String, Range<usize>)> {
     chat.itens.iter().rev().find_map(|item| {
         let (quem, texto) = match item {
-            Item::Usuario { texto, .. } => (Some("Você"), texto),
-            Item::Entrega { de, texto, .. } => (Some(de.as_str()), texto),
+            Item::Usuario { texto, .. } => (Some(tr!("Você").to_string()), texto),
+            Item::Entrega { de, texto, .. } => (Some(de.clone()), texto),
             Item::Assistente { texto, .. } => (None, texto),
             _ => return None,
         };
@@ -535,7 +535,7 @@ fn avisos_das_pastas_vazias(nos: &mut [No], carregadas: &std::collections::BTree
         if no.filhos.is_empty() {
             let lida = carregadas.contains(&format!("{}/", no.caminho));
             no.filhos.push(No {
-                nome: if lida { "Pasta vazia" } else { "Lendo…" }.to_string(),
+                nome: if lida { tr!("Pasta vazia") } else { tr!("Lendo…") }.to_string(),
                 caminho: format!("{}/{MARCA_DE_AVISO}", no.caminho),
                 pasta: false,
                 filhos: Vec::new(),
@@ -689,9 +689,9 @@ fn campo_da_lista(estado: &Entity<InputState>, aba: AbaLateral, estreita: bool, 
         .when(!focado, |s| {
             s.dica_no_ponteiro(move |window, cx| {
                 if conversas {
-                    Tooltip::new("Buscar nas conversas\nNos títulos e nas mensagens, também das arquivadas").action(&Buscar, None).build(window, cx)
+                    Tooltip::new(tr!("Buscar nas conversas\nNos títulos e nas mensagens, também das arquivadas")).action(&Buscar, None).build(window, cx)
                 } else {
-                    Tooltip::new("Buscar nos arquivos da pasta").build(window, cx)
+                    Tooltip::new(tr!("Buscar nos arquivos da pasta")).build(window, cx)
                 }
             })
         })
@@ -701,7 +701,7 @@ fn campo_da_lista(estado: &Entity<InputState>, aba: AbaLateral, estreita: bool, 
 /// lista apertada, só o ícone, com o rótulo na dica.
 fn botao_de_secao(
     id: &'static str,
-    rotulo: &'static str,
+    rotulo: SharedString,
     icone_: Lucide,
     apertada: bool,
     window: &Window,
@@ -746,7 +746,7 @@ fn menu_do_arquivo(
     };
     let (mencao, copia) = (caminho.clone(), caminho);
     menu.when(!pasta, |menu| {
-        menu.item(PopupMenuItem::new("Mencionar na conversa").icon(Lucide::AtSign).on_click(
+        menu.item(PopupMenuItem::new(tr!("Mencionar na conversa")).icon(Lucide::AtSign).on_click(
             move |_, window, cx| {
                 let _ = janela.update(cx, |this, cx| this.mencionar(&mencao, window, cx));
             },
@@ -754,17 +754,17 @@ fn menu_do_arquivo(
         .separator()
     })
     .item(
-        PopupMenuItem::new("Abrir no VS Code")
+        PopupMenuItem::new(tr!("Abrir no VS Code"))
             .icon(Lucide::CodeXml)
             .external()
             .on_click(move |_, _, _| crate::sistema::abrir_no_editor(&completo, None)),
     )
-    .item(PopupMenuItem::new("Copiar o caminho").icon(Lucide::Copy).on_click(move |_, window, cx| {
+    .item(PopupMenuItem::new(tr!("Copiar o caminho")).icon(Lucide::Copy).on_click(move |_, window, cx| {
         cx.write_to_clipboard(ClipboardItem::new_string(copia.clone()));
-        window.push_notification(aviso(Tom::Pronto, "Caminho copiado."), cx);
+        window.push_notification(aviso(Tom::Pronto, tr!("Caminho copiado.")), cx);
     }))
     .item(
-        PopupMenuItem::new("Mostrar na pasta")
+        PopupMenuItem::new(tr!("Mostrar na pasta"))
             .icon(Lucide::FolderOpen)
             .external()
             .on_click(move |_, _, cx| crate::sistema::abrir_pasta(&onde, cx)),
@@ -806,13 +806,13 @@ fn acoes_do_arquivo(
                 .opacity(0.)
                 .group_hover(grupo, |s| s.opacity(1.))
                 .child(
-                    botao_icone(("mencionar-arquivo", ix), Lucide::AtSign, "Mencionar na conversa", TamanhoBotao::Linha, window, cx)
+                    botao_icone(("mencionar-arquivo", ix), Lucide::AtSign, tr!("Mencionar na conversa"), TamanhoBotao::Linha, window, cx)
                         .on_click(move |_, window, cx| {
                             let _ = j.update(cx, |this, cx| this.mencionar(&c, window, cx));
                         }),
                 )
                 .child(
-                    botao_icone(("mais-do-arquivo", ix), Lucide::Ellipsis, "Mais opções do arquivo\nTambém no clique direito", TamanhoBotao::Linha, window, cx)
+                    botao_icone(("mais-do-arquivo", ix), Lucide::Ellipsis, tr!("Mais opções do arquivo\nTambém no clique direito"), TamanhoBotao::Linha, window, cx)
                         .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                             menu_do_arquivo(menu, janela.clone(), pasta.clone(), caminho.clone(), false)
                         }),
@@ -995,9 +995,9 @@ impl Janela {
         let largura_atual = *largura.read(cx);
         let aperto = Aperto::de(largura_atual);
         // O texto da busca: "Buscar", e o resto na dica do campo (com o Ctrl+K).
-        let dica = "Buscar";
+        let dica = tr!("Buscar");
         if self.dica_busca != dica {
-            self.dica_busca = dica;
+            self.dica_busca = dica.clone();
             self.busca.update(cx, |b, cx| b.set_placeholder(dica, window, cx));
         }
         let busca = self.busca.read(cx).value().to_lowercase();
@@ -1101,13 +1101,14 @@ impl Janela {
             // a lista e a borda, e os cartões por cima). Na gaveta, a superfície é a da gaveta.
     }
 
-    /// Conversas, Arquivos e Quadro de ideias, um embaixo do outro, no jeito do Linear (25/11/2026),
-    /// no lugar do segmentado Conversas · Arquivos: o escolhido na cor cheia, o Quadro abre o quadro
-    /// (Ctrl+I). O ponto âmbar na de Conversas quando algo espera você e você está nos arquivos.
+    /// Conversas, Arquivos e Tarefas, um embaixo do outro, no jeito do Linear (25/11/2026), no lugar
+    /// do segmentado Conversas · Arquivos: o escolhido na cor cheia. Tarefas (Ctrl+I) abre o quadro
+    /// no lugar das conversas, e Conversas volta a elas. O ponto âmbar na de Conversas quando algo
+    /// espera você e você está nos arquivos ou nas Tarefas.
     fn abas_da_lista(&self, motor: &Motor, ctx: &Contexto, conversas: bool, window: &Window, cx: &Context<Self>) -> Div {
         let pendentes = motor.precisa_de_voce().numero();
         // 32 de altura, 9 dos lados e entre o ícone e o nome, texto de 13,5 (protótipo Linear).
-        let linha = |id: &'static str, simbolo: Lucide, nome: &'static str, escolhido: bool| {
+        let linha = |id: &'static str, simbolo: Lucide, nome: SharedString, escolhido: bool| {
             div()
                 .id(id)
                 .flex()
@@ -1121,7 +1122,7 @@ impl Janela {
                 .font_weight(FontWeight::MEDIUM)
                 .cursor_pointer()
                 .text_color(Cores::texto())
-                .when(escolhido, |d| d.bg(Cores::selecao_da_lista()))
+                // O fundo do escolhido é o marcador, que desliza atrás dos itens (abaixo).
                 .when(!escolhido, |d| d.hover(|s| s.bg(Cores::hover())))
                 .child(div().flex_none().text_color(if escolhido { Cores::texto() } else { Cores::tenue_da_lista() }).child(icone(simbolo, 16., window)))
                 .child(div().flex_1().min_w_0().truncate().child(nome))
@@ -1136,20 +1137,33 @@ impl Janela {
                 });
             }
         };
-        let ponto = (!conversas && pendentes > 0).then(|| div().flex_none().size(r(7.)).rounded_full().bg(Cores::espera()));
+        let no_quadro = self.quadro.is_some();
+        let ponto = ((!conversas || no_quadro) && pendentes > 0).then(|| div().flex_none().size(r(7.)).rounded_full().bg(Cores::espera()));
         let atalho = (!ctx.aperto.estreita).then(|| div().flex_none().text_size(r(11.)).text_color(Cores::tenue_da_lista()).child("Ctrl I"));
         let _ = cx;
+        // O marcador do escolhido desliza entre Conversas e Tarefas (o `.marcador` do protótipo):
+        // itens de 32 com 2 de vão.
+        let escolhido = if no_quadro { Some(2) } else if conversas { Some(0) } else { None };
         v_flex()
+            .relative()
             .flex_none()
             .mt(linear::ANTES_DA_SECAO)
             .gap(esp::E2)
             .mb(esp::E4)
-            .child(linha("lista-conversas", Lucide::MessagesSquare, "Conversas", conversas).children(ponto).on_click(trocar(AbaLateral::Conversas)))
+            .child(super::movimento::marcador("marcador-da-lista", escolhido, 0., 34., 32., Cores::selecao_da_lista(), raio::controle()))
+            .child(linha("lista-conversas", Lucide::MessagesSquare, tr!("Conversas"), conversas && !no_quadro).children(ponto).on_click({
+                let trocar = trocar(AbaLateral::Conversas);
+                let janela = ctx.janela.clone();
+                move |ev: &ClickEvent, window: &mut Window, cx: &mut App| {
+                    let _ = janela.update(cx, |this, cx| this.fechar_quadro(window, cx));
+                    trocar(ev, window, cx);
+                }
+            }))
             // Os arquivos moram na direita (protótipo Linear, 25/11/2026): o item abre a aba deles,
             // com o cursor na busca; a lista continua nas conversas.
-            .child(linha("lista-arquivos", Lucide::Folder, "Arquivos", false).on_click(cx.listener(|this, _, window, cx| this.abrir_aba_arquivos(window, cx))))
+            .child(linha("lista-arquivos", Lucide::Folder, tr!("Arquivos"), false).on_click(cx.listener(|this, _, window, cx| this.abrir_aba_arquivos(window, cx))))
             .child(
-                linha("lista-quadro", Lucide::Kanban, "Quadro de ideias", false)
+                linha("lista-quadro", Lucide::Kanban, tr!("Tarefas"), no_quadro)
                     .children(atalho)
                     .on_click(|_, window, cx| window.dispatch_action(Box::new(super::AbrirQuadroDeIdeias), cx)),
             )
@@ -1243,7 +1257,7 @@ impl Janela {
             .child(campo_da_lista(&self.busca, self.aba, ctx.aperto.estreita, window, cx));
         // O + abre um chat novo na hora, na pasta do chat aberto (como no VS Code).
         let nova = conversas.then(|| {
-            BotaoRedondo::new("nova-conversa", Some(Lucide::Plus.into()), "Novo chat")
+            BotaoRedondo::new("nova-conversa", Some(Lucide::Plus.into()), tr!("Novo chat"))
                 .dica_acao(Box::new(NovaConversa), None)
                 .variante(VarianteRedonda::Primario)
                 .diametro(30.)
@@ -1266,7 +1280,7 @@ impl Janela {
             let pasta = a.pasta.clone()?;
             let recarregar = {
                 let pasta = pasta.clone();
-                botao_icone("escopo-recarregar", Lucide::RefreshCw, "Recarregar a lista de arquivos", TamanhoBotao::Linha, window, cx)
+                botao_icone("escopo-recarregar", Lucide::RefreshCw, tr!("Recarregar a lista de arquivos"), TamanhoBotao::Linha, window, cx)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.reler_arquivos(&pasta);
                         cx.notify();
@@ -1278,9 +1292,9 @@ impl Janela {
                 let pasta = pasta.clone();
                 let ligado = self.mostrar_ignorados;
                 let (simbolo, dica) = if ligado {
-                    (Lucide::Eye, "Esconder os ignorados\nVolta a mostrar só o que o git acompanha")
+                    (Lucide::Eye, tr!("Esconder os ignorados\nVolta a mostrar só o que o git acompanha"))
                 } else {
-                    (Lucide::EyeOff, "Mostrar ignorados\nOs arquivos e as pastas que o git deixa de fora, como prints e exports")
+                    (Lucide::EyeOff, tr!("Mostrar ignorados\nOs arquivos e as pastas que o git deixa de fora, como prints e exports"))
                 };
                 botao_icone("escopo-ignorados", simbolo, dica, TamanhoBotao::Linha, window, cx)
                     .when(ligado, |b| b.text_color(Cores::destaque_texto()))
@@ -1311,12 +1325,12 @@ impl Janela {
         if self.filtro != Filtro::Arquivados {
             return None;
         }
-        let sair = botao_icone("escopo-sair-arquivadas", Lucide::X, "Voltar às conversas", TamanhoBotao::Linha, window, cx)
+        let sair = botao_icone("escopo-sair-arquivadas", Lucide::X, tr!("Voltar às conversas"), TamanhoBotao::Linha, window, cx)
             .on_click(cx.listener(|this, _, _, cx| {
                 this.filtro = Filtro::Todos;
                 cx.notify();
             }));
-        let nome = "Arquivadas";
+        let nome = tr!("Arquivadas");
         let simbolo = div()
             .flex_none()
             .size(r(24.))
@@ -1365,7 +1379,7 @@ impl Janela {
                 .rounded(raio::de(24.))
                 .selected(vendo)
                 .child(div().flex_none().text_color(Cores::tenue()).child(icone(Lucide::Archive, 14., window)))
-                .tooltip(if vendo { "Voltar às conversas".to_string() } else { format!("Arquivadas: {}", milhar(n)) })
+                .tooltip(if vendo { tr!("Voltar às conversas").to_string() } else { tr!("Arquivadas: {n}", n = milhar(n)).to_string() })
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if this.aba != AbaLateral::Conversas {
                         this.trocar_aba(AbaLateral::Conversas, window, cx);
@@ -1429,7 +1443,7 @@ impl Janela {
         // à direita do nome), na ordem do protótipo: Rodando, Esperando você, Fixadas e as faixas
         // de data (Hoje, Esta semana, Mais antigas). Na busca, nada recolhe.
         let secao = |nome: &'static str, n: usize, com_aberta: bool| {
-            let mut sec = SecaoDaLista::new(nome).contagem(n);
+            let mut sec = SecaoDaLista::new(crate::i18n::traduzir(nome).into_owned()).contagem(n);
             let recolhida = busca.is_empty() && !com_aberta && self.secoes_recolhidas.contains(nome);
             if busca.is_empty() {
                 sec = sec.recolhivel(!recolhida, alternar_secao(ctx.janela.clone(), nome));
@@ -1460,7 +1474,7 @@ impl Janela {
             if paradas.len() >= 2 {
                 let retomar: Vec<String> =
                     paradas.iter().map(|f| f.0).filter(|c| motor.precisa_retomar(&c.id)).map(|c| c.id.clone()).collect();
-                let botao = botao_de_secao("retomar-tudo", "Retomar tudo", Lucide::Play, ctx.aperto.apertada, window, cx);
+                let botao = botao_de_secao("retomar-tudo", tr!("Retomar tudo"), Lucide::Play, ctx.aperto.apertada, window, cx);
                 sec = sec.acao(botao.on_click(cx.listener(
                     move |this, _, _, cx| {
                         if let Some(entidade) = &this.motor {
@@ -1514,7 +1528,7 @@ impl Janela {
         if !mostrar_arquivados {
             let arquivadas = arquivadas_que_casam(motor.chats_da_lista(), &self.busca_preparada, &palavras);
             if !arquivadas.is_empty() {
-                m.secao(SecaoDaLista::new("Arquivadas").contagem(arquivadas.len()));
+                m.secao(SecaoDaLista::new(tr!("Arquivadas")).contagem(arquivadas.len()));
                 for c in arquivadas {
                     let aberta = self.selecionado.as_deref() == Some(c.id.as_str());
                     let cartao = self.cartao_conversa(motor, c, None, ctx, window, cx);
@@ -1534,22 +1548,22 @@ impl Janela {
     fn lista_vazia(&self, ctx: &Contexto, window: &Window, cx: &Context<Self>) -> AnyElement {
         let vazio = if !ctx.busca.is_empty() {
             let digitado = self.busca.read(cx).value().trim().to_string();
-            EstadoVazio::new(Lucide::Search, format!("Nada encontrado para “{digitado}”"))
-                .texto("A busca olha títulos, mensagens e pastas, também das arquivadas.")
+            EstadoVazio::new(Lucide::Search, tr!("Nada encontrado para “{busca}”", busca = digitado))
+                .texto(tr!("A busca olha títulos, mensagens e pastas, também das arquivadas."))
                 .acao(self.botao_limpar_busca(window, cx))
         } else if self.filtro == Filtro::Arquivados {
-            EstadoVazio::new(Lucide::Archive, "Nada arquivado").acao(
-                botao_fantasma("vazio-voltar", None, "Voltar às conversas", TamanhoBotao::Controle, window, cx)
+            EstadoVazio::new(Lucide::Archive, tr!("Nada arquivado")).acao(
+                botao_fantasma("vazio-voltar", None, tr!("Voltar às conversas"), TamanhoBotao::Controle, window, cx)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.filtro = Filtro::Todos;
                         cx.notify();
                     })),
             )
         } else {
-            EstadoVazio::new(Lucide::MessagesSquare, "Nenhum chat ainda")
-                .texto("Cada chat trabalha direto numa pasta, como o Claude Code.")
+            EstadoVazio::new(Lucide::MessagesSquare, tr!("Nenhum chat ainda"))
+                .texto(tr!("Cada chat trabalha direto numa pasta, como o Claude Code."))
                 .acao(
-                    botao_primario("vazio-nova", None, "Novo chat", TamanhoBotao::Controle, window, cx)
+                    botao_primario("vazio-nova", None, tr!("Novo chat"), TamanhoBotao::Controle, window, cx)
                         .on_click(cx.listener(|this, _, window, cx| this.novo_chat_direto(window, cx))),
                 )
         };
@@ -1557,7 +1571,7 @@ impl Janela {
     }
 
     fn botao_limpar_busca(&self, window: &Window, cx: &Context<Self>) -> Button {
-        botao_fantasma("vazio-limpar-busca", None, "Limpar busca", TamanhoBotao::Controle, window, cx)
+        botao_fantasma("vazio-limpar-busca", None, tr!("Limpar busca"), TamanhoBotao::Controle, window, cx)
             .on_click(cx.listener(|this, _, window, cx| this.busca.update(cx, |b, cx| b.set_value("", window, cx))))
     }
 
@@ -1616,7 +1630,7 @@ impl Janela {
         botao_icone(
             SharedString::from(format!("ao-lado-{chat}")),
             Lucide::Columns2,
-            "Abrir ao lado\nOu Ctrl+clique, ou arraste para um painel",
+            tr!("Abrir ao lado\nOu Ctrl+clique, ou arraste para um painel"),
             TamanhoBotao::Linha,
             window,
             cx,
@@ -1630,7 +1644,7 @@ impl Janela {
         botao_icone(
             SharedString::from(format!("mais-{chat}")),
             Lucide::Ellipsis,
-            "Mais opções da conversa\nTambém no clique direito",
+            tr!("Mais opções da conversa\nTambém no clique direito"),
             TamanhoBotao::Linha,
             window,
             cx,
@@ -1647,7 +1661,7 @@ impl Janela {
             return self.botao_ao_lado(&chat.id, window, cx);
         }
         let id = chat.id.clone();
-        botao_icone(SharedString::from(format!("acao-{}", chat.id)), Lucide::Play, "Retomar o que parou no meio", TamanhoBotao::Linha, window, cx)
+        botao_icone(SharedString::from(format!("acao-{}", chat.id)), Lucide::Play, tr!("Retomar o que parou no meio"), TamanhoBotao::Linha, window, cx)
             .on_click(cx.listener(move |this, _, _, cx| {
                 if let Some(entidade) = &this.motor {
                     entidade.update(cx, |motor, cx| motor.retomar(&id, cx));
@@ -1692,7 +1706,7 @@ impl Janela {
                 .child(div().flex_1().min_w_0().truncate().child(r))
         });
         let subtitulo = achado.map(|(achado, faixa)| {
-            let pasta = if motor.sem_pasta(chat) { "Sem pasta".to_string() } else { nome_da_pasta(&chat.cwd) };
+            let pasta = if motor.sem_pasta(chat) { tr!("Sem pasta").to_string() } else { nome_da_pasta(&chat.cwd) };
             let onde = div().min_w_0().truncate().child(StyledText::new(achado).with_highlights([(faixa, realce_da_busca())]));
             h_flex()
                 .gap(esp::E4)
@@ -1706,17 +1720,17 @@ impl Janela {
                 hora_do_cartao()
                     .text_color(if selecionado { Cores::texto() } else { Cores::destaque_texto() })
                     .child(duracao(desde)),
-                format!("Rodando há {}", duracao(desde)),
+                tr!("Rodando há {tempo}", tempo = duracao(desde)).to_string(),
             ),
             _ => {
                 let quando = tempo_relativo(chat.atualizado_em);
-                let dica = if quando == "agora" { "Atualizado agora".to_string() } else { format!("Atualizado há {quando}") };
+                let dica = if quando == "agora" { tr!("Atualizado agora").to_string() } else { tr!("Atualizado há {quando}", quando = quando).to_string() };
                 // Tênue em repouso e texto na selecionada: o apagado ficava abaixo de 3:1
                 // (relatório de design, 16/11/2026). Com a janela transparente, o tênue sobre o
                 // papel de parede ficava entre 3,1 e 3,8:1; vai o texto a 70% (revisão de design,
                 // 23/11/2026).
                 let repouso = if crate::tema::transparencia() > 0 { Cores::texto().opacity(0.7) } else { Cores::tenue_da_lista() };
-                (hora_do_cartao().text_color(repouso).child(quando), dica)
+                (hora_do_cartao().text_color(repouso).child(if quando == "agora" { tr!("agora").to_string() } else { quando }), dica)
             }
         };
         // Chat aberto num painel: só o número, e a hora vai para a dica do avatar. Com 3 painéis a
@@ -2040,7 +2054,7 @@ impl Janela {
             if achados.is_empty() {
                 let digitado = busca.read(cx).value().trim().to_string();
                 let campo = busca.clone();
-                let limpar = botao_fantasma("vazio-limpar-busca", None, "Limpar busca", TamanhoBotao::Controle, window, cx)
+                let limpar = botao_fantasma("vazio-limpar-busca", None, tr!("Limpar busca"), TamanhoBotao::Controle, window, cx)
                     .on_click(move |_, window, cx| campo.update(cx, |b, cx| b.set_value("", window, cx)));
                 let vazio = EstadoVazio::new(Lucide::Search, format!("Nenhum arquivo com “{digitado}”")).acao(limpar);
                 return div().flex_1().px(esp::E8).child(vazio).into_any_element();
@@ -2182,7 +2196,7 @@ impl Janela {
                                 .on_click(cx.listener(move |this, _, _, cx| this.alternar_ignorados(&r_ign, cx))),
                         )
                         .child(
-                            botao_icone("arquivos-recarregar", Lucide::RefreshCw, "Recarregar a lista de arquivos", TamanhoBotao::Linha, window, cx)
+                            botao_icone("arquivos-recarregar", Lucide::RefreshCw, tr!("Recarregar a lista de arquivos"), TamanhoBotao::Linha, window, cx)
                                 .size(r(18.))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.reler_arquivos(&r_rec);

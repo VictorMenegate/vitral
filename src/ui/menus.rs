@@ -59,19 +59,19 @@ pub(super) fn menu_conversa(
         .iter()
         .filter(|i| i.chat.as_deref() == Some(chat) && i.coluna != crate::ideias::Coluna::Feitas)
         .count();
-    let rotulo_ideias = if ideias == 0 { "Ideias".to_string() } else { format!("Ideias ({ideias})") };
+    let rotulo_ideias = if ideias == 0 { tr!("Ideias").to_string() } else { tr!("Ideias ({n})", n = ideias).to_string() };
     let (i1, i2, i3, i4, i5, i6) = (id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id);
     let (m1, m2, m3) = (motor.clone(), motor.clone(), motor.clone());
     menu.when(ao_lado, |menu| {
         menu.item(
-            acao("Abrir ao lado", Lucide::Columns2, &janela, move |this, window, cx| {
+            acao(tr!("Abrir ao lado"), Lucide::Columns2, &janela, move |this, window, cx| {
                 this.abrir_ao_lado(i1.clone(), None, window, cx)
             })
             .disabled(!cabe),
         )
         .separator()
     })
-    .item(acao("Renomear…", Lucide::Pencil, &janela, move |this, window, cx| {
+    .item(acao(tr!("Renomear…"), Lucide::Pencil, &janela, move |this, window, cx| {
         this.dialogo_renomear(i2.clone(), window, cx)
     }))
     .item(acao(rotulo_ideias, Lucide::Lightbulb, &janela, move |this, window, cx| {
@@ -80,18 +80,18 @@ pub(super) fn menu_conversa(
     .separator()
     .when(pode_marcar_nao_lido, |menu| {
         menu.item(
-            PopupMenuItem::new("Não lido")
+            PopupMenuItem::new(tr!("Não lido"))
                 .icon(Lucide::CircleDot)
                 .on_click(move |_, _, cx| m3.update(cx, |m, cx| m.marcar_nao_lido(&i6, cx))),
         )
     })
     .item(
-        PopupMenuItem::new(if fixado { "Desafixar" } else { "Fixar" })
+        PopupMenuItem::new(if fixado { tr!("Desafixar") } else { tr!("Fixar") })
             .icon(if fixado { Lucide::PinOff } else { Lucide::Pin })
             .on_click(move |_, _, cx| m1.update(cx, |m, cx| m.alternar_fixado(&i3, cx))),
     )
     .item(acao(
-        if arquivado { "Desarquivar" } else { "Arquivar" },
+        if arquivado { tr!("Desarquivar") } else { tr!("Arquivar") },
         if arquivado { Lucide::ArchiveRestore } else { Lucide::Archive },
         &janela,
         move |this, window, cx| {

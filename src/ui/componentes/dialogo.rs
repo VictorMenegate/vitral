@@ -69,11 +69,11 @@ impl RenderOnce for CabecalhoDialogo {
         // parte de cima" e "melhora todos esses menus que estão no estilo antigo"): o título em 15,
         // o subtítulo ao lado, tênue, cortado na borda, e os botões de 24.
         let voltar = self.voltar.map(|f| {
-            botao_icone("dialogo-voltar", Lucide::ArrowLeft, "Voltar", TamanhoBotao::Linha, window, cx)
+            botao_icone("dialogo-voltar", Lucide::ArrowLeft, tr!("Voltar"), TamanhoBotao::Linha, window, cx)
                 .on_click(move |_, window, cx| f(window, cx))
         });
         let fechar = (!self.sem_fechar).then(|| {
-            botao_icone("dialogo-fechar", Lucide::X, "Fechar (Esc)", TamanhoBotao::Linha, window, cx)
+            botao_icone("dialogo-fechar", Lucide::X, tr!("Fechar (Esc)"), TamanhoBotao::Linha, window, cx)
                 .on_click(|_, window, cx| window.close_dialog(cx))
         });
         let dica = self.titulo.clone();
@@ -260,7 +260,6 @@ pub fn confirmar(
             .width(largura_alerta)
             .p(r(24.))
             .rounded(raio::PECA)
-            .border_color(Cores::borda_forte())
             .icon(
                 div()
                     .size(r(40.))

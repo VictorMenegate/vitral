@@ -217,9 +217,9 @@ impl Indice {
             return None;
         }
         if self.achados.is_empty() {
-            return Some("nenhum achado".into());
+            return Some(tr!("nenhum achado").to_string());
         }
-        Some(format!("{} de {}", self.atual + 1, self.achados.len()))
+        Some(tr!("{n} de {total}", n = self.atual + 1, total = self.achados.len()).to_string())
     }
 
     /// O contador da barra estreita: "2/7" e, sem achado, "0" (em âmbar; a frase vai na dica).
@@ -655,8 +655,8 @@ impl Janela {
         let sem_achado = total == 0 && contador.is_some();
         let contador_longo = contador.clone().map(SharedString::from);
         let contador = if estreita { painel.busca.indice.contador_curto() } else { contador };
-        let seta = |nome: &'static str, icone: Lucide, dica: &'static str, acao: &dyn Action, passo: i32| {
-            botao_icone(SharedString::from(format!("{nome}-{id}")), icone, dica, TamanhoBotao::Barra, window, cx)
+        let seta = |nome: &'static str, icone: Lucide, dica: SharedString, acao: &dyn Action, passo: i32| {
+            botao_icone(SharedString::from(format!("{nome}-{id}")), icone, dica.clone(), TamanhoBotao::Barra, window, cx)
                 .tooltip_with_action(dica, acao, None)
                 .disabled(total == 0)
                 .on_click(cx.listener(move |this, _, _, cx| this.andar_na_busca(passo, cx)))
@@ -693,11 +693,11 @@ impl Janela {
                         s.dica_no_ponteiro(move |window, cx| Tooltip::new(longo.clone()).build(window, cx))
                     })
             }))
-            .child(seta("achado-anterior", Lucide::ChevronUp, "Achado anterior", &AchadoAnterior, -1))
-            .child(seta("achado-seguinte", Lucide::ChevronDown, "Próximo achado", &AchadoSeguinte, 1))
+            .child(seta("achado-anterior", Lucide::ChevronUp, tr!("Achado anterior"), &AchadoAnterior, -1))
+            .child(seta("achado-seguinte", Lucide::ChevronDown, tr!("Próximo achado"), &AchadoSeguinte, 1))
             .child(
-                botao_icone(SharedString::from(format!("fechar-busca-{id}")), Lucide::X, "Fechar a busca", TamanhoBotao::Barra, window, cx)
-                    .tooltip_with_action("Fechar a busca", &FecharBuscaConversa, Some("BuscaConversa"))
+                botao_icone(SharedString::from(format!("fechar-busca-{id}")), Lucide::X, tr!("Fechar a busca"), TamanhoBotao::Barra, window, cx)
+                    .tooltip_with_action(tr!("Fechar a busca"), &FecharBuscaConversa, Some("BuscaConversa"))
                     .on_click(cx.listener(|this, _, window, cx| this.fechar_busca_na_conversa(window, cx))),
             );
         // A barra fica por cima da conversa, encostada no alto e à direita, e nunca mais larga

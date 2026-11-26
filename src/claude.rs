@@ -50,6 +50,9 @@ pub struct Opcoes {
     pub ultracode: bool,
     /// `CLAUDE_CONFIG_DIR` de uma conta extra; `None` é o login normal.
     pub pasta_conta: Option<PathBuf>,
+    /// O ambiente da conta do Codex (`CODEX_HOME` e `CODEX_SQLITE_HOME` de uma conta extra; vazio
+    /// na principal). Só o processo do Codex usa.
+    pub ambiente_codex: Vec<(&'static str, PathBuf)>,
     /// O Vitral pede a revisão da memória ao fim da sessão (`Config.memoria_ao_terminar`): o
     /// processo leva `VITRAL_MEMORIA_NATIVA=1`, para um hook `Stop` que faça o mesmo pedido saber
     /// que não precisa (senão o agente recebe os dois).
@@ -542,6 +545,9 @@ impl Processo {
         let comando = if agente == crate::modelo::Agente::Codex {
             let mut comando = processos::comando(crate::agente_codex::binario(), "codex");
             comando.current_dir(&opcoes.cwd).args(crate::agente_codex::argumentos_servidor(opcoes));
+            for (chave, valor) in &opcoes.ambiente_codex {
+                comando.env(chave, valor);
+            }
             if let Some((_, chave)) = opcoes.mcp_da_equipe.as_deref().and_then(crate::memoria_equipe::conexao_do_arquivo) {
                 comando.env("VITRAL_MEMORIA_EQUIPE_TOKEN", chave);
             }
@@ -549,6 +555,11 @@ impl Processo {
         } else if agente == crate::modelo::Agente::Gemini {
             let mut comando = processos::comando(crate::agente_gemini::binario(), "gemini");
             comando.current_dir(&opcoes.cwd).args(crate::agente_gemini::argumentos(opcoes));
+            comando
+        } else if let Some(perfil) = crate::agente_acp::perfil(agente) {
+            // Os agentes ACP novos (`agente_acp`): o servidor ACP de cada um, pelo perfil.
+            let mut comando = processos::comando(perfil.binario(), perfil.programa);
+            comando.current_dir(&opcoes.cwd).args(perfil.argumentos(opcoes));
             comando
         } else {
             let mut comando = processos::comando(binario_claude(), "claude");
@@ -612,7 +623,7 @@ impl Processo {
                 }
                 None => (None, None),
             },
-            crate::modelo::Agente::Gemini => match entrada.take() {
+            agente_acp if agente_acp.acp() => match entrada.take() {
                 Some(stdin) => {
                     let canal = Arc::new(Mutex::new(crate::agente_gemini::Canal::novo(Box::new(stdin))));
                     let mut protocolo =
@@ -622,7 +633,7 @@ impl Processo {
                 }
                 None => (None, None),
             },
-            crate::modelo::Agente::Claude => (None, None),
+            _ => (None, None),
         };
 
         // O stderr é lido junto: cheio (64 KiB) sem ninguém ler, ele travaria o claude.
@@ -2836,6 +2847,7 @@ mod testes {
             esforco: Some("max".into()),
             ultracode: false,
             pasta_conta: None,
+            ambiente_codex: Vec::new(),
             memoria_nativa: false,
             sugestoes: false,
             mcp_da_equipe: None,
@@ -3242,6 +3254,7 @@ mod testes_do_ask_de_hook {
             esforco: None,
             ultracode: false,
             pasta_conta: None,
+            ambiente_codex: Vec::new(),
             memoria_nativa: false,
             sugestoes: false,
             mcp_da_equipe: None,
@@ -3771,6 +3784,7 @@ mod testes_do_turno_ao_vivo {
             esforco: None,
             ultracode: false,
             pasta_conta: None,
+            ambiente_codex: Vec::new(),
             memoria_nativa: false,
             sugestoes: false,
             mcp_da_equipe: None,
@@ -4315,6 +4329,7 @@ mod testes_da_pergunta_do_plano_e_da_compactacao {
             esforco: None,
             ultracode: false,
             pasta_conta: None,
+            ambiente_codex: Vec::new(),
             memoria_nativa: false,
             sugestoes: false,
             mcp_da_equipe: None,
@@ -4827,6 +4842,7 @@ mod testes_do_codex_de_verdade {
             esforco: Some("low".into()),
             ultracode: false,
             pasta_conta: None,
+            ambiente_codex: Vec::new(),
             memoria_nativa: false,
             sugestoes: false,
             mcp_da_equipe: None,

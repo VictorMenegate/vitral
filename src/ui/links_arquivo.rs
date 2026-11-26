@@ -77,6 +77,12 @@ pub fn separar_linha(texto: &str) -> (&str, Option<u32>) {
     (caminho, faixa.map(|(primeira, _)| primeira))
 }
 
+/// Separa as partes de um caminho: a barra e, no Windows, também a invertida (o Claude no Windows
+/// repete a saída das ferramentas com `C:\Users\…\src\main.rs`; auditoria de 26/11/2026).
+fn e_barra(c: char) -> bool {
+    c == '/' || (cfg!(windows) && c == '\\')
+}
+
 /// O texto tem cara de caminho de arquivo: sem espaço, com uma extensão ou uma barra, e com letra
 /// (o "0.6.0" e o "12/10" ficam de fora antes de ir ao disco).
 pub fn parece_caminho(texto: &str) -> bool {
@@ -84,15 +90,18 @@ pub fn parece_caminho(texto: &str) -> bool {
     if caminho.len() < 3 || caminho.len() > MAX_CAMINHO || caminho.contains("://") || caminho.starts_with('-') {
         return false;
     }
-    let permitido = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | '~' | '@' | '+' | '[' | ']' | '(' | ')');
+    // No Windows, a barra invertida e o ":" da unidade ("C:\x\y.rs") também.
+    let permitido = |c: char| {
+        c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | '~' | '@' | '+' | '[' | ']' | '(' | ')') || (cfg!(windows) && matches!(c, '\\' | ':'))
+    };
     if !caminho.chars().all(permitido) {
         return false;
     }
-    let nome = caminho.rsplit('/').next().unwrap_or(caminho);
+    let nome = caminho.rsplit(e_barra).next().unwrap_or(caminho);
     let com_extensao = nome.rsplit_once('.').is_some_and(|(antes, ext)| {
         !antes.is_empty() && (1..=10).contains(&ext.len()) && ext.chars().all(|c| c.is_ascii_alphanumeric()) && ext.chars().any(|c| c.is_ascii_alphabetic())
     });
-    let com_barra = caminho.contains('/') && !nome.is_empty();
+    let com_barra = caminho.contains(e_barra) && !nome.is_empty();
     (com_extensao || com_barra) && caminho.chars().any(char::is_alphabetic)
 }
 
@@ -342,7 +351,7 @@ fn ligar_linha(linha: &str, resolver: &mut Citado, saida: &mut String) {
 /// link. Um nome solto ("config.json") fica como texto: no meio da frase é cedo demais para
 /// adivinhar.
 fn ligar_palavras(trecho: &str, resolver: &mut dyn FnMut(&str) -> Option<String>, saida: &mut String) {
-    if !trecho.contains('/') {
+    if !trecho.contains(e_barra) {
         saida.push_str(trecho);
         return;
     }
@@ -360,7 +369,7 @@ fn ligar_palavras(trecho: &str, resolver: &mut dyn FnMut(&str) -> Option<String>
         let limpo = miolo.trim_end_matches(['.', ',', ';', ':', ')', '"', '\'', '!', '?', '*', '_']);
         let depois = &miolo[limpo.len()..];
         let (caminho, _) = separar_linha(limpo);
-        let cara = e_file(limpo) || (caminho.contains('/') && caminho.rsplit('/').next().is_some_and(|n| n.contains('.')) && !limpo.contains("://"));
+        let cara = e_file(limpo) || (caminho.contains(e_barra) && caminho.rsplit(e_barra).next().is_some_and(|n| n.contains('.')) && !limpo.contains("://"));
         match cara.then(|| alvo_de(limpo, resolver)).flatten() {
             Some(alvo) => saida.push_str(&format!("{antes}[{limpo}]({alvo}){depois}")),
             None => saida.push_str(palavra),
@@ -559,7 +568,7 @@ impl super::Janela {
         let Some((caminho, linha)) = ler_link(url) else { return };
         let faixa = ler_faixa(url);
         let Ok(inteiro) = dunce::canonicalize(&caminho) else {
-            window.push_notification(aviso(Tom::Erro, format!("{caminho} não existe mais")), cx);
+            window.push_notification(aviso(Tom::Erro, crate::tr!("{caminho} não existe mais", caminho = caminho)), cx);
             return;
         };
         // A pílula de uma pasta mencionada abre a pasta no gerenciador do sistema.
@@ -585,7 +594,7 @@ impl super::Janela {
             Some((pasta, inteiro.file_name()?.to_string_lossy().into_owned()))
         };
         let Some((raiz, relativo)) = raiz.or_else(de_fora) else {
-            window.push_notification(aviso(Tom::Atencao, format!("Não deu para abrir {caminho}.")), cx);
+            window.push_notification(aviso(Tom::Atencao, crate::tr!("Não deu para abrir {caminho}.", caminho = caminho)), cx);
             return;
         };
         self.arquivo_linha.set(linha);

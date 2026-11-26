@@ -46,6 +46,15 @@ pub const ENTRAR: Duration = Duration::from_millis(160);
 pub const MOVER: Duration = Duration::from_millis(180);
 /// Anéis, pulso do enviar.
 pub const ENCHER: Duration = Duration::from_millis(240);
+/// Os tempos do bloco "Movimento" do protótipo Linear (26/11/2026, dono: "tá faltando um monte
+/// das animações que tinha no protótipo"): trocar de vista e a mensagem nova sobem em 300 ms (o
+/// `subir`), o marcador do escolhido desliza em 300, a seta de abrir gira em 240, a luz da caixa
+/// troca em 420 e os anéis de uso enchem em 1 s ao aparecer (o `encher`).
+pub const SUBIR: Duration = Duration::from_millis(300);
+pub const DESLIZAR: Duration = Duration::from_millis(300);
+pub const GIRAR: Duration = Duration::from_millis(240);
+pub const LUZ: Duration = Duration::from_millis(420);
+pub const ENCHER_AO_APARECER: Duration = Duration::from_millis(1000);
 
 /// Curvas sem ricochete: nenhuma passa do alvo.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -130,6 +139,34 @@ pub fn entrar<E: IntoElement + Styled + 'static>(el: E, id: impl Into<ElementId>
     el.with_animation(id, animacao(ENTRAR, Curva::Entrar), move |el, t| de.aplicar(el, t))
 }
 
+/// O marcador do escolhido numa coluna de itens da mesma altura (o `.marcador` do protótipo): uma
+/// pílula atrás dos itens que desliza até o escolhido em 300 ms, em vez de o fundo pular de um
+/// item para o outro. `topo` é onde o primeiro item começa, `passo` a altura de um item mais o vão,
+/// e `altura` a do item; tudo em px a 100%. Sem escolhido, a pílula some.
+pub fn marcador(id: impl Into<ElementId>, escolhido: Option<usize>, topo: f32, passo: f32, altura: f32, cor: Hsla, raio: Pixels) -> ComEstado {
+    let id = id.into();
+    com_estado(move |window, cx| {
+        let Some(indice) = escolhido else {
+            return div().into_any_element();
+        };
+        let posicao = valor(id, indice as f32, DESLIZAR, Curva::Mover, window, cx);
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .top(r(topo + posicao * passo))
+            .h(r(altura))
+            .rounded(raio)
+            .bg(cor)
+            .into_any_element()
+    })
+}
+
+/// Como o `entrar`, no tempo do `subir` do protótipo (300 ms): a troca de vista e a mensagem nova.
+pub fn subir<E: IntoElement + Styled + 'static>(el: E, id: impl Into<ElementId>, de: De) -> AnimationElement<E> {
+    el.with_animation(id, animacao(SUBIR, Curva::Entrar), move |el, t| de.aplicar(el, t))
+}
+
 /// Como o `entrar`, começando `atraso` depois de montar: as linhas de uma lista entram uma depois
 /// da outra (a tela inicial: 80 ms e mais 45 por linha, como no protótipo).
 pub fn entrar_depois<E: IntoElement + Styled + 'static>(el: E, id: impl Into<ElementId>, de: De, atraso: Duration) -> AnimationElement<E> {
@@ -202,10 +239,19 @@ impl RenderOnce for ComEstado {
 /// pelo `id` enquanto ele está na tela. Remontado (outro painel abriu, a lista recolheu), ele
 /// volta sem `nova` e aparece pronto, sem nenhum redesenho a mais.
 pub fn entrada<E: IntoElement + Styled + 'static>(id: impl Into<ElementId>, nova: bool, de: De, el: E) -> ComEstado {
+    entrada_em(id, nova, de, ENTRAR, el)
+}
+
+/// A `entrada` no tempo do `subir` do protótipo (300 ms): a mensagem nova e o pedido que chega.
+pub fn entrada_subindo<E: IntoElement + Styled + 'static>(id: impl Into<ElementId>, nova: bool, de: De, el: E) -> ComEstado {
+    entrada_em(id, nova, de, SUBIR, el)
+}
+
+fn entrada_em<E: IntoElement + Styled + 'static>(id: impl Into<ElementId>, nova: bool, de: De, duracao: Duration, el: E) -> ComEstado {
     let id = id.into();
     com_estado(move |window, cx| {
         let inicial = if nova { 0. } else { 1. };
-        let t = valor_desde(id, inicial, 1f32, ENTRAR, Curva::Entrar, window, cx);
+        let t = valor_desde(id, inicial, 1f32, duracao, Curva::Entrar, window, cx);
         de.aplicar(el, t).into_any_element()
     })
 }

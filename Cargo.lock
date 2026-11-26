@@ -2052,8 +2052,6 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d862bc8f2e27710039013d075ac4995892e9687ff207fa530f880cbcd513936f"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -6911,7 +6909,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vitral"
-version = "0.11.2"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6920,6 +6918,7 @@ dependencies = [
  "embed-resource",
  "flate2",
  "gpui-kit",
+ "image",
  "libc",
  "minisign-verify",
  "semver",
@@ -6927,6 +6926,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "smol",
+ "sys-locale",
  "tar",
  "tiny_http",
  "ureq",

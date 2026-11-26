@@ -218,6 +218,27 @@ impl RenderOnce for Switch {
         // documented precedence, which left the travel visible in one direction
         // only. The spring owns it end to end and reverses from wherever the
         // thumb is when the switch is toggled again mid-travel.
+        // Vitral (26/11/2026, o `.chave` do protótipo): o fundo também anda, do desligado ao cor
+        // de ligado, pela mesma mola do pino (antes ele trocava seco, e só o pino andava).
+        let ligado = spring(
+            (self.id.clone(), "fundo"),
+            if checked { px(1.) } else { px(0.) },
+            cx.theme().motion_tokens().spring_move,
+            window,
+            cx,
+        )
+        .as_f32()
+        .clamp(0., 1.);
+        let cor_ligada: Hsla = self.color.unwrap_or(*cx.theme().tokens.primary);
+        let cor_desligada: Hsla = *cx.theme().tokens.switch;
+        let (a, b) = (gpui::Rgba::from(cor_desligada), gpui::Rgba::from(cor_ligada));
+        let misturado: Hsla = gpui::Rgba {
+            r: a.r + (b.r - a.r) * ligado,
+            g: a.g + (b.g - a.g) * ligado,
+            b: a.b + (b.b - a.b) * ligado,
+            a: a.a + (b.a - a.a) * ligado,
+        }
+        .into();
         let thumb_x = spring(
             (self.id.clone(), "thumb"),
             if checked {
@@ -275,12 +296,8 @@ impl RenderOnce for Switch {
                         .border_1()
                         .border_color(cx.theme().transparent)
                         .p(inset - px(1.))
-                        .when(!checked, |this| this.bg(unchecked_bg))
-                        .styles(|styles| {
-                            styles
-                                .checked(|style| style.bg(checked_bg))
-                                .disabled(|style| style.bg(disabled_bg))
-                        })
+                        .bg(misturado)
+                        .styles(|styles| styles.disabled(|style| style.bg(disabled_bg)))
                         // The ring hugs the track, not the row, so the label
                         // stays outside it.
                         .when(is_focused && self.focus_ring_enabled, |this| {

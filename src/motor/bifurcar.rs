@@ -203,7 +203,7 @@ impl Motor {
         match chat.agente {
             Agente::Claude => {}
             Agente::Codex => return ponto_no_codex(chat, fim),
-            Agente::Gemini => return None,
+            _ => return None,
         }
         let (sessao, ate_de_agora) = if chat.sessao_criada {
             (chat.sessao.clone(), None)

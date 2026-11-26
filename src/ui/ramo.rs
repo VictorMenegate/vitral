@@ -10,8 +10,8 @@ use crate::git::RamoDaPasta;
 /// Onde a pasta está, numa frase curta: "No ramo main", "No ramo feat/x, num worktree", "Com a
 /// cabeça solta em 1a2b3c4".
 pub(super) fn onde_esta(ramo: &RamoDaPasta) -> String {
-    let base = if ramo.solta { format!("Com a cabeça solta em {}", ramo.nome) } else { format!("No ramo {}", ramo.nome) };
-    if ramo.worktree { format!("{base}, num worktree") } else { base }
+    let base = if ramo.solta { tr!("Com a cabeça solta em {nome}", nome = ramo.nome).to_string() } else { tr!("No ramo {nome}", nome = ramo.nome).to_string() };
+    if ramo.worktree { tr!("{base}, num worktree", base = base).to_string() } else { base }
 }
 
 /// O texto de uma dica com o ramo da pasta numa linha a mais (nada, fora de um repositório). Lê o

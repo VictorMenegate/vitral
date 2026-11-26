@@ -318,7 +318,7 @@ fn fracao_animada(
     match movimento {
         MovimentoDoAnel::Seco => alvo,
         MovimentoDoAnel::Desliza => movimento::valor(chave, alvo, movimento::ENCHER, Curva::Mover, window, cx),
-        MovimentoDoAnel::Enche => movimento::valor_desde(chave, 0., alvo, movimento::ENCHER, Curva::Mover, window, cx),
+        MovimentoDoAnel::Enche => movimento::valor_desde(chave, 0., alvo, movimento::ENCHER_AO_APARECER, Curva::Mover, window, cx),
     }
 }
 

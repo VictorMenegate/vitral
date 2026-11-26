@@ -29,10 +29,10 @@ impl Checagem {
     /// "tsc passou", "vitest falhou 2×, passou", "cargo test falhou", "cargo test falhou 3×".
     pub fn texto(&self) -> String {
         match (self.passou, self.falhas) {
-            (true, 0) => format!("{} passou", self.nome),
-            (true, n) => format!("{} falhou {n}×, passou", self.nome),
-            (false, 0 | 1) => format!("{} falhou", self.nome),
-            (false, n) => format!("{} falhou {n}×", self.nome),
+            (true, 0) => crate::tr!("{nome} passou", nome = self.nome).to_string(),
+            (true, n) => crate::tr!("{nome} falhou {n}×, passou", nome = self.nome, n = n).to_string(),
+            (false, 0 | 1) => crate::tr!("{nome} falhou", nome = self.nome).to_string(),
+            (false, n) => crate::tr!("{nome} falhou {n}×", nome = self.nome, n = n).to_string(),
         }
     }
 }
@@ -40,7 +40,7 @@ impl Checagem {
 /// O trecho de `texto` (o de uma checagem) que diz a falha, para a tela pôr em vermelho:
 /// "falhou" ou "falhou 2×".
 pub(super) fn trecho_da_falha(texto: &str) -> Option<std::ops::Range<usize>> {
-    let inicio = texto.find(" falhou")? + 1;
+    let inicio = texto.find(&format!(" {}", crate::tr!("falhou")))? + 1;
     let fim = texto[inicio..].find(',').map_or(texto.len(), |v| inicio + v);
     Some(inicio..fim)
 }

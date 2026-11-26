@@ -113,11 +113,13 @@ impl Janela {
     ) -> Vec<Planejado<'a>> {
         let Some(itens) = &vista.itens else {
             let texto = match &vista.erro {
-                Some(erro) => format!(
-                    "Não deu para ler a conversa do Claude Code em {} ({erro}).",
-                    crate::ui::dialogos::com_til(&importada.arquivo)
-                ),
-                None => "Lendo a conversa do Claude Code…".to_string(),
+                Some(erro) => crate::tr!(
+                    "Não deu para ler a conversa do Claude Code em {arquivo} ({erro}).",
+                    arquivo = crate::ui::dialogos::com_til(&importada.arquivo),
+                    erro = erro
+                )
+                .to_string(),
+                None => crate::tr!("Lendo a conversa do Claude Code…").to_string(),
             };
             let (bloco, elemento) = aviso_do_chat(&texto, false, &Realce::default());
             return vec![Planejado::pronto(bloco, None, elemento)];
