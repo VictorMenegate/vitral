@@ -31,6 +31,11 @@ const LARGURA_DA_LISTA: f32 = 300.;
 const ALTURA_DO_CORPO: f32 = 460.;
 /// O diálogo é mais largo que o G: a lista e o agente escolhido lado a lado.
 const LARGURA_DO_DIALOGO: f32 = 900.;
+/// O pedido do agente fechado: 6 linhas inteiras do `corpo_ui` (20 de altura cada), a 100%.
+const ALTURA_DO_PEDIDO: f32 = 120.;
+/// A partir de quantas linhas ou letras o pedido vem fechado, com o "Mostrar tudo".
+const LINHAS_DO_PEDIDO: usize = 6;
+const LETRAS_DO_PEDIDO: usize = 420;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Estado {
@@ -168,9 +173,19 @@ pub(super) fn em_mil(n: u64) -> String {
 
 /// A linha de baixo do nó de um agente: o que ele faz agora, ou quanto levou e quanto usou.
 pub(super) fn meta_do_agente(a: &Agente) -> String {
+    meta_com(a, true)
+}
+
+/// A linha de baixo na lista do mapa: sem os tokens, que o painel do escolhido mostra. Com eles,
+/// a linha passava da coluna e cortava as ferramentas ("89 ferrame…"; dono, 26/11/2026).
+fn meta_na_lista(a: &Agente) -> String {
+    meta_com(a, false)
+}
+
+fn meta_com(a: &Agente, com_tokens: bool) -> String {
     let ferramentas = a.ferramentas.map(|n| contagem(n as usize, "ferramenta", "ferramentas"));
     let tempo = a.segundos.map(|s| duracao_curta(s * 1_000));
-    let tokens = (a.tokens > 0).then(|| format!("{} tokens", em_mil(a.tokens)));
+    let tokens = (com_tokens && a.tokens > 0).then(|| format!("{} tokens", em_mil(a.tokens)));
     let numeros = [tempo, tokens, ferramentas].into_iter().flatten().collect::<Vec<_>>().join(" · ");
     match a.estado {
         Estado::Rodando if a.esperando => "Esperando você".to_string(),
@@ -222,7 +237,7 @@ fn linha_do_no(ponto: AnyElement, titulo: SharedString, meta: SharedString, fort
 }
 
 /// O que só o diálogo sabe: qual agente está aberto, o que o arquivo de cada um diz (lido de
-/// tempos em tempos) e quais grupos de chamadas estão abertos na conversa dele.
+/// tempos em tempos) e quais grupos de chamadas e pedidos longos estão abertos na conversa dele.
 #[derive(Default)]
 struct EstadoDoMapa {
     aberto: Option<String>,
@@ -251,19 +266,7 @@ fn conversa_do_agente(ligacoes: &Ligacoes, sub_id: &str, itens: &[Item], expandi
     while i < itens.len() {
         match &itens[i] {
             Item::Usuario { texto, .. } | Item::Entrega { texto, .. } => {
-                saida.push(
-                    div()
-                        .px(esp::E12)
-                        .py(esp::E8)
-                        .rounded(raio::CARTAO)
-                        .bg(Cores::balao())
-                        .corpo_ui()
-                        .text_color(Cores::forte())
-                        .max_h(r(160.))
-                        .overflow_hidden()
-                        .child(texto.trim().to_string())
-                        .into_any_element(),
-                );
+                saida.push(balao_do_pedido(ligacoes, sub_id, i, texto.trim(), expandidos.contains(&i)));
                 i += 1;
             }
             Item::Assistente { texto, .. } if !texto.trim().is_empty() => {
@@ -287,6 +290,43 @@ fn conversa_do_agente(ligacoes: &Ligacoes, sub_id: &str, itens: &[Item], expandi
         }
     }
     saida
+}
+
+/// O pedido que abriu o agente (ou outra mensagem para ele), num balão. Longo, ele mostra só o
+/// começo e abre inteiro no clique. O `flex_none` é o que segura a altura: com o `overflow_hidden`,
+/// a coluna que rola espremia o balão numa faixa de uma linha cortada (dono, 26/11/2026).
+fn balao_do_pedido(ligacoes: &Ligacoes, sub_id: &str, i: usize, texto: &str, aberto: bool) -> AnyElement {
+    let longo = texto.lines().count() > LINHAS_DO_PEDIDO || texto.chars().count() > LETRAS_DO_PEDIDO;
+    let estado = ligacoes.estado.clone();
+    v_flex()
+        .id(SharedString::from(format!("pedido-{sub_id}-{i}")))
+        .flex_none()
+        .gap(esp::E4)
+        .px(esp::E12)
+        .py(esp::E8)
+        .rounded(raio::CARTAO)
+        .bg(Cores::balao())
+        .child(
+            div()
+                .corpo_ui()
+                .text_color(Cores::forte())
+                .when(longo && !aberto, |s| s.max_h(r(ALTURA_DO_PEDIDO)).overflow_hidden())
+                .child(texto.to_string()),
+        )
+        .when(longo, |s| {
+            s.cursor_pointer()
+                .child(div().metadado().text_color(Cores::tenue()).child(if aberto { "Mostrar menos" } else { "Mostrar tudo" }))
+                .on_click(move |_, window, cx| {
+                    estado.update(cx, |e, cx| {
+                        if !e.expandidos.remove(&i) {
+                            e.expandidos.insert(i);
+                        }
+                        cx.notify();
+                    });
+                    window.refresh();
+                })
+        })
+        .into_any_element()
 }
 
 /// Um grupo de chamadas: a linha de resumo (clique abre e fecha), as chamadas dele e as imagens que
@@ -533,7 +573,7 @@ fn mapa(motor: &Motor, chat: &Chat, agentes: &[Agente], ligacoes: &Ligacoes, win
             .when(selecionado, |s| s.bg(Cores::pressionado()))
             .when(!selecionado, |s| s.hover(|s| s.bg(Cores::hover())))
             .cursor_pointer()
-            .child(linha_do_no(ponto(a.estado), a.titulo.clone().into(), meta_do_agente(a).into(), false, relogio_vivo))
+            .child(linha_do_no(ponto(a.estado), a.titulo.clone().into(), meta_na_lista(a).into(), false, relogio_vivo))
             .on_click(move |_, window, cx| {
                 estado.update(cx, |e, cx| {
                     e.aberto = Some(id.clone());
