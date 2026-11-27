@@ -5,6 +5,38 @@ The five most recent versions, translated into English. Earlier versions are in
 button names are quoted as they appear in the app, which is in Portuguese for now, with the English
 meaning in parentheses on first use.
 
+## 0.13.0
+
+Extra accounts on Windows, token saving, titles from the chosen model, a new turn trail, and the
+prototype animations that were missing.
+
+- **Windows.** Extra Claude and Codex accounts also work on Windows, without admin rights or
+  Developer Mode. The computer does not sleep while a chat is working, and the clock tooltip shows
+  the chat's memory.
+- **Token saving.** In the composer's "…": Claude plans on Opus and executes on Sonnet, and hands
+  the legwork to cheaper subagents.
+- **Titles.** In Settings, Chats, who writes the title (automatic, Claude, Codex or Gemini) and
+  with which model; Codex and the other agents get titles too. Right-click goes back to the old one.
+- **Review.** Just the AI and the model; it reviews even a chat of its own. The button is now
+  "Revisar" (Review).
+- **Turn trail.** A pulsing dot instead of the spinner, "Pensando por 3,2 s" (Thinking for 3.2 s)
+  with tenths, and the calls in a hairline card that opens and closes smoothly and collapses when
+  the answer starts.
+- **Requests.** Multiple-choice questions have numbered options and answer on one click (or by the
+  number in the box); permissions have an "Always" button. Mid-turn texts stay visible when the turn
+  is collapsed.
+- **Files.** What a reply delivers (page, image, PDF, spreadsheet, video) gets a card with ways to
+  open it: HTML in the browser or its code here. Attached images as thumbnails, and a new image
+  viewer.
+- **Conversations.** `/clear` really clears, "Apagar…" (Delete) removes the chat for good, a new
+  chat offers ready starters, and the pinned message became a bar.
+- **Accounts.** The main account can be disconnected too, to switch when there is only one; the new
+  agents show their own logos.
+- **Motion.** The selection slides in the list, sections open in height, focus mode, Settings and
+  Tasks animate in, and the prototype's timings.
+- **Fixes.** The gap in the history after switching chats, an error already seen no longer red, and
+  the "Esc" without a background.
+
 ## 0.12.0
 
 Six new agents, Vitral in English and Spanish, Tasks in place of the ideas board, and several Codex
@@ -97,20 +129,3 @@ Vitral has a new look, flat and cleaner, in the style of Linear. The theme color
   live in Configurações › Claude Code.
 - **Fixes.** A review cut off by closing Vitral no longer comes back half done; the file editor's
   text is saved whole on close; the message action bar no longer ends up under the bottom text.
-
-## 0.10.3
-
-Codex and Gemini got the same care in Configurações (Settings) as Claude Code: you can install,
-update, sign in and out, and see each one's MCP servers. The turn pills went back below the message
-field.
-
-- **Codex and Gemini in Settings.** Two new sections after Claude Code, in the same mold: the
-  installed version with **Atualizar** (Update), or **Instalar…** (Install) if the program is not on
-  the computer, the account with **Entrar…** (Sign in) (and **Sair** (Sign out) on Codex, with a
-  confirmation), the list of MCP servers, and the config file with **Abrir** (Open). Update runs
-  between turns, waits for the agent's chats to finish and shows what the command answered. The
-  Codex entry that was under Agentes (Agents) moved to its own section.
-- **Background commands, subagents, steps and changes are back inside the box.** The pills sit
-  again under the message field, on the status line, and there is no loose line above the box
-  anymore. They keep the click that lists and stops each command, the subagent list that opens each
-  one's conversation, and the changes that open "Este chat".
