@@ -1106,6 +1106,7 @@ impl Motor {
         let mut chat = Chat::novo(id.clone(), "Nova conversa", cwd);
         chat.criado_por = criado_por.to_string();
         chat.agente = self.config.agente_padrao;
+        chat.economia = self.config.economia_nos_novos;
         self.chats.push(chat);
         self.salvar();
         cx.notify();
@@ -1449,6 +1450,18 @@ impl Motor {
             c.titulo = titulo;
             c.titulo_antes = None;
         }
+        self.salvar();
+        cx.notify();
+    }
+
+    /// A economia de tokens do "…" da caixa: liga ou desliga no chat, e a escolha vale para os
+    /// chats novos. Vale a partir do próximo turno.
+    pub fn alternar_economia(&mut self, chat: &str, cx: &mut Context<Self>) {
+        let Some(c) = self.chat_mut(chat) else {
+            return;
+        };
+        c.economia = !c.economia;
+        self.config.economia_nos_novos = c.economia;
         self.salvar();
         cx.notify();
     }
@@ -2757,6 +2770,11 @@ impl Motor {
             prompt_sistema.push_str("\n\n");
             prompt_sistema.push_str(pedido_da_lingua);
         }
+        let economia = chat.economia && chat.agente == Agente::Claude;
+        if economia {
+            prompt_sistema.push_str("\n\n");
+            prompt_sistema.push_str(prompts::ECONOMIA);
+        }
         // Por arquivo, o prompt novo vale já no turno de uma sessão retomada; num Claude Code mais
         // velho (ou antes de saber a versão), vai na linha de comando.
         let prompt_arquivo = self.versao_claude.filter(|v| *v >= claude::VERSAO_PROMPT_POR_ARQUIVO).and_then(|_| {
@@ -2782,7 +2800,9 @@ impl Motor {
             cortar_em: chat.bifurcado_de.as_ref().filter(|_| !chat.sessao_criada && copia).and_then(|b| b.ate.clone()),
             // A família vai como a versão mais nova que o Claude Code instalado oferece (ver
             // `claude::modelo_para_o_turno`); num Claude Code sem as versões exatas, como está.
-            modelo: self.modelo_do_turno(chat),
+            // Com a economia, o Opus (e o Fable) viram o `opusplan`: Opus no Planejar, Sonnet no
+            // resto (conferido no 2.1.328 em 27/11/2026 pelo `modelUsage`).
+            modelo: self.modelo_do_turno(chat).map(|m| if economia { modelo_com_economia(&m) } else { m }),
             permissao: self.permissao_de(chat),
             prompt_sistema,
             prompt_arquivo,
@@ -5373,6 +5393,17 @@ fn limpar(c: &mut Chat) {
     }
 }
 
+/// O modelo do turno com a economia de tokens: o Opus e o Fable (e o padrão vazio) viram o
+/// `opusplan`; o Sonnet e o Haiku já são os baratos e ficam como estão.
+fn modelo_com_economia(modelo: &str) -> String {
+    let minusculo = modelo.to_lowercase();
+    if minusculo.is_empty() || minusculo == "default" || minusculo.contains("opus") || minusculo.contains("fable") {
+        "opusplan".to_string()
+    } else {
+        modelo.to_string()
+    }
+}
+
 /// Como o título de um chat é pedido.
 #[derive(Clone, Debug, PartialEq)]
 enum CaminhoDoTitulo {
@@ -5628,6 +5659,16 @@ mod testes_do_titulo_gerado_e_do_aviso {
         // Sem `ai-title` na sessão, nada; vazio também não.
         assert_eq!(titulo_gerado_para(&chat_com(PRIMEIRA), &TitulosDaSessao::default()), None);
         assert_eq!(titulo_gerado_para(&chat_com(PRIMEIRA), &gerado("  ")), None);
+    }
+
+    /// A economia troca o Opus e o Fable pelo `opusplan` e deixa os baratos como estão.
+    #[test]
+    fn a_economia_planeja_no_opus_e_executa_no_sonnet() {
+        assert_eq!(modelo_com_economia("claude-opus-5-5"), "opusplan");
+        assert_eq!(modelo_com_economia("claude-fable-5-2"), "opusplan");
+        assert_eq!(modelo_com_economia(""), "opusplan");
+        assert_eq!(modelo_com_economia("claude-sonnet-5-5"), "claude-sonnet-5-5");
+        assert_eq!(modelo_com_economia("haiku"), "haiku");
     }
 
     /// O caminho do título pela escolha nas Configurações (dono, 27/11/2026: o título pelo modelo

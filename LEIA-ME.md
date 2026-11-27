@@ -2188,6 +2188,15 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
   `limpar`); com o turno rodando, ele para o turno e limpa quando o processo sai
   (`limpar_ao_parar`). Antes a conversa ficava na tela, o turno rodando ignorava o comando sem
   avisar e o Codex tentava retomar uma sessão que não existia.
+- **Economia de tokens** (o "…" da caixa, só no chat do Claude; dono, 27/11/2026: "um agente sempre
+  tentar decidir quando planejar algo dividir em agents de modelos mais econômicos, tipo o
+  opusplan"). Ligada, o turno vai com o modelo `opusplan` no lugar do Opus e do Fable (Opus no
+  Planejar, Sonnet no resto: conferido no Claude Code 2.1.328 pelo `modelUsage`; o Sonnet e o
+  Haiku escolhidos ficam como estão, `modelo_com_economia`), e o prompt de sistema ganha o
+  `prompts::ECONOMIA`: planejar e dividir, mandar a parte braçal a subagentes pela ferramenta
+  Agent com `model` "haiku" (buscar, ler, conferir) ou "sonnet" (mudança bem definida), e não
+  delegar o que cabe em uma ou duas chamadas. A escolha fica no chat (`Chat.economia`) e vale para
+  os chats novos (`Config.economia_nos_novos`); muda a partir do próximo turno.
 - **Cartão de conversa**: uma linha só de 32 (o balão de 20 com o ponto do estado no canto, o
   título, em 400, a hora, o alfinete da fixada, o ponto de não lido e o número do painel; a pasta
   na dica do balão; o não lido sai em 600, dois degraus acima); a linha de baixo, com a prévia, volta só na busca que achou no texto. A hora sai em

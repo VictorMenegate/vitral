@@ -385,5 +385,7 @@
  "… (cortado)": "… (truncated)",
  "… mais {n} linhas": "… {n} more lines",
  "… mais {quantas} saíram": "… {quantas} more removed",
- "Limpa a conversa e começa do zero": "Clears the conversation and starts over"
+ "Limpa a conversa e começa do zero": "Clears the conversation and starts over",
+ "Economia de tokens": "Token saving",
+ "Limpar a conversa": "Clear the conversation"
 }

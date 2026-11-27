@@ -501,6 +501,10 @@ pub struct Chat {
     /// O título gerado foi desfeito: este chat não pede outro.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub titulo_desfeito: bool,
+    /// Economia de tokens (o "…" da caixa): no Claude, o Opus só para planejar e o Sonnet no resto
+    /// (o `opusplan`), e a parte braçal em subagentes mais baratos (`prompts::ECONOMIA`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub economia: bool,
     /// Tokens no contexto e tamanho da janela, do último turno.
     #[serde(default)]
     pub contexto: Option<u64>,
@@ -585,6 +589,7 @@ impl Chat {
             conta_codex: None,
             titulo_antes: None,
             titulo_desfeito: false,
+            economia: false,
             contexto: None,
             janela: None,
             comandos: Vec::new(),
@@ -897,6 +902,8 @@ pub struct Config {
     pub titulo_agente: String,
     /// O modelo de quem dá o título; vazio é o padrão (o Haiku no Claude).
     pub titulo_modelo: String,
+    /// Os chats novos nascem com a economia de tokens ligada: a última escolha feita no "…".
+    pub economia_nos_novos: bool,
     /// Quais anéis de uso o canto mostra (cada um ainda depende de a conta estar conectada).
     pub anel_claude: bool,
     pub anel_codex: bool,
@@ -1027,6 +1034,7 @@ impl Default for Config {
             titulo_pelo_claude: true,
             titulo_agente: String::new(),
             titulo_modelo: String::new(),
+            economia_nos_novos: false,
             anel_claude: true,
             anel_codex: true,
             anel_gemini: true,

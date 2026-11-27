@@ -385,5 +385,7 @@
  "… (cortado)": "… (cortado)",
  "… mais {n} linhas": "… {n} líneas más",
  "… mais {quantas} saíram": "… {quantas} más eliminadas",
- "Limpa a conversa e começa do zero": "Borra la conversación y empieza de cero"
+ "Limpa a conversa e começa do zero": "Borra la conversación y empieza de cero",
+ "Economia de tokens": "Ahorro de tokens",
+ "Limpar a conversa": "Borrar la conversación"
 }

@@ -44,6 +44,16 @@ português do Brasil, sem emojis.",
 /// todo turno de todo chat.
 pub const LIMITE_DAS_INSTRUCOES: usize = 4000;
 
+/// O que vai no prompt de sistema do chat do Claude com a economia de tokens ligada (dono,
+/// 27/11/2026: "um agente sempre tentar decidir quando planejar algo dividir em agents de modelos
+/// mais econômicos, tipo o opusplan"). O modelo do turno já vai como `opusplan`.
+pub const ECONOMIA: &str = "Economia de tokens ligada pelo usuário. Você planeja no Opus e executa no Sonnet. Antes de um \
+trabalho grande, planeje e divida: mande a parte braçal para subagentes mais baratos com a ferramenta Agent e o \
+parâmetro model, \"haiku\" para buscar, ler, resumir e conferir arquivos, \"sonnet\" para mudanças bem definidas. \
+Fique com o seu modelo para decidir, juntar o que voltar e revisar. Não delegue o que cabe em uma ou duas chamadas: o \
+subagente começa do zero e sai mais caro que fazer direto. Duas frentes que mexem nos mesmos arquivos ficam com um \
+agente só.";
+
 /// A frase que separa o que o Vitral manda do que quem usa escreveu.
 const CABECALHO_DAS_INSTRUCOES: &str = "Instruções de quem usa o Vitral, para todos os chats:";
 
