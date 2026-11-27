@@ -40,6 +40,9 @@ pub(super) fn menu_conversa(
         return menu;
     };
     let (fixado, arquivado) = (c.fixado, c.arquivado);
+    // O título gerado se desfaz por aqui (dono, 27/11/2026: o título pelo modelo escolhido, com
+    // desfazer, como no Better Paseo).
+    let tem_titulo_antes = c.titulo_antes.is_some();
     // "Marcar como não lido" só onde há o que marcar: lida, com alguma coisa dentro, sem turno
     // rodando (o ponto azul não vale para quem está trabalhando).
     let pode_marcar_nao_lido = !arquivado && !c.itens.is_empty() && !motor.read(cx).nao_lido(c) && !motor.read(cx).execucao(chat).rodando();
@@ -60,7 +63,7 @@ pub(super) fn menu_conversa(
         .filter(|i| i.chat.as_deref() == Some(chat) && i.coluna != crate::ideias::Coluna::Feitas)
         .count();
     let rotulo_ideias = if ideias == 0 { tr!("Ideias").to_string() } else { tr!("Ideias ({n})", n = ideias).to_string() };
-    let (i1, i2, i3, i4, i5, i6) = (id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id);
+    let (i1, i2, i3, i4, i5, i6, i7) = (id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id);
     let (m1, m2, m3) = (motor.clone(), motor.clone(), motor.clone());
     menu.when(ao_lado, |menu| {
         menu.item(
@@ -74,6 +77,14 @@ pub(super) fn menu_conversa(
     .item(acao(tr!("Renomear…"), Lucide::Pencil, &janela, move |this, window, cx| {
         this.dialogo_renomear(i2.clone(), window, cx)
     }))
+    .when(tem_titulo_antes, |menu| {
+        let (motor, id) = (motor.clone(), chat.to_string());
+        menu.item(
+            PopupMenuItem::new(tr!("Voltar ao título de antes"))
+                .icon(Lucide::RotateCcw)
+                .on_click(move |_, _, cx| motor.update(cx, |m, cx| m.voltar_titulo_de_antes(&id, cx))),
+        )
+    })
     .item(acao(rotulo_ideias, Lucide::Lightbulb, &janela, move |this, window, cx| {
         this.abrir_quadro_de_ideias_do_chat(i5.clone(), window, cx)
     }))
@@ -103,4 +114,6 @@ pub(super) fn menu_conversa(
             this.arquivar_do_menu(i4.clone(), window, cx)
         },
     ))
+    .separator()
+    .item(acao(tr!("Apagar…"), Lucide::Trash, &janela, move |this, window, cx| this.confirmar_apagar_chat(i7.clone(), window, cx)))
 }

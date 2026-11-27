@@ -439,5 +439,15 @@
  "“Entra no turno” manda a mensagem ao agente sem pará-lo. “Vai para a fila” espera o turno acabar. O Ctrl+Enter faz o outro. Respondendo a um pedido de permissão ou a uma pergunta, o Enter continua sendo a resposta.": "“Joins the turn” sends the message to the agent without stopping it. “Goes to the queue” waits for the turn to end. Ctrl+Enter does the other. When answering a permission request or a question, Enter stays the answer.",
  "“Percorrer as enviadas” traz o texto das mensagens que você já enviou neste chat, uma por vez, sem desfazer nada; ↓ volta, e editar o texto devolve as setas ao cursor. O corrigir continua no lápis da mensagem e no Ctrl+↑.": "“Browse sent” brings back the text of the messages you already sent in this chat, one at a time, without undoing anything; ↓ goes back, and editing the text gives the arrows back to the cursor. Fixing stays on the message's pencil and on Ctrl+↑.",
  "“Sem perguntar” é o mesmo do seu VS Code. Nos outros, os pedidos de permissão aparecem na conversa.": "“Don't ask” is the same as in your VS Code. In the others, permission requests show up in the chat.",
- "Ver novidades": "See what's new"
+ "Ver novidades": "See what's new",
+ "Depois da primeira mensagem, um modelo dá um título à conversa no lugar das primeiras palavras. Nunca troca um nome que você deu, e o clique direito no chat volta ao título de antes. Desligado, o título fica o das primeiras palavras.": "After the first message, a model gives the conversation a title in place of its first words. It never replaces a name you gave, and right-clicking the chat goes back to the previous title. Off, the title stays as the first words.",
+ "Em todo chat": "In every chat",
+ "Modelo do título": "Title model",
+ "O Claude Code no chat do Claude, o Haiku nos outros": "Claude Code in Claude chats, Haiku in the others",
+ "O Haiku, o mais rápido e barato": "Haiku, the fastest and cheapest",
+ "Quem dá o título": "Who writes the title",
+ "Título gerado": "Generated title",
+ "A conversa sai do Vitral de vez, com a fila e as imagens. Não dá para desfazer.": "The conversation leaves the Vitral for good, with its queue and images. This can't be undone.",
+ "Apagar “{titulo}”?": "Delete “{titulo}”?",
+ "A sessão do agente continua no disco dele": "The agent's session stays on its disk"
 }

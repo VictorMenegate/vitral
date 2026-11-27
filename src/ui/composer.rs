@@ -837,6 +837,8 @@ impl Janela {
             .pt(linear::CAIXA_ALTO)
             .pr(linear::CAIXA_DIREITA)
             .pb(linear::CAIXA_BAIXO)
+            // A citação mora no miolo, quase na coluna do texto (os 10 do campo do kit; 8 na escala).
+            .children(citacao.map(|cartao| div().ml(esp::E8).mb(esp::E6).child(cartao)))
             .child(
                 // Só o campo da mensagem fica em "Composer": o Shift+Tab troca o modo aqui, e não
                 // na busca de um popover da caixa. Sem margem própria, o texto (com os 10 do campo
@@ -988,7 +990,6 @@ impl Janela {
             })
             // Os anexos moram na casca, em cima do campo (a referência do dono, 13/11/2026: a
             // "prompt box" da 21st.dev): pílulas com a miniatura, e a imagem abre na ilha.
-            .children(citacao.map(|cartao| div().px(esp::E2).pt(esp::E2).pb(esp::E6).child(cartao)))
             .children(tem_anexos.then(|| div().px(esp::E4).pt(esp::E2).child(pilulas)))
             .child(miolo)
             .children(linha_de_estado);
@@ -1313,49 +1314,43 @@ impl Janela {
         cx.notify();
     }
 
-    /// O cartão do trecho citado, na casca da caixa, em cima das pílulas dos anexos. É da família
-    /// das pílulas (a mesma superfície, o mesmo fio, a mesma luz de tecla), e o azul fica só no
-    /// que diz "isto é uma citação": a barra arredondada, as aspas e o rótulo. O trecho vai em
-    /// até duas linhas, um degrau mais baixo que o texto que você escreve (dono, 13/11/2026:
-    /// "melhora o de responder e coloca aí também" e "melhora um pouco o design").
+    /// O trecho citado, dentro do miolo, em cima do campo (protótipo Linear, `.citacao`): um recuo
+    /// no preto da moldura, sem borda nem sombra, com o fio azul de 2 solto da beirada, o trecho no
+    /// tênue em até duas linhas (12,5/17) e o X de 20. Sem rótulo: o fio e o lugar já dizem que é
+    /// uma resposta. Entra subindo, como no protótipo; outro trecho entra de novo (dono, 27/11/2026:
+    /// "melhora o design disso", sobre o cartão com borda, sombra e o "Respondendo a").
     fn cartao_da_citacao(&self, chat: &str, trecho: &str, _: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
         let chat = chat.to_string();
-        h_flex()
+        let marca = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            trecho.hash(&mut h);
+            h.finish()
+        };
+        let cartao = h_flex()
             .relative()
-            .items_center()
-            .gap(esp::E8)
-            .pl(esp::E24)
-            .pr(esp::E6)
-            .py(esp::E8)
-            .rounded(raio::CARTAO)
-            .bg(Cores::cartao_elevado())
-            .border_1()
-            .border_color(Cores::borda_forte())
-            .shadow(crate::tema::aresta_de_tecla())
-            // A barra da citação: solta da beirada, arredondada, na altura do texto.
-            .child(div().absolute().left(esp::E8).top(esp::E8).bottom(esp::E8).w(px(3.)).rounded_full().bg(Cores::destaque()))
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(esp::E2)
-                    .child(
-                        h_flex()
-                            .gap(esp::E4)
-                            .child(super::mensagens::icone_de(Lucide::MessageSquareQuote, 11.).text_color(Cores::destaque_texto()))
-                            .child(div().etiqueta().text_color(Cores::destaque_texto()).child(tr!("Respondendo a"))),
-                    )
-                    .child(div().min_w_0().line_clamp(2).text_ellipsis().corpo_ui().text_color(Cores::tenue()).child(trecho.to_string())),
-            )
+            .items_start()
+            .gap(esp::E6)
+            .pl(esp::E12)
+            .pr(esp::E4)
+            .py(esp::E4)
+            .rounded(raio::de(11.))
+            .bg(Cores::preto())
+            .text_size(r(12.5))
+            .line_height(r(17.))
+            .text_color(Cores::tenue())
+            .child(div().absolute().left(r(5.)).top(esp::E6).bottom(esp::E6).w(px(2.)).rounded_full().bg(Cores::destaque_texto()))
+            .child(div().flex_1().min_w_0().line_clamp(2).text_ellipsis().child(trecho.to_string()))
             .child(
                 BotaoRedondo::new(SharedString::from(format!("tirar-citacao-{chat}")), Some(Lucide::X.into()), tr!("Tirar a citação"))
                     .variante(VarianteRedonda::Plano)
-                    .diametro(24.)
+                    .diametro(20.)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.citacoes.remove(&chat);
                         cx.notify();
                     })),
-            )
+            );
+        movimento::subir(cartao, SharedString::from(format!("citacao-{marca}")), movimento::De::Baixo)
     }
 
     /// "Compactar" (o do anel, o da faixa da conversa grande parada, o do "…" e o do cartão de
@@ -2150,7 +2145,7 @@ fn comandos_fora_do_claude(chat: &Chat) -> Option<Vec<String>> {
 
 fn descricao_comando(comando: &str) -> Option<SharedString> {
     Some(match comando {
-        "clear" => tr!("Começa uma sessão nova (o agente esquece a conversa)"),
+        "clear" => tr!("Limpa a conversa e começa do zero"),
         "conta" => tr!("Troca a conta deste chat (/conta nome ou padrão)"),
         "compact" => tr!("Resume a conversa para liberar contexto"),
         "context" => tr!("Mostra o uso do contexto"),

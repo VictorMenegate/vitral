@@ -153,7 +153,6 @@ pub fn abrir_com(chat: &mut Chat, revisor: Agente, modelo: Option<String>) -> Em
     let criou_o_parceiro = chat.parceiro.is_none();
     let revisor = match &chat.parceiro {
         Some(p) => p.agente,
-        None if revisor == chat.agente => chat.agente.outro(),
         None => revisor,
     };
     let em_curso = EmCurso {
@@ -162,9 +161,14 @@ pub fn abrir_com(chat: &mut Chat, revisor: Agente, modelo: Option<String>) -> Em
         criou_o_parceiro,
         atualizado_antes: chat.atualizado_em,
         revisor: Some(revisor),
+        sessao_principal: chat.sessao.clone(),
     };
     if em_curso.criou_o_parceiro {
-        iniciar_dupla(chat, revisor);
+        // O revisor entra como parceiro, numa sessão nova, mesmo quando é o próprio agente do
+        // chat (a dupla de verdade, `iniciar_dupla`, não aceita dois iguais).
+        chat.itens.push(Item::Vez { agente: chat.agente, em: agora() });
+        chat.parceiro = Some(Parceiro::novo(revisor));
+        chat.trocar_vez();
         // O parceiro nasceu agora e já está na vez: o modelo dele é o do revisor.
         if modelo.is_some() {
             chat.modelo = modelo;
@@ -180,7 +184,7 @@ pub fn abrir_com(chat: &mut Chat, revisor: Agente, modelo: Option<String>) -> Em
 /// `resultado` (a linha, o cartão ou nada) entra no lugar.
 pub fn fechar(chat: &mut Chat, em_curso: &EmCurso, resultado: Option<Item>) {
     chat.itens.truncate(em_curso.desde_item);
-    if chat.agente != em_curso.principal {
+    if vez_do_revisor(chat, em_curso) {
         chat.trocar_vez();
     }
     if em_curso.criou_o_parceiro {
@@ -188,6 +192,22 @@ pub fn fechar(chat: &mut Chat, em_curso: &EmCurso, resultado: Option<Item>) {
     }
     chat.revisao_do_par = None;
     chat.itens.extend(resultado);
+}
+
+/// O revisor pela escolha guardada ("claude", "codex"…); vazio ou desconhecido é o Codex, ou o
+/// Claude quando o Codex não está instalado.
+pub fn revisor_da_config(escolha: &str, codex_instalado: bool) -> Agente {
+    Agente::TODOS
+        .into_iter()
+        .find(|a| a.nome().eq_ignore_ascii_case(escolha.trim()))
+        .unwrap_or(if codex_instalado { Agente::Codex } else { Agente::Claude })
+}
+
+/// A vez está com o revisor: o agente não é o do chat ou, com os dois iguais, a sessão não é a
+/// de quando a revisão começou.
+fn vez_do_revisor(chat: &Chat, em_curso: &EmCurso) -> bool {
+    chat.agente != em_curso.principal
+        || (chat.parceiro.is_some() && !em_curso.sessao_principal.is_empty() && chat.sessao != em_curso.sessao_principal)
 }
 
 /// Na abertura: a revisão que o Vitral fechado (ou uma queda) cortou no meio é desfeita como a
@@ -281,17 +301,17 @@ pub fn entrega_ao_principal(revisor: Agente, texto: &str) -> (String, String) {
 
 impl Motor {
     /// Quem revisa este chat: o parceiro, num chat que já é uma dupla; senão o escolhido nas
-    /// Configurações (`Config.revisao_agente`) ou, sem escolha ou num chat do próprio escolhido, o
-    /// outro agente.
+    /// Configurações (`revisor_escolhido`), mesmo num chat dele.
     pub fn revisor_para(&self, chat: &Chat) -> Agente {
         if let Some(p) = &chat.parceiro {
             return p.agente;
         }
-        Agente::TODOS
-            .into_iter()
-            .find(|a| a.nome().eq_ignore_ascii_case(self.config.revisao_agente.trim()))
-            .filter(|a| *a != chat.agente)
-            .unwrap_or(chat.agente.outro())
+        self.revisor_escolhido()
+    }
+
+    /// A IA escolhida para revisar; sem escolha, o Codex (o Claude sem ele).
+    pub fn revisor_escolhido(&self) -> Agente {
+        revisor_da_config(&self.config.revisao_agente, crate::agente_codex::instalado())
     }
 
     /// O modelo escolhido para o revisor `agente` (vazio: o padrão dele).
@@ -650,12 +670,33 @@ mod testes {
         fechar(&mut chat, &em_curso, None);
         assert_eq!((chat.agente, chat.modelo.as_deref()), (Agente::Claude, Some("opus")), "o chat volta com o modelo dele");
         assert!(chat.parceiro.is_none());
+        // Desde 27/11/2026 o escolhido revisa também o chat dele, numa sessão nova, e o chat volta
+        // à sessão de antes no fim (dono: "até em um chat dessa mesma IA ser ela").
         let mut chat = Chat::novo("d".into(), "t", std::env::temp_dir());
-        let em_curso = abrir_com(&mut chat, Agente::Claude, None);
-        assert_eq!(em_curso.revisor(), Agente::Codex, "num chat do Claude, o Claude escolhido cede ao Codex");
+        chat.sessao = "sessao-do-trabalho".into();
+        chat.itens = vec![usuario("arruma"), fala("pronto")];
+        let em_curso = abrir_com(&mut chat, Agente::Claude, Some("opus".into()));
+        assert_eq!(em_curso.revisor(), Agente::Claude);
+        assert_eq!((chat.agente, chat.modelo.as_deref()), (Agente::Claude, Some("opus")));
+        assert!(chat.sessao != "sessao-do-trabalho" && !chat.sessao_criada, "o revisor abre uma sessão nova");
+        chat.sessao = "sessao-do-revisor".into();
+        chat.itens.push(fala("revisei"));
+        fechar(&mut chat, &em_curso, None);
+        assert_eq!((chat.agente, chat.sessao.as_str()), (Agente::Claude, "sessao-do-trabalho"));
+        assert!(chat.parceiro.is_none());
+        assert_eq!(chat.itens.len(), 2, "o turno do revisor sai da conversa");
         // Uma revisão gravada antes do campo: o revisor é o outro agente.
         let antiga = EmCurso { revisor: None, ..em_curso };
         assert_eq!(antiga.revisor(), Agente::Codex);
+    }
+
+    /// Sem escolha, revisa o Codex; sem o Codex instalado, o Claude.
+    #[test]
+    fn o_revisor_sem_escolha_e_o_codex() {
+        assert_eq!(revisor_da_config("", true), Agente::Codex);
+        assert_eq!(revisor_da_config("", false), Agente::Claude);
+        assert_eq!(revisor_da_config("Gemini", true), Agente::Gemini);
+        assert_eq!(revisor_da_config("claude", true), Agente::Claude);
     }
 
     #[test]
@@ -667,7 +708,7 @@ mod testes {
         let em_curso = abrir(&mut chat);
         assert_eq!(
             em_curso,
-            EmCurso { desde_item: 3, principal: Agente::Claude, criou_o_parceiro: true, atualizado_antes: chat.atualizado_em, revisor: Some(Agente::Codex) }
+            EmCurso { desde_item: 3, principal: Agente::Claude, criou_o_parceiro: true, atualizado_antes: chat.atualizado_em, revisor: Some(Agente::Codex), sessao_principal: "sessao-do-claude".into() }
         );
         assert_eq!(chat.agente, Agente::Codex, "o revisor está na vez");
         assert_ne!(chat.sessao, "sessao-do-claude", "na sessão dele");

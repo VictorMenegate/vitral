@@ -669,9 +669,6 @@ pub struct Janela {
     caixa_aberta: bool,
     /// Pedido de permissão com o corpo aberto, quando há vários (id do pedido).
     pedido_aberto: Option<String>,
-    /// Pedidos de permissão com a caixa "Não perguntar de novo" marcada (o "Permitir" passa a
-    /// regra); some com o pedido.
-    sempre_marcado: HashSet<String>,
     /// "Nova conversa ao lado": a próxima conversa criada abre num painel novo.
     nova_ao_lado: bool,
     /// As mensagens com o ponteiro em cima (o grupo de cada uma): elas desenham a barra de ações,
@@ -1105,7 +1102,6 @@ impl Janela {
             sino_geracao: Default::default(),
             caixa_aberta: false,
             pedido_aberto: None,
-            sempre_marcado: HashSet::new(),
             nova_ao_lado: false,
             falas_sob_ponteiro: Vec::new(),
             arrastando_aba: None,
@@ -2318,8 +2314,6 @@ impl Janela {
             .map(|p| p.id.clone())
             .collect();
         self.feedback_plano.retain(|id, _| planos.contains(id));
-        let pedidos: HashSet<String> = motor.read(cx).permissoes.iter().map(|p| p.id.clone()).collect();
-        self.sempre_marcado.retain(|id| pedidos.contains(id));
         for id in planos {
             self.feedback_plano.entry(id).or_insert_with(|| {
                 cx.new(|cx| {

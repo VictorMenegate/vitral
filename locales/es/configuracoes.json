@@ -439,5 +439,15 @@
  "“Entra no turno” manda a mensagem ao agente sem pará-lo. “Vai para a fila” espera o turno acabar. O Ctrl+Enter faz o outro. Respondendo a um pedido de permissão ou a uma pergunta, o Enter continua sendo a resposta.": "“Entra en el turno” envía el mensaje al agente sin detenerlo. “Va a la cola” espera a que termine el turno. Ctrl+Enter hace lo otro. Al responder una solicitud de permiso o una pregunta, Enter sigue siendo la respuesta.",
  "“Percorrer as enviadas” traz o texto das mensagens que você já enviou neste chat, uma por vez, sem desfazer nada; ↓ volta, e editar o texto devolve as setas ao cursor. O corrigir continua no lápis da mensagem e no Ctrl+↑.": "“Recorrer los enviados” trae el texto de los mensajes que ya enviaste en este chat, uno por vez, sin deshacer nada; ↓ vuelve, y editar el texto devuelve las flechas al cursor. Corregir sigue en el lápiz del mensaje y en Ctrl+↑.",
  "“Sem perguntar” é o mesmo do seu VS Code. Nos outros, os pedidos de permissão aparecem na conversa.": "“Sin preguntar” es el mismo de tu VS Code. En los demás, las solicitudes de permiso aparecen en la conversación.",
- "Ver novidades": "Ver novedades"
+ "Ver novidades": "Ver novedades",
+ "Depois da primeira mensagem, um modelo dá um título à conversa no lugar das primeiras palavras. Nunca troca um nome que você deu, e o clique direito no chat volta ao título de antes. Desligado, o título fica o das primeiras palavras.": "Después del primer mensaje, un modelo le da un título a la conversación en lugar de sus primeras palabras. Nunca cambia un nombre que hayas puesto, y el clic derecho en el chat vuelve al título anterior. Desactivado, el título queda con las primeras palabras.",
+ "Em todo chat": "En todos los chats",
+ "Modelo do título": "Modelo del título",
+ "O Claude Code no chat do Claude, o Haiku nos outros": "Claude Code en los chats de Claude, Haiku en los demás",
+ "O Haiku, o mais rápido e barato": "Haiku, el más rápido y barato",
+ "Quem dá o título": "Quién pone el título",
+ "Título gerado": "Título generado",
+ "A conversa sai do Vitral de vez, com a fila e as imagens. Não dá para desfazer.": "La conversación sale del Vitral para siempre, con la cola y las imágenes. No se puede deshacer.",
+ "Apagar “{titulo}”?": "¿Eliminar “{titulo}”?",
+ "A sessão do agente continua no disco dele": "La sesión del agente sigue en su disco"
 }

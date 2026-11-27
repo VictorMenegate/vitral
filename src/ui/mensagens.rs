@@ -12,7 +12,6 @@ use gpui_kit::base::InteractiveElementExt as _;
 use gpui_kit::component::{
     ActiveTheme as _, ElementExt as _, Icon, StyledExt as _,
     button::{Button, ButtonVariants as _},
-    checkbox::Checkbox,
     h_flex,
     input::{Enter, Input, InputEvent, InputState},
     menu::{DropdownMenu as _, PopupMenuItem},
@@ -2955,11 +2954,13 @@ fn resumo_ao_vivo(itens: &[Item], turno: TurnoRecolhivel) -> String {
     partes.join(" · ")
 }
 
-/// O que fica à vista com o turno recolhido: o texto intermediário que termina em pergunta, o
-/// aviso de erro e o cartão de falha.
+/// O que fica à vista com o turno recolhido: todo texto que o agente escreve no meio do turno, o
+/// aviso de erro e o cartão de falha. O recolhido esconde as ferramentas, não o que ele diz (dono,
+/// 27/11/2026: "mesmo quando tá minimizado tinha que aparecer os textos de retorno que manda
+/// durante o chat"; antes só ficava o texto que terminava em pergunta).
 pub(super) fn fica_fora_do_recolhido(item: &Item) -> bool {
     match item {
-        Item::Assistente { texto, .. } => texto.trim_end().ends_with('?'),
+        Item::Assistente { texto, .. } => !texto.trim().is_empty(),
         // O marco de compactação diz onde o contexto foi cortado: fica à vista.
         Item::Aviso { texto, erro, .. } => {
             *erro || tipo_aviso(texto, *erro) == ClasseAvisoChat::Alerta || texto.starts_with(crate::motor::CONTEXTO_COMPACTADO)
@@ -5389,19 +5390,14 @@ impl Janela {
         // A regra só existe fora do perigoso e do que um hook mandou perguntar: o mesmo filtro do
         // desenho.
         let com_regra = regra_do_cartao(ferramenta, entrada, &chat.cwd, manual, motivo_do_hook.is_some()).is_some();
-        let permitir = {
+        let permitir = responder(true);
+        // O "Sempre": permite e passa a regra (só existe com regra, fora do perigoso e do hook).
+        let sempre = {
             let id = id.to_string();
             cx.listener(move |this: &mut Janela, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
-                let sempre = com_regra && this.sempre_marcado.contains(&id);
                 if let Some(m) = &this.motor {
-                    m.update(cx, |m, cx| {
-                        if sempre {
-                            m.permitir_sempre(&id, cx)
-                        } else {
-                            m.responder_permissao(&id, true, None, cx)
-                        }
-                    });
+                    m.update(cx, |m, cx| if com_regra { m.permitir_sempre(&id, cx) } else { m.responder_permissao(&id, true, None, cx) });
                 }
             })
         };
@@ -5412,17 +5408,6 @@ impl Janela {
                     m.update(cx, |m, cx| m.responder_permissao(&id, true, None, cx));
                 }
             }
-        };
-        let marcar = {
-            let id = id.to_string();
-            cx.listener(move |this: &mut Janela, marcado: &bool, _, cx| {
-                if *marcado {
-                    this.sempre_marcado.insert(id.clone());
-                } else {
-                    this.sempre_marcado.remove(&id);
-                }
-                cx.notify();
-            })
         };
         let explicar = {
             let id = id.to_string();
@@ -5449,14 +5434,13 @@ impl Janela {
             nivel,
             manual,
             motivo_do_hook,
-            marcado: self.sempre_marcado.contains(id),
             explicando,
         };
         let respostas = RespostasDoPedido {
             negar: Rc::new(responder(false)),
             permitir: Rc::new(permitir),
+            sempre: Rc::new(sempre),
             uma_vez: Rc::new(uma_vez),
-            marcar: Rc::new(marcar),
             explicar: Rc::new(explicar),
             cancelar_explicacao: Rc::new(cancelar_explicacao),
             enviar_explicacao: Rc::new(cx.listener(|this, _: &ClickEvent, _, cx| this.negar_explicando(cx))),
@@ -5966,8 +5950,6 @@ pub(super) struct Pedido {
     /// Um hook `PreToolUse` do usuário mandou perguntar, com este motivo (vazio se ele não deu):
     /// o cartão mostra a linha do hook e não oferece a caixa "Não perguntar de novo".
     pub motivo_do_hook: Option<String>,
-    /// A caixa "Não perguntar de novo" marcada.
-    pub marcado: bool,
     /// O campo de "negar e explicar" aberto.
     pub explicando: Option<Entity<InputState>>,
 }
@@ -5979,8 +5961,8 @@ type AoClicar = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 pub(super) struct RespostasDoPedido {
     pub negar: AoClicar,
     pub permitir: AoClicar,
+    pub sempre: AoClicar,
     pub uma_vez: Rc<dyn Fn(&mut App)>,
-    pub marcar: Rc<dyn Fn(&bool, &mut Window, &mut App)>,
     pub explicar: AoClicar,
     pub cancelar_explicacao: AoClicar,
     pub enviar_explicacao: AoClicar,
@@ -6129,7 +6111,7 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
             let explicar = botao_icone(
                 id_texto("explicar"),
                 Lucide::MessageSquareQuote,
-                crate::tr!("Negar e explicar…\nNega e diz ao Claude o que fazer em vez disso"),
+                crate::tr!("Negar e explicar…\nNega e diz ao agente o que fazer em vez disso"),
                 TamanhoBotao::Controle,
                 window,
                 cx,
@@ -6137,16 +6119,13 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
             .on_click(botao(&r_.explicar));
             let negar =
                 botao_fantasma(id_texto("negar"), None, crate::tr!("Negar"), TamanhoBotao::Controle, window, cx).on_click(botao(&r_.negar));
-            // A caixa "Não perguntar de novo: ..." só existe fora do perigoso e quando há regra.
-            let caixa = regra.map(|(objeto, dica)| {
-                let marcar = r_.marcar.clone();
-                Checkbox::new(id_texto("sempre"))
-                    .label(crate::tr!("Não perguntar de novo: {objeto}", objeto = objeto))
-                    .checked(p.marcado)
+            // O "Sempre" no lugar da caixa "Não perguntar de novo": um clique só, com o que passa a
+            // valer escrito no botão (dono, 27/11/2026: "melhora o design e usabilidade ... o de
+            // permitir também").
+            let sempre = regra.map(|(objeto, dica)| {
+                botao_fantasma(id_texto("sempre"), None, crate::tr!("Sempre: {objeto}", objeto = objeto), TamanhoBotao::Controle, window, cx)
                     .tooltip(dica)
-                    .on_click(move |marcado, window, cx| marcar(marcado, window, cx))
-                    .text_color(Cores::tenue())
-                    .metadado()
+                    .on_click(botao(&r_.sempre))
             });
             let principal = if perigoso {
                 segurar(id_texto("segurar"), TamanhoBotao::Controle).map(|b| if minima { b.largo() } else { b }).into_any_element()
@@ -6156,20 +6135,27 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
                     .on_click(botao(&r_.permitir))
                     .into_any_element()
             };
+            // Escrever na caixa e dar Enter nega explicando (`Motor::responder_pedido_escrevendo`).
+            let dica = div()
+                .min_w_0()
+                .truncate()
+                .metadado()
+                .text_color(Cores::tenue())
+                .child(crate::tr!("Ou escreva na caixa para negar explicando"));
             if minima {
-                // Na largura mínima, a caixa vai em cima e o Permitir ocupa a largura.
+                // Na largura mínima, o Permitir ocupa a largura, e o resto vai em cima.
                 v_flex()
                     .gap(esp::E8)
-                    .children(caixa)
-                    .child(h_flex().gap(esp::E8).child(explicar).child(negar))
+                    .child(h_flex().gap(esp::E8).child(explicar).child(negar).children(sempre))
                     .child(principal)
                     .into_any_element()
             } else {
                 h_flex()
                     .gap(esp::E8)
-                    .child(div().flex_1().min_w_0().children(caixa))
+                    .child(div().flex_1().min_w_0().child(dica))
                     .child(explicar)
                     .child(negar)
+                    .children(sempre)
                     .child(principal)
                     .into_any_element()
             }
@@ -7174,9 +7160,10 @@ mod testes {
         // Sem texto intermediário (só a trilha e a resposta), não recolhe: a trilha já basta.
         let curto = vec![usuario("faz"), ferramenta("Bash", "ls", Some("ok"), false), assistente("Feito.")];
         assert!(turnos_recolhiveis(&curto, false).is_empty());
-        // A pergunta do meio e o erro ficam à vista.
+        // Os textos do meio (o "Vou olhar." e a pergunta) e o erro ficam à vista; a ferramenta, não.
         assert!(fica_fora_do_recolhido(&itens[4]));
-        assert!(!fica_fora_do_recolhido(&itens[1]));
+        assert!(fica_fora_do_recolhido(&itens[1]));
+        assert!(!fica_fora_do_recolhido(&itens[2]));
         assert!(fica_fora_do_recolhido(&Item::Aviso { texto: "O turno terminou com erro: x".into(), erro: true, em: 0 }));
         // Sem hora, sem número.
         let sem_hora: Vec<Item> = itens.iter().map(|i| match i {

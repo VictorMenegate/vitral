@@ -40,12 +40,6 @@ pub fn letra_da_caixa(na_caixa: bool, letra_da_conversa: u32) -> u32 {
     if na_caixa { letra_da_conversa } else { 100 }
 }
 
-/// O Vitral pede o título ao Claude Code e troca o do chat pelo que ele gravou? Só com a opção
-/// ligada e num chat do Claude.
-pub fn titulo_pelo_claude_vale(ligado: bool, chat_e_do_claude: bool) -> bool {
-    ligado && chat_e_do_claude
-}
-
 /// O Enter manda depois (fila) em vez de entrar no turno? `secondary` é o Ctrl+Enter. A opção
 /// "Enter vai para a fila" troca os dois, mas só onde há escolha: com um turno recebendo
 /// mensagem. Respondendo a um pedido de permissão ou a uma pergunta, o Enter continua sendo a
@@ -100,13 +94,6 @@ mod testes {
         assert_eq!(letra_da_caixa(false, 130), 100);
         assert_eq!(letra_da_caixa(true, 130), 130);
         assert_eq!(letra_da_caixa(true, 100), 100);
-    }
-
-    #[test]
-    fn o_titulo_do_claude_code_so_com_a_opcao_e_no_claude() {
-        assert!(titulo_pelo_claude_vale(true, true));
-        assert!(!titulo_pelo_claude_vale(false, true));
-        assert!(!titulo_pelo_claude_vale(true, false));
     }
 
     #[test]

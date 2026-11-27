@@ -360,5 +360,9 @@
  "{pasta} não existe mais; a mensagem não foi enviada.": "{pasta} no longer exists; the message was not sent.",
  "{rotulo}\nEle só lê o que este turno fez e diz o que achou; nada muda sozinho": "{rotulo}\nIt only reads what this turn did and says what it found; nothing changes on its own",
  "Às {hora}": "At {hora}",
- "… mais {n} linhas": "… {n} more lines"
+ "… mais {n} linhas": "… {n} more lines",
+ "Negar e explicar…\nNega e diz ao agente o que fazer em vez disso": "Deny and explain…\nDenies and tells the agent what to do instead",
+ "Ou escreva na caixa para negar explicando": "Or type in the box to deny with an explanation",
+ "Sempre: {objeto}": "Always: {objeto}",
+ "Clique numa opção ou escreva o número na caixa": "Click an option or type its number in the box"
 }

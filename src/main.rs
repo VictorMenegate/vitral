@@ -13,6 +13,7 @@ mod cli_agentes;
 mod codex;
 mod contas;
 mod contas_codex;
+mod titulo;
 mod dados;
 mod diagnostico;
 mod git;
