@@ -518,6 +518,8 @@ impl Janela {
         let (eu, ctx) = (&*self, &contexto);
         // Cada bloco com o índice do (primeiro) item dele, que identifica a entrada.
         let mut blocos: Vec<Planejado> = Vec::new();
+        // Onde ficou, em `blocos`, a trilha do turno que roda (ver a linha "Pensando por").
+        let mut trilha_viva: Option<usize> = None;
         if chat.itens.is_empty() && chat.importada.is_none() {
             blocos.push(Planejado::pronto(Bloco::Texto, None, eu.dica_inicial(motor, chat, painel_id, window, cx)));
         }
@@ -663,6 +665,9 @@ impl Janela {
                 let chamadas = &visiveis[i..fim];
                 let chave_do_bloco =
                     chave_da_faixa(TipoDaChave::Trilha, chamadas, &[u64::from(ao_vivo), chamadas.len() as u64, u64::from(contexto.rodando)]);
+                if ao_vivo {
+                    trilha_viva = Some(blocos.len());
+                }
                 blocos.push(
                     Planejado::de_tipo(Bloco::Log, Some(indice), chave_do_bloco, move || eu.trilha(ctx, chamadas, ao_vivo, cx))
                         .fica_montado(fica_montado(chamadas.iter().map(|(_, item)| *item))),
@@ -756,7 +761,19 @@ impl Janela {
                     })
                     .filter(|desde| *desde > 0)
                     .map(|desde| desde as f64);
-                blocos.push(Planejado::pronto(Bloco::Log, None, linha_pensando(painel_id, crate::i18n::traduzir(rotulo).into(), cx.theme().font_family.clone(), desde)));
+                let pensando = linha_pensando(painel_id, crate::i18n::traduzir(rotulo).into(), cx.theme().font_family.clone(), desde);
+                // Com a trilha deste turno logo acima, as duas viram uma peça só: o "Pensando" em
+                // cima e a trilha embaixo dele, recuada e ligada por um cotovelo, em vez de duas
+                // linhas soltas com um ponto cada (dono, 27/11/2026: "faz esse rodou do pensando
+                // ser tipo uma parte de baixo do pensou, com conexão entre elas").
+                match trilha_viva.filter(|i| i + 1 == blocos.len()).and_then(|_| blocos.pop()) {
+                    Some(trilha) => {
+                        let (indice, montar) = (trilha.indice, trilha.montar);
+                        let (_, trilha) = montar();
+                        blocos.push(Planejado::pronto(Bloco::Log, indice, pensando_com_trilha(pensando, trilha)));
+                    }
+                    None => blocos.push(Planejado::pronto(Bloco::Log, None, pensando)),
+                }
             }
         }
         // Só o que está à vista (e a sobra em volta) é montado; o resto entra como um espaço da
@@ -1108,24 +1125,23 @@ impl Janela {
                     })
                     .child(
                     div().map(coluna_de_leitura).child(
-                        // Uma barra, e não outro balão: no azul dos balões, a mensagem seguinte
-                        // chegando por baixo parecia uma segunda bolha grudada nela (dono,
-                        // 27/11/2026: "tá bugado as mensagens em cima, melhora mais"). No preto dos
-                        // menus, numa linha, com a seta de subir até ela.
-                        h_flex()
+                        // O mesmo desenho do balão da conversa: a cor cheia, o canto, a folga e a
+                        // letra dele, em até duas linhas. A barra preta de uma linha da 0.13.0 saiu
+                        // (dono, 27/11/2026: "ainda não voltou pra como era aqui ... tô falando do
+                        // design ser igual da normal").
+                        div()
                             .id(("mensagem-presa", painel_id as usize))
                             .relative()
                             .w_full()
-                            .h(r(36.))
-                            .gap(esp::E8)
-                            .px(esp::E12)
-                            .rounded(raio::CONTROLE)
+                            // A folga dos balões, também no painel mínimo (lá ficava 2 px fora).
+                            .px(r(folga_do_balao(nivel)))
+                            .py(linear::BALAO_ALTO)
+                            // O mesmo canto do balão na conversa (dono, 26/11/2026: "o border
+                            // radius dos dois tá diferente"; era o da peça, 20).
+                            .rounded(linear::RAIO_DO_BALAO)
                             .cursor_pointer()
-                            .bg(Cores::preto())
-                            .hover(|s| s.bg(Cores::preto().blend(Cores::hover())))
-                            .child(div().flex_none().w(px(3.)).h(r(16.)).rounded_full().bg(Cores::balao()))
-                            .child(div().flex_1().min_w_0().truncate().text_size(r(13.)).text_color(Cores::texto_da_fala()).child(texto))
-                            .child(icone_de(Lucide::CornerLeftUp, 14.).text_color(Cores::tenue()))
+                            .bg(Cores::balao())
+                            .child(div().relative().fala().text_color(Cores::texto_do_balao()).line_clamp(2).child(texto))
                             .dica_no_ponteiro(|window, cx| Tooltip::new(crate::tr!("Ir até esta mensagem")).build(window, cx))
                             .on_click(move |_, _, cx| {
                                 let _ = janela.update(cx, |j, cx| j.ir_para_a_mensagem(painel_id, i, alto, cx));
@@ -1248,7 +1264,26 @@ impl Janela {
             (Lucide::Terminal, crate::tr!("Rodar os testes"), crate::tr!("Rode os testes e conserte o que falhar.")),
             (Lucide::ListChecks, crate::tr!("Planejar uma mudança"), crate::tr!("Antes de mexer nos arquivos, me ajude a planejar esta mudança: ")),
         ];
-        let entra = |el: Div, i: usize| movimento::entrar_depois_em(el, ("nova-conversa", i), De::Baixo, std::time::Duration::from_millis(40 + 45 * i as u64), movimento::PASSO);
+        // As linhas entram uma depois da outra quando a conversa nova aparece, e só então: depois
+        // do tempo da entrada (ou remontada pela lista que sai ou volta), a tela aparece pronta.
+        let agora = std::time::Instant::now();
+        let entrou_em = self.paineis.iter().find(|p| p.id == painel).map(|p| {
+            let mut visto = p.inicial_em.borrow_mut();
+            match visto.as_ref() {
+                Some((de, quando)) if *de == chat.id => *quando,
+                _ => {
+                    *visto = Some((chat.id.clone(), agora));
+                    agora
+                }
+            }
+        });
+        let remontada = entrou_em.is_some_and(|t| agora.duration_since(t) > std::time::Duration::from_millis(700));
+        let entra = |el: Div, i: usize| {
+            if remontada {
+                return el.into_any_element();
+            }
+            movimento::entrar_depois_em(el, ("nova-conversa", i), De::Baixo, std::time::Duration::from_millis(40 + 45 * i as u64), movimento::PASSO).into_any_element()
+        };
         let mut botoes: Vec<AnyElement> = comecos.into_iter().enumerate().map(|(i, (icone, rotulo, texto))| {
             h_flex()
                 .id(("comeco", i))
@@ -1290,13 +1325,19 @@ impl Janela {
             .py(esp::E32)
             .child(entra(div().child(Marca::do_agente(chat.agente).disco(40.)), 0))
             .child(entra(
+                // Com a largura do painel, para a pasta e os botões caberem nele: soltos, eles
+                // ficavam com a largura do conteúdo e, no painel estreito, saíam cortados dos dois
+                // lados (dono, 27/11/2026: "com o chat pequeno ficou bugado essa parte").
                 v_flex()
+                    .w_full()
                     .items_center()
                     .gap(esp::E6)
                     .child(div().titulo_tela().text_color(Cores::forte()).child(crate::tr!("O que vamos fazer?")))
                     .child(
                         h_flex()
+                            .w_full()
                             .max_w(r(420.))
+                            .justify_center()
                             .gap(esp::E6)
                             .text_size(r(12.5))
                             .text_color(Cores::tenue())
@@ -1315,8 +1356,8 @@ impl Janela {
                     ),
                 1,
             ))
-            .child(entra(div().child(grade), 2))
-            .child(entra(div().child(teclas), 3))
+            .child(entra(div().w_full().flex().justify_center().child(grade), 2))
+            .child(entra(div().w_full().flex().justify_center().child(teclas), 3))
             .into_any_element()
     }
 
@@ -2371,7 +2412,9 @@ fn poco_de_codigo(raio: Rems) -> StyleRefinement {
         .p(dentro_da_borda(12.))
         .pr(COLUNA_DO_COPIAR)
         .bg(Cores::preto())
-        .border_color(Cores::borda())
+        // Sem o fio claro em volta (o kit põe o traço de 1: fica na cor do fundo), como a caixa
+        // de saída de comando e o bloco de código do protótipo Linear.
+        .border_color(Cores::preto())
         .rounded(raio)
         .whitespace_nowrap();
     // Os dois eixos: só com o de pé o kit põe o Copiar fora do que rola (ele fica no canto), e só
@@ -2980,6 +3023,21 @@ fn linha_de_log<E: Styled>(linha: E) -> E {
     linha.h(ALTURA_DO_LOG).mx(r(-8.)).px(esp::E8).gap(linear::PASSO_VAO).rounded(raio::CONTROLE).metadado().text_size(r(12.5))
 }
 
+/// Onde começa o turno do grupo de chamadas que abre no item `primeira` e se o agente já falou
+/// nesse turno antes dele. `primeira` nem sempre é um índice de `itens`: o histórico trazido do
+/// Claude Code numera os dele a partir de 2^40 (`historico::BASE`), e fatiar `itens` com esse
+/// número derrubava o app a cada desenho da conversa (a 0.13.0 fechava em qualquer clique com uma
+/// conversa importada aberta; queda.log do dono, 27/11/2026). Fora de `itens`, o grupo é passado:
+/// não é do turno que roda.
+fn turno_antes_do_grupo(itens: &[Item], primeira: usize) -> (usize, bool) {
+    let Some(antes) = itens.get(..primeira) else {
+        return (itens.len(), false);
+    };
+    let inicio = antes.iter().rposition(|i| matches!(i, Item::Usuario { .. })).map_or(0, |u| u + 1);
+    let ja_falou = antes[inicio..].iter().any(|i| matches!(i, Item::Assistente { texto, .. } if !texto.trim().is_empty()));
+    (inicio, ja_falou)
+}
+
 /// A coluna de 16 do ícone de uma linha da trilha, na primeira borda.
 fn coluna_do_icone() -> Div {
     div().flex_none().size(r(14.)).flex().items_center().justify_center()
@@ -3580,11 +3638,8 @@ impl Janela {
         // O agente já falou neste turno, antes deste grupo: o grupo começa recolhido, com só a linha
         // viva à vista, em vez de a trilha abrir e fechar a cada fala (o "Chain of Thought" no nível
         // de Linear/v0/Cursor, 27/11/2026). A escolha feita à mão vale sempre.
-        let inicio_do_turno = contexto.chat.itens[..chamadas[0].0].iter().rposition(|i| matches!(i, Item::Usuario { .. })).map_or(0, |u| u + 1);
-        let ja_falou = contexto.chat.itens[inicio_do_turno..chamadas[0].0]
-            .iter()
-            .any(|i| matches!(i, Item::Assistente { texto, .. } if !texto.trim().is_empty()));
-        let do_turno_atual = contexto.rodando && chamadas[0].0 >= inicio_do_turno && contexto.chat.itens.len().saturating_sub(chamadas[0].0) < 200;
+        let (inicio_do_turno, ja_falou) = turno_antes_do_grupo(&contexto.chat.itens, chamadas[0].0);
+        let do_turno_atual = contexto.rodando && (inicio_do_turno..contexto.chat.itens.len()).contains(&chamadas[0].0) && contexto.chat.itens.len() - chamadas[0].0 < 200;
         let aberto = !recolhivel || self.expandidos.contains(&chave)
             || (ao_vivo && !ja_falou && !self.expandidos.contains(&format!("{chave}:fechado")));
         let mostradas = if aberto {
@@ -3711,17 +3766,10 @@ impl Janela {
         } else {
             montar(mostradas, aberto).into_any_element()
         };
-        // O grupo num cartão de fundo quase transparente, com o fio de meio pixel e o raio dos
-        // cartões; a chamada solta fica como estava.
+        // Sem o cartão de fio fino que a 0.13.0 pôs em volta do grupo (dono, 27/11/2026: "isso tá
+        // bem feio"): o grupo volta ao desenho de antes; ficam o acordeão, o ponto e o relógio.
         v_flex()
             .w_full()
-            .when(recolhivel, |s| {
-                s.p(esp::E2)
-                    .rounded(raio::CARTAO)
-                    .bg(gpui_kit::hsla(0., 0., 1., 0.025))
-                    .border(px(0.5))
-                    .border_color(gpui_kit::hsla(0., 0., 1., 0.10))
-            })
             .children(cabecalho)
             .children(editados_do_grupo.flatten())
             .children(fileira)
@@ -4558,8 +4606,9 @@ fn cartao_de_edicao(chave: &str, pedido: &str) -> Div {
         .group(grupo.clone())
         .w_full()
         .rounded(raio::CARTAO)
+        // O traço fica, na cor do fundo: chapado como a caixa de código (27/11/2026).
         .border_1()
-        .border_color(Cores::borda())
+        .border_color(Cores::preto())
         .bg(Cores::preto())
         .overflow_hidden()
         .child(bloco_do_pedido(pedido, &diff))
@@ -4955,6 +5004,35 @@ fn linha_pensando(painel: u64, rotulo: SharedString, fonte: SharedString, desde:
                 .child(super::componentes::lugar_do_relogio(painel, Cores::tenue(), desde, 72.)),
             None => s.child(div().font_family(fonte).metadado().text_color(Cores::texto()).child(rotulo)),
         })
+        .into_any_element()
+}
+
+/// A linha "Pensando por" com a trilha do turno embaixo dela, recuada e ligada por um cotovelo
+/// de fio fino que sai de baixo do ponto e entra na primeira linha da trilha.
+fn pensando_com_trilha(pensando: AnyElement, trilha: AnyElement) -> AnyElement {
+    v_flex()
+        .w_full()
+        .child(pensando)
+        .child(
+            div()
+                .relative()
+                .w_full()
+                .pl(RECUO_DO_LOG)
+                // Do centro da coluna do ícone (7), de 3 acima desta linha até o meio dela (11).
+                .child(
+                    div()
+                        .absolute()
+                        .left(r(6.5))
+                        .top(r(-3.))
+                        .w(r(10.))
+                        .h(r(14.))
+                        .border_l_1()
+                        .border_b_1()
+                        .rounded_bl(raio::CONTROLE)
+                        .border_color(Cores::borda_forte()),
+                )
+                .child(trilha),
+        )
         .into_any_element()
 }
 
@@ -6683,6 +6761,7 @@ mod testes {
     }
     // Sem `super::*`: o `gpui_kit::*` lá de cima traz um `test` que troca o `#[test]`.
     use super::{
+        turno_antes_do_grupo,
         Bloco, ClasseAvisoChat, comando_de_barra, detalhe_da_chamada, entrada_da_chamada, entrada_do_bloco, entrada_do_cabecalho, espaco_antes,
         com_quebras_duras, dica_da_pilha, linhas_da_edicao, resposta_repete_o_erro, texto_da_citacao, trechos_com_citacoes, marco_da_conversa, nome_e_id, previa, resumo_da_trilha, erros::partes_do_erro,
         resumo_das_chamadas, sem_marcacao,
@@ -7076,6 +7155,16 @@ mod testes {
         assert_eq!(com_quebras_duras(tabela), tabela);
         // A linha que já termina com a quebra dura não ganha outra.
         assert_eq!(com_quebras_duras("um  \ndois"), "um  \ndois");
+    }
+
+    #[test]
+    fn grupo_do_historico_importado_nao_fatia_a_conversa() {
+        let rodar = ferramenta("Bash", "Bash · cargo test", Some("ok"), false);
+        let itens = [rodar.clone(), rodar];
+        // O índice de um item do histórico trazido do Claude Code (2^40 + i) não cabe em `itens`.
+        assert_eq!(turno_antes_do_grupo(&itens, (1 << 40) + 6452), (2, false));
+        assert_eq!(turno_antes_do_grupo(&itens, 1), (0, false));
+        assert_eq!(turno_antes_do_grupo(&[], 0), (0, false));
     }
 
     #[test]

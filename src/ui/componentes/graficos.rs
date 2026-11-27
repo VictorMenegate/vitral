@@ -743,12 +743,18 @@ mod testes {
     }
 }
 
-/// O ponto da etapa ativa: o miolo de 6 px na cor e um halo que cresce e some a cada batida.
+/// O ponto da etapa ativa: o miolo de 7 px, que respira de leve, e um halo que cresce até 22 px e
+/// some a cada batida, na curva de saída (dono, 27/11/2026: "o efeito do pontinho nem dá pra ver
+/// direito"; o halo ia de 6 a 16 px com 35% e sumia no escuro).
 fn pintar_ponto(b: Bounds<Pixels>, cor: Hsla, fase: f32, window: &mut Window) {
-    let centro = b.center();
-    let miolo = px(3.);
-    let halo = px(3. + 5. * fase);
-    window.paint_quad(fill(Bounds::new(point(centro.x - halo, centro.y - halo), size(halo * 2., halo * 2.)), cor.opacity(0.35 * (1. - fase))).corner_radii(halo));
+    // Um pouco abaixo do meio do lugar: o centro que o olho lê numa linha de texto é o das
+    // minúsculas (no meio exato o ponto parecia alto). Proporcional, para valer em qualquer zoom.
+    let centro = point(b.center().x, b.center().y + b.size.height * 0.12);
+    let saida = 1. - (1. - fase).powi(3);
+    let halo = px(3.5 + 7.5 * saida);
+    let respiro = 0.5 - 0.5 * (fase * TAU).cos();
+    let miolo = px(3.5 + 0.5 * respiro);
+    window.paint_quad(fill(Bounds::new(point(centro.x - halo, centro.y - halo), size(halo * 2., halo * 2.)), cor.opacity(0.55 * (1. - saida))).corner_radii(halo));
     window.paint_quad(fill(Bounds::new(point(centro.x - miolo, centro.y - miolo), size(miolo * 2., miolo * 2.)), cor).corner_radii(miolo));
 }
 

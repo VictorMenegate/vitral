@@ -11,6 +11,7 @@ use std::{
 
 use gpui_kit::component::{
     ElementExt as _,
+    Selectable,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{InlineToken, InputContent, Textarea, TextareaState},
@@ -256,10 +257,12 @@ pub(super) struct Gatilho<'a> {
 }
 
 /// O gatilho da palavra sob o cursor (dono, 24/11/2026: o menu abria só para a última palavra do
-/// texto). A palavra vai de um espaço ao outro em volta do cursor; `/` só vale na primeira palavra
-/// do texto (o Claude Code só entende comando de barra ali), `#` e `@` em qualquer uma. O cursor
-/// tem que estar depois do sinal. Um caminho com espaço vai entre aspas (`@"minha pasta/a b.rs"`):
-/// com o cursor dentro das aspas, a palavra é o trecho todo.
+/// texto). A palavra vai de um espaço ao outro em volta do cursor; `/`, `#` e `@` valem em qualquer
+/// palavra (o `/` só valia na primeira; dono, 27/11/2026: "faz o / funcionar em qualquer parte,
+/// não só no começo"). Fora do começo, o `/` de um caminho (`/home/x`) não é gatilho, e o menu só
+/// oferece as skills (ver `sugestoes_da_caixa`). O cursor tem que estar depois do sinal. Um
+/// caminho com espaço vai entre aspas (`@"minha pasta/a b.rs"`): com o cursor dentro das aspas, a
+/// palavra é o trecho todo.
 pub(super) fn gatilho_em(texto: &str, cursor: usize) -> Option<Gatilho<'_>> {
     let mut cursor = cursor.min(texto.len());
     while !texto.is_char_boundary(cursor) {
@@ -280,7 +283,11 @@ pub(super) fn gatilho_em(texto: &str, cursor: usize) -> Option<Gatilho<'_>> {
     let inicio = texto[..cursor].char_indices().rev().find(|(_, c)| c.is_whitespace()).map_or(0, |(i, c)| i + c.len_utf8());
     let fim = cursor + texto[cursor..].find(char::is_whitespace).unwrap_or(texto.len() - cursor);
     let sinal = texto[inicio..fim].chars().next().filter(|c| matches!(c, '#' | '@' | '/'))?;
-    if (sinal == '/' && inicio != 0) || cursor < inicio + sinal.len_utf8() {
+    if cursor < inicio + sinal.len_utf8() {
+        return None;
+    }
+    // No meio do texto, uma palavra com outra barra é um caminho, não um comando.
+    if sinal == '/' && inicio != 0 && texto[inicio + 1..fim].contains('/') {
         return None;
     }
     Some(Gatilho { sinal, digitado: &texto[inicio + sinal.len_utf8()..cursor], inicio, fim })
@@ -763,9 +770,27 @@ fn envio(rodando: bool, vazio: bool) -> Envio {
     }
 }
 
-/// A miniatura de uma imagem anexada na caixa: 56 de altura, até 96 de largura.
-const ALTURA_DA_MINIATURA: f32 = 56.;
-const LARGURA_DA_MINIATURA: f32 = 96.;
+/// A prévia do trecho citado na caixa: numa linha corrida (as quebras viram espaço) e com até 180
+/// letras, cortada numa palavra, com "…" no fim quando corta.
+fn previa_da_citacao(trecho: &str) -> String {
+    const MAXIMO: usize = 180;
+    let corrido = trecho.split_whitespace().collect::<Vec<_>>().join(" ");
+    if corrido.chars().count() <= MAXIMO {
+        return corrido;
+    }
+    let corte: String = corrido.chars().take(MAXIMO).collect();
+    let corte = match corte.rfind(' ') {
+        Some(i) if i > MAXIMO / 2 => &corte[..i],
+        _ => corte.as_str(),
+    };
+    format!("{}…", corte.trim_end_matches([',', ';', ':', '.', ' ']))
+}
+
+/// A miniatura de uma imagem anexada na caixa: 40 de altura, até 120 de largura, com a imagem
+/// inteira dentro (era 56 e cortava: o print largo e baixo virava um pedaço ampliado do meio; dono,
+/// 27/11/2026: "ficou muito grande isso").
+const ALTURA_DA_MINIATURA: f32 = 40.;
+const LARGURA_DA_MINIATURA: f32 = 120.;
 
 impl Janela {
     /// A caixa de mensagem do painel, em moldura dupla (a base AI Input With Loading): por fora,
@@ -1144,7 +1169,10 @@ impl Janela {
                     .items_center()
                     .gap(linear::CONTROLES_VAO)
                     .ml(linear::CONTROLES_VAO)
-                    .children(self.anel_do_contexto(chat, b, cx))
+                    // Só sem a barra de baixo (o modo foco, a lista recolhida): com ela à vista o
+                    // contexto do chat aberto já está lá, e clicável (dono, 27/11/2026: "tira a
+                    // porcentagem do contexto da caixa ... porque tem lá embaixo").
+                    .children(self.anel_do_contexto(chat, b, cx).filter(|_| !self.lista))
                     // O clipe mora no "…" (protótipo Linear, 25/11/2026).
                     .child(em_repouso("repouso-mais", self.botao_mais(motor, chat, b, window, cx).into_any_element()))
                     .children(self.botoes_de_envio(b, vazio, enter_no_turno(motor, &chat.id), envios, cx)),
@@ -1261,45 +1289,57 @@ impl Janela {
                     .child(barra)
                     .child(div().text_size(r(12.)).line_height(r(16.)).tabular().text_color(cor_numero).child(format!("{numero}%"))),
             );
-        let (motor, janela_e, chat_id, painel) = (self.motor.clone(), cx.entity().downgrade(), chat.id.clone(), b.painel);
-        Some(
-            popover(("pop-contexto", painel as usize))
-                .anchor(Anchor::BottomRight)
-                .offset(px(8.))
-                .trigger(gatilho)
-                .content(move |_, window, cx| {
-                    let pop = cx.entity().downgrade();
-                    let janela_e = janela_e.clone();
-                    // A linha que vem depois dos tokens: o que o último turno gastou.
-                    let extras: Vec<AnyElement> = motor
-                        .as_ref()
-                        .map(|m| super::onde_uso::ultimo_turno(m.read(cx), &chat_id).into_iter().collect())
-                        .unwrap_or_default();
-                    let compactar = botao_fantasma(
-                        ("compactar", painel as usize),
-                        Some(Lucide::Minimize.into()),
-                        tr!("Compactar a conversa"),
-                        TamanhoBotao::Barra,
-                        window,
-                        cx,
-                    )
-                    .tooltip(SharedString::from(crate::i18n::traduzir(DICA_DO_COMPACTAR)))
-                    .on_click(move |_, window, cx| {
-                        if let Some(pop) = pop.upgrade() {
-                            pop.update(cx, |p, cx| p.dismiss(window, cx));
-                        }
-                        let _ = janela_e.update(cx, |this, cx| this.compactar_conversa(painel, cx));
-                    });
-                    let Some(m) = motor.as_ref().map(|m| m.read(cx)) else {
-                        return div().into_any_element();
-                    };
-                    match m.chat(&chat_id) {
-                        Some(c) => super::conversa::uso_da_conversa(m, c, extras, compactar.into_any_element()).into_any_element(),
-                        None => div().into_any_element(),
+        Some(self.popover_do_contexto(("pop-contexto", b.painel as usize), Anchor::BottomRight, gatilho, chat.id.clone(), b.painel, cx))
+    }
+
+    /// O uso da conversa (o contexto e o custo, o modelo, a conta e o Compactar) num popover que
+    /// abre para cima do `gatilho`: o anel da caixa e a pílula "Contexto" da barra de baixo.
+    pub(super) fn popover_do_contexto<G: Selectable + IntoElement + 'static>(
+        &self,
+        id: impl Into<ElementId>,
+        ancora: Anchor,
+        gatilho: G,
+        chat_id: String,
+        painel: u64,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let (motor, janela_e) = (self.motor.clone(), cx.entity().downgrade());
+        popover(id)
+            .anchor(ancora)
+            .offset(px(8.))
+            .trigger(gatilho)
+            .content(move |_, window, cx| {
+                let pop = cx.entity().downgrade();
+                let janela_e = janela_e.clone();
+                // A linha que vem depois dos tokens: o que o último turno gastou.
+                let extras: Vec<AnyElement> = motor
+                    .as_ref()
+                    .map(|m| super::onde_uso::ultimo_turno(m.read(cx), &chat_id).into_iter().collect())
+                    .unwrap_or_default();
+                let compactar = botao_fantasma(
+                    ("compactar", painel as usize),
+                    Some(Lucide::Minimize.into()),
+                    tr!("Compactar a conversa"),
+                    TamanhoBotao::Barra,
+                    window,
+                    cx,
+                )
+                .tooltip(SharedString::from(crate::i18n::traduzir(DICA_DO_COMPACTAR)))
+                .on_click(move |_, window, cx| {
+                    if let Some(pop) = pop.upgrade() {
+                        pop.update(cx, |p, cx| p.dismiss(window, cx));
                     }
-                })
-                .into_any_element(),
-        )
+                    let _ = janela_e.update(cx, |this, cx| this.compactar_conversa(painel, cx));
+                });
+                let Some(m) = motor.as_ref().map(|m| m.read(cx)) else {
+                    return div().into_any_element();
+                };
+                match m.chat(&chat_id) {
+                    Some(c) => super::conversa::uso_da_conversa(m, c, extras, compactar.into_any_element()).into_any_element(),
+                    None => div().into_any_element(),
+                }
+            })
+            .into_any_element()
     }
 
     /// Escreve na caixa do painel e põe o foco nela (quem envia é você, com Enter).
@@ -1331,28 +1371,40 @@ impl Janela {
             trecho.hash(&mut h);
             h.finish()
         };
-        let cartao = h_flex()
-            .relative()
-            .items_start()
-            .gap(esp::E6)
+        // "Respondendo" em cima, com o ícone e o X; embaixo, o trecho numa prévia limpa (sem as
+        // quebras de linha, cortada numa palavra com "…") e o fio azul ao lado dele (dono,
+        // 27/11/2026: "esse de responder também tá bem ruim"; era o trecho cru, cortado no meio de
+        // uma palavra, sem dizer o que era).
+        let tirar = BotaoRedondo::new(SharedString::from(format!("tirar-citacao-{chat}")), Some(Lucide::X.into()), tr!("Tirar a citação"))
+            .variante(VarianteRedonda::Plano)
+            .diametro(20.)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.citacoes.remove(&chat);
+                cx.notify();
+            }));
+        let cartao = v_flex()
+            .gap(esp::E4)
             .pl(esp::E12)
             .pr(esp::E4)
-            .py(esp::E4)
-            .rounded(raio::de(11.))
+            .pt(esp::E4)
+            .pb(esp::E8)
+            .rounded(raio::CONTROLE)
             .bg(Cores::preto())
-            .text_size(r(12.5))
-            .line_height(r(17.))
-            .text_color(Cores::tenue())
-            .child(div().absolute().left(r(5.)).top(esp::E6).bottom(esp::E6).w(px(2.)).rounded_full().bg(Cores::destaque_texto()))
-            .child(div().flex_1().min_w_0().line_clamp(2).text_ellipsis().child(trecho.to_string()))
             .child(
-                BotaoRedondo::new(SharedString::from(format!("tirar-citacao-{chat}")), Some(Lucide::X.into()), tr!("Tirar a citação"))
-                    .variante(VarianteRedonda::Plano)
-                    .diametro(20.)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.citacoes.remove(&chat);
-                        cx.notify();
-                    })),
+                h_flex()
+                    .gap(esp::E6)
+                    .items_center()
+                    .child(super::mensagens::icone_de(Lucide::Reply, 12.).text_color(Cores::destaque_texto()))
+                    .child(div().flex_1().text_size(r(11.5)).text_color(Cores::tenue()).child(tr!("Respondendo")))
+                    .child(tirar),
+            )
+            .child(
+                div()
+                    .relative()
+                    .pl(esp::E12)
+                    .pr(esp::E8)
+                    .child(div().absolute().left_0().top(esp::E2).bottom(esp::E2).w(px(2.)).rounded_full().bg(Cores::destaque_texto()))
+                    .child(div().min_w_0().line_clamp(2).text_size(r(13.)).line_height(r(18.)).text_color(Cores::texto_da_fala()).child(previa_da_citacao(trecho))),
             );
         movimento::entrar_em(cartao, SharedString::from(format!("citacao-{marca}")), movimento::De::Baixo, movimento::SUBIR_LEVE)
     }
@@ -1539,7 +1591,7 @@ impl Janela {
                 // fio claro, com o X no canto por cima; o arquivo é uma pílula escura com o ícone,
                 // o nome e o tamanho (dono, 27/11/2026: "melhora o design das imagens anexadas";
                 // era um risco de 24 de altura numa pílula de borda clara).
-                let (largura_mini, altura_mini) = super::imagens::medida_da_miniatura(lido.medidas, ALTURA_DA_MINIATURA, LARGURA_DA_MINIATURA);
+                let (largura_mini, _) = super::imagens::medida_da_miniatura(lido.medidas, ALTURA_DA_MINIATURA, LARGURA_DA_MINIATURA);
                 let aberta = self.ilha.as_ref().is_some_and(|(c, p)| *c == chat && *p == caminho);
                 let abre_ilha = imagem && lido.existe;
                 let (chat_ilha, alvo_ilha) = (chat.clone(), caminho.clone());
@@ -1577,15 +1629,15 @@ impl Janela {
                         .relative()
                         .flex_none()
                         .w(r(largura_mini.max(ALTURA_DA_MINIATURA)))
-                        .h(r(altura_mini.max(ALTURA_DA_MINIATURA)))
-                        .rounded(raio::de(14.))
+                        .h(r(ALTURA_DA_MINIATURA))
+                        .rounded(raio::de(12.))
                         .bg(Cores::preto())
                         .overflow_hidden()
                         .cursor_pointer()
                         // A aberta na ilha leva o anel do destaque.
                         .when(aberta, |s| s.border_2().border_color(Cores::destaque()))
                         .on_click(abrir_ilha)
-                        .child(img(caminho.clone()).size_full().object_fit(ObjectFit::Cover))
+                        .child(img(caminho.clone()).size_full().object_fit(ObjectFit::Contain))
                         // O X num disco escuro no canto, que aparece por inteiro com o ponteiro.
                         .child(
                             div()
@@ -1654,7 +1706,10 @@ impl Janela {
             return (!lista.is_empty()).then_some((sinal, inicio, lista));
         }
         let itens: Vec<Sugestao> = match sinal {
-            '/' => self.catalogo_de(chat).iter().map(sugestao_do_comando).collect(),
+            // No começo, o catálogo inteiro. No meio do texto, só as skills: o Claude Code só
+            // executa comando de barra (/clear, /compact) na primeira palavra, e uma skill citada
+            // no meio da frase o agente ainda entende e aciona.
+            '/' => self.catalogo_de(chat).iter().filter(|c| inicio == 0 || c.skill).map(sugestao_do_comando).collect(),
             _ => return None,
         };
         let lista = menu_sugestoes(itens, digitado, None);
@@ -2464,7 +2519,7 @@ mod testes_sugestoes {
     fn o_gatilho_e_a_ultima_palavra() {
         assert_eq!(gatilho("/comp"), Some(('/', "comp", 0)));
         assert_eq!(gatilho("/compact agora"), None);
-        assert_eq!(gatilho("veja a /barra"), None);
+        assert_eq!(gatilho("veja a /barra"), Some(('/', "barra", 7)));
         assert_eq!(gatilho("#nin"), Some(('#', "nin", 0)));
         assert_eq!(gatilho("mande para #nin"), Some(('#', "nin", 11)));
         assert_eq!(gatilho("fale do @"), Some(('@', "", 8)));
@@ -2712,6 +2767,21 @@ mod testes_nome_modelo {
 }
 
 #[cfg(test)]
+mod testes_da_previa_da_citacao {
+    use super::previa_da_citacao;
+
+    /// A prévia junta as linhas e corta numa palavra, com "…".
+    #[test]
+    fn a_previa_e_corrida_e_corta_numa_palavra() {
+        assert_eq!(previa_da_citacao("uma linha\n\n  e outra"), "uma linha e outra");
+        let longo = "palavra ".repeat(40);
+        let previa = previa_da_citacao(&longo);
+        assert!(previa.ends_with("palavra…"), "{previa}");
+        assert!(previa.chars().count() <= 181);
+    }
+}
+
+#[cfg(test)]
 mod testes_da_citacao {
     use super::com_citacao;
 
@@ -2809,9 +2879,11 @@ mod testes_do_cursor_e_do_catalogo {
         // Depois do espaço, ou antes do sinal, não é a palavra do gatilho.
         assert_eq!(gatilho_em("veja @cent agora", 16), None);
         assert_eq!(gatilho_em("veja @cent", 5), None);
-        // O "/" só vale na primeira palavra, mesmo com o cursor nela, no meio.
+        // O "/" vale em qualquer palavra, também com o cursor no meio dela.
         assert_eq!(gatilho_em("/compact agora", 5), g('/', "comp", 0, 8));
-        assert_eq!(gatilho_em("foo /ba", 7), None);
+        assert_eq!(gatilho_em("foo /ba", 7), g('/', "ba", 4, 7));
+        // No meio do texto, um caminho não abre o menu.
+        assert_eq!(gatilho_em("veja /home/victor", 10), None);
         // Texto com mais de uma linha: a palavra acaba na quebra.
         assert_eq!(gatilho_em("a\n@b\nc", 4), g('@', "b", 2, 4));
         // Cursor no meio de um caractere de dois bytes cai na borda de antes.

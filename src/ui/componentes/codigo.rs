@@ -157,8 +157,11 @@ impl RenderOnce for CaixaDeCodigo {
             .flex_col()
             .rounded(if self.raio_chat { raio::CARTAO } else { raio::CONTROLE })
             .bg(Cores::preto())
+            // Chapada, como o bloco de código do protótipo Linear: o preto da moldura, sem o fio
+            // claro em volta (dono, 27/11/2026: "melhora o bloco de código também"). O traço de 1
+            // continua, na cor do fundo, para as medidas de dentro não mudarem; só o erro o pinta.
             .border_1()
-            .border_color(if self.erro { Cores::tinta_borda(Cores::vermelho()) } else { Cores::borda() })
+            .border_color(if self.erro { Cores::tinta_borda(Cores::vermelho()) } else { Cores::preto() })
             .overflow_hidden()
             .when(com_cabecalho, |caixa| {
                 caixa.child(
@@ -169,6 +172,8 @@ impl RenderOnce for CaixaDeCodigo {
                         .h(r(28.))
                         .pl(dentro_da_borda(12.))
                         .pr(esp::E2)
+                        // O "$" apagado, como o prompt de um terminal; o comando na cor do código.
+                        .children(self.comando.is_some().then(|| div().flex_none().mono_pequeno().text_color(Cores::apagado()).child("$")))
                         .child(
                             div()
                                 .flex_1()
@@ -176,7 +181,7 @@ impl RenderOnce for CaixaDeCodigo {
                                 .truncate()
                                 .mono_pequeno()
                                 .text_color(Cores::codigo())
-                                .children(self.comando.map(|c| format!("$ {c}"))),
+                                .children(self.comando),
                         )
                         .children(self.tempo.map(|t| div().flex_none().metadado().text_color(cor_tempo).child(t)))
                         .children(copiar_no_cabecalho),
@@ -194,9 +199,11 @@ impl RenderOnce for CaixaDeCodigo {
                     .scrollbar(&rolagem, ScrollbarAxis::Both)
                     .flex()
                     .font_family(crate::tema::FONTE_MONO)
+                    // 12/19 na cor da fala, as do bloco de código do protótipo: a saída um degrau
+                    // abaixo do comando.
                     .text_size(r(12.))
-                    .line_height(r(18.))
-                    .text_color(Cores::texto())
+                    .line_height(r(19.))
+                    .text_color(Cores::texto_da_fala())
                     .child(div().flex_none().min_w_full().flex().flex_col().px(dentro_da_borda(12.)).py(esp::E8).whitespace_nowrap()
                     .when(fora > 0, |d| {
                         d.child(

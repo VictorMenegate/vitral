@@ -1,8 +1,8 @@
 use gpui::{
-    Action, AsKeystroke, BoxShadow, Div, FocusHandle, FontWeight, Hsla, InteractiveElement as _,
+    Action, AsKeystroke, Div, FocusHandle, FontWeight, Hsla, InteractiveElement as _,
     IntoElement, KeyBinding, KeyContext, Keystroke, Modifiers, ParentElement as _, Pixels,
-    RenderOnce, SharedString, StyleRefinement, Styled, Window, div, hsla,
-    prelude::FluentBuilder as _, px, relative, rems,
+    RenderOnce, SharedString, StyleRefinement, Styled, Window, div,
+    prelude::FluentBuilder as _, relative, rems,
 };
 
 use crate::{ActiveTheme, StyledExt};
@@ -248,9 +248,10 @@ impl Kbd {
 }
 
 /// Vitral: o desenho único de tecla do Vitral, para cada parte de um atalho ("Ctrl", "N"): 18 de
-/// altura, no mínimo 18 de largura, 4 de folga dos lados, sem borda, em relevo (luz de 1 px em
-/// cima e sombra de 1 px embaixo, por dentro) e a letra em mono 10/14. O app (as dicas, as
-/// buscas, os rodapés) e o kit (a dica, o menu) chamam este, com as cores de cada um.
+/// altura, no mínimo 18 de largura, 4 de folga dos lados, chapada (sem borda nem relevo: a luz
+/// de 1 px em cima e a sombra embaixo liam como contorno; dono, 27/11/2026: "tira esse contorno
+/// do esc") e a letra em mono 10/14. O app (as dicas, as buscas, os rodapés) e o kit (a dica, o
+/// menu) chamam este, com as cores de cada um.
 pub fn desenho_de_teclas(
     partes: Vec<SharedString>,
     fundo: Hsla,
@@ -275,10 +276,6 @@ pub fn desenho_de_teclas(
                 .justify_center()
                 .rounded(raio)
                 .bg(fundo)
-                .shadow(vec![
-                    BoxShadow::new(px(0.), px(1.), hsla(0., 0., 1., 0.16)).inset(),
-                    BoxShadow::new(px(0.), px(-1.), hsla(0., 0., 0., 0.30)).inset(),
-                ])
                 .font_family(fonte_mono.clone())
                 .text_size(z(10.))
                 .line_height(z(14.))

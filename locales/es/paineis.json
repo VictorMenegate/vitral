@@ -233,5 +233,12 @@
  "Sair": "Cerrar sesión",
  "Saindo da conta principal…": "Saliendo de la cuenta principal…",
  "Revisar": "Revisar",
- "Ajustar": "Ajustar"
+ "Ajustar": "Ajustar",
+ "Respondendo": "Respondiendo",
+ "Copiar a imagem (Ctrl+C)": "Copiar la imagen (Ctrl+C)",
+ "Imagem copiada": "Imagen copiada",
+ "Não deu para copiar a imagem": "No se pudo copiar la imagen",
+ "Aproximar e afastar a imagem no visor": "Acercar y alejar la imagen en el visor",
+ "Caber na janela e tamanho real no visor": "Ajustar a la ventana y tamaño real en el visor",
+ "Copiar a imagem do visor": "Copiar la imagen del visor"
 }

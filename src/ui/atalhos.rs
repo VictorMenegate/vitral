@@ -72,6 +72,11 @@ impl Linha {
     }
 }
 
+/// As combinações da tabela que são só modificadores, sem tecla: o keymap do GPUI não as conhece,
+/// e quem as escuta é a janela (`Janela::modificadores_mudaram`). Ficam na tabela para aparecer
+/// na lista de atalhos e na paleta.
+pub const SO_MODIFICADORES: &[&str] = &["ctrl-alt"];
+
 /// Registra as teclas no keymap e devolve as linhas da lista, de uma tabela só. A ordem importa:
 /// uma combinação registrada depois ganha de uma anterior com o mesmo alcance (o Shift+Tab da
 /// caixa ganha do recuo de linha do campo).
@@ -79,7 +84,14 @@ macro_rules! tabela {
     ($($teclas:literal, $acao:expr, $contexto:expr, $grupo:expr, $rotulo:expr, $exibir:expr;)*) => {
         /// Liga todos os atalhos do app (chamada uma vez, na abertura).
         pub fn ligar(cx: &mut App) {
-            cx.bind_keys([$(KeyBinding::new($teclas, $acao, $contexto)),*]);
+            let mut teclas: Vec<KeyBinding> = Vec::new();
+            $(
+                // O que é só modificadores não é uma tecla do keymap (ver `SO_MODIFICADORES`).
+                if !SO_MODIFICADORES.contains(&$teclas) {
+                    teclas.push(KeyBinding::new($teclas, $acao, $contexto));
+                }
+            )*
+            cx.bind_keys(teclas);
         }
 
         /// As linhas da tabela, na ordem em que foram registradas.
@@ -148,6 +160,12 @@ tabela! {
     // No visor de imagem (o Esc que fecha é o do diálogo).
     "left", visor_imagem::ImagemAnterior, Some("Visor"), Grupo::Conversa, "Imagem anterior e seguinte no visor", "←+→";
     "right", visor_imagem::ImagemSeguinte, Some("Visor"), Grupo::Conversa, "", "";
+    "+", visor_imagem::AproximarImagem, Some("Visor"), Grupo::Conversa, "Aproximar e afastar a imagem no visor", "+ e −";
+    "=", visor_imagem::AproximarImagem, Some("Visor"), Grupo::Conversa, "", "";
+    "-", visor_imagem::AfastarImagem, Some("Visor"), Grupo::Conversa, "", "";
+    "0", visor_imagem::CaberImagem, Some("Visor"), Grupo::Conversa, "Caber na janela e tamanho real no visor", "0 e 1";
+    "1", visor_imagem::TamanhoRealImagem, Some("Visor"), Grupo::Conversa, "", "";
+    "ctrl-c", visor_imagem::CopiarImagem, Some("Visor"), Grupo::Conversa, "Copiar a imagem do visor", "Ctrl+C";
 
     // ---------- conversas ----------
     // O Ctrl+Z é do texto dentro de um campo (o "!Input" o tira de quem está escrevendo): fora dele
@@ -165,7 +183,9 @@ tabela! {
 
     // ---------- painéis ----------
     "ctrl-j", super::AlternarPainel, None, Grupo::Paineis, "Mostrar ou fechar o painel da direita", "";
-    "ctrl-.", super::AlternarFoco, None, Grupo::Paineis, "Modo foco: só as conversas", "";
+    // Ctrl+Alt, apertados e soltos sem outra tecla (dono, 27/11/2026: "faz ser ctrl + alt pra o
+    // modo foco"; era Ctrl+.).
+    "ctrl-alt", super::AlternarFoco, None, Grupo::Paineis, "Modo foco: só as conversas", "Ctrl+Alt";
     "alt-1", super::IrParaPainel1, None, Grupo::Paineis, "Ir ao painel 1 a 4", "Alt+1…4";
     "alt-2", super::IrParaPainel2, None, Grupo::Paineis, "", "";
     "alt-3", super::IrParaPainel3, None, Grupo::Paineis, "", "";

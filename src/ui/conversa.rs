@@ -361,7 +361,7 @@ fn menu_do_painel(
 ) -> PopupMenu {
     struct Dados {
         chat: String,
-        /// O modo foco (Ctrl+.) ligado.
+        /// O modo foco (Ctrl+Alt) ligado.
         foco: bool,
         direita_aberta: bool,
         /// O que a direita mostra (o arquivo aberto ou Este chat).
@@ -401,7 +401,7 @@ fn menu_do_painel(
     // protótipo (o custo mora no popover do contexto).
     let mut menu = menu.min_w(tam(window, 272.)).max_w(tam(window, 320.));
     let _ = d.rotulo;
-    // Linear (25/11/2026): o Modo foco (Ctrl+.) e o painel da direita em todo painel; saíram o
+    // Linear (25/11/2026): o Modo foco (Ctrl+Alt) e o painel da direita em todo painel; saíram o
     // Maximizar (é o clique duplo na aba) e o "Nova conversa ao lado". O antigo "modo foco em todos
     // os chats", que esconde as ferramentas, continua na paleta como "Esconder ferramentas".
     menu = menu
@@ -814,7 +814,8 @@ impl Janela {
                     // só o painel ativo a tem; nos outros o pé fica escuro. Troca em 420 ms, como
                     // no protótipo (26/11/2026).
                     let (alvo, duracao) = if ativo { (1f32, movimento::LUZ) } else { (0f32, movimento::LUZ) };
-                    let luz = movimento::valor(("doca-ativa", painel_id as usize), alvo, duracao, Curva::Mover, window, cx);
+                    // No painel que acabou de abrir ela sobe do zero, depois do fade do painel.
+                    let luz = movimento::valor_desde(("doca-ativa", painel_id as usize), if painel_novo { 0. } else { alvo }, alvo, duracao, Curva::Mover, window, cx);
                     div()
                         .relative()
                         .flex_none()
@@ -827,16 +828,21 @@ impl Janela {
                                     .top_0()
                                     .left_0()
                                     .size_full()
-                                    .opacity(luz)
                                     // O campo INTEIRO do metal encolhido para cobrir a doca (as
                                     // bolhas clara, azul e escura lado a lado), com um pouco do
                                     // azul do destaque por cima (a bolha clara fica azul-céu, não
-                                    // cinza) e o grão leve.
-                                    .child(abertura_lisa(
+                                    // cinza) e o grão leve. Só ele esmaece: a opacidade do GPUI
+                                    // vale para cada peça, não para o conjunto, e com ela em volta
+                                    // de tudo os degradês que escondem a beirada de cima também
+                                    // ficavam meio transparentes no caminho. O metal aparecia
+                                    // através deles, numa linha reta no alto da doca, pior no chat
+                                    // novo, onde ela é alta (dono, 27/11/2026: "fica uma linha em
+                                    // cima cortando ele").
+                                    .child(div().absolute().top_0().left_0().size_full().opacity(luz).child(abertura_lisa(
                                         Encaixe::Cobrir,
                                         Some(Cores::destaque().opacity(0.2)),
                                         Corners { bottom_left: raio_doca, ..Default::default() },
-                                    ))
+                                    )))
                                     // O escuro do cartão some devagar, da beirada de cima até o pé
                                     // (duas camadas de degradê dão a curva): o metal é uma luz que
                                     // vem de baixo, não uma faixa. Foi o desenho que o dono aprovou

@@ -917,7 +917,8 @@ Opus 5.5"; nos chips a marca é sempre o glifo, `Marca::glifo`, e o disco fica n
 popovers e no anel de uso), **esforço** (barrinhas em ciano, de "Auto" a "Máximo", na medida de um ícone: barras de 2 com
 vão de 2, de 4 a 12 de altura) e **conta** (o ícone na cor do
 uso de 5 h; só com mais de uma conta). O que segue o padrão da pasta fica em tom tênue. À direita
-ficam o anel do contexto (com a fenda embaixo e a porcentagem ao lado, "24%", em mono; âmbar a
+ficam o anel do contexto, só sem a barra de baixo à vista (o modo foco, a lista recolhida): com ela,
+a pílula "Contexto" da barra mostra a porcentagem e abre o mesmo uso da conversa (a porcentagem ao lado do anel, "24%", em mono; âmbar a
 70%, vermelho a 90%; também na caixa estreita, mais justa, porque o anel sozinho parecia o anel
 girando de "rodando"; o clique abre o uso da conversa: em cima o
 contexto e o custo, "Contexto 31% · US$ 1,84", embaixo o modelo, a conta e os tokens, e no rodapé
@@ -1508,7 +1509,8 @@ na descrição ("(user)", "(project)", "(plugin) …", `builtin`) e o arquivo se
 `.claude/skills` da pasta e das pastas de cima, na conta (`CLAUDE_CONFIG_DIR` ou `~/.claude`) e nos
 plugins de `installed_plugins.json`. Vale 10 minutos (`precisa_perguntar`) e é refeito ao trocar o
 agente do chat. O menu abre para a palavra sob o cursor, e não só para a última (`gatilho_em`): o
-`/` só na primeira palavra, o `@` e o `#` em qualquer uma; escolher troca a palavra inteira
+`/`, o `@` e o `#` em qualquer palavra (no meio do texto o `/` só oferece as skills, e um caminho
+como `/home/x` não abre o menu); escolher troca a palavra inteira
 (`trocar_palavra`) e passa pelo espaço que já existia. Caminho com espaço vai entre aspas
 (`@"minha pasta/a b.rs"`, também em `mencao.rs`). Na caixa estreita (3 painéis a 150%) o chip do
 modelo mantém o nome da família ("Opus", "Fable"); modo e esforço ficam só com o ícone, e o nome
@@ -2124,7 +2126,7 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
   (**Mostrar Este chat** ou **Mostrar o arquivo aberto**, marcado quando ela está aberta, com o
   Ctrl+J), **Nova conversa ao lado** e o menu da conversa (renomear, fixar, arquivar). Na aba, o
   balão do chat, com a pasta na dica ("Direto em ~/Projetos/loja", "Sem pasta: um chat numa pasta
-  vazia só dele"). O custo ("US$ 0,42") está no anel do contexto da caixa. Não há linha entre o
+  vazia só dele"). O custo ("US$ 0,42") está no uso da conversa, que a pílula "Contexto" da barra de baixo abre (ou o anel da caixa, sem a barra). Não há linha entre o
   cabeçalho e as mensagens, nem com a conversa rolada. Em painel estreito o modo foco vai para o
   menu do painel; no mais estreito, com vários painéis, o número toma o lugar do símbolo da aba.
   Nenhum texto é cortado no meio.

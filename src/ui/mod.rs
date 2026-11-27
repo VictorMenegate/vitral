@@ -108,7 +108,7 @@ actions!(vitral, [EditarUltima, CorrigirUltima, RecordarAnterior, RecordarSeguin
 actions!(vitral, [AbrirMenuDoPainel]);
 // Ctrl+I: o quadro de ideias.
 actions!(vitral, [AbrirQuadroDeIdeias]);
-// Linear (25/11/2026): Ctrl+. deixa só as conversas na janela.
+// Linear (25/11/2026): o modo foco deixa só as conversas na janela (Ctrl+Alt; era Ctrl+.).
 actions!(vitral, [AlternarFoco]);
 // Teclado e organização (24/11/2026): Alt+↑/↓ pulam de mensagem sua em mensagem sua; PgUp/PgDn
 // rolam a conversa; Ctrl+Shift+Enter maximiza o painel; Alt+PgUp/PgDn levam a aba ao painel
@@ -587,7 +587,7 @@ pub struct Janela {
     painel: bool,
     /// Lista da esquerda (conversas/arquivos) aberta ou recolhida.
     lista: bool,
-    /// Modo foco (Linear, 25/11/2026, Ctrl+.): só as conversas, sem a lista, a barra de baixo e o
+    /// Modo foco (Linear, 25/11/2026; Ctrl+Alt): só as conversas, sem a lista, a barra de baixo e o
     /// painel da direita. Guarda como a lista e o painel estavam, para voltar igual.
     antes_do_foco: Option<(bool, bool)>,
     /// O trilho de uso (os anéis do canto, à vista no modo foco) pode ser arrastado: quanto ele
@@ -634,6 +634,11 @@ pub struct Janela {
     /// Desde quando o Ctrl está apertado (para os números só aparecerem segurando, depois de uns
     /// 150 ms); `None` com ele solto.
     ctrl_desde: Option<std::time::Instant>,
+    /// O Ctrl+Alt do modo foco: armado quando os dois estão apertados, sozinhos, e desarmado por
+    /// qualquer tecla ou clique no meio (aí é outro atalho, como o Ctrl+Alt+A). Soltar com ele
+    /// armado alterna o modo foco. E os modificadores do evento anterior.
+    foco_armado: bool,
+    modificadores: gpui_kit::Modifiers,
     _gravar_arranjo: Option<Task<()>>,
     /// A imagem anexada que está aberta na "ilha" em cima da caixa (o chat e o arquivo), e a que
     /// o clique fora acabou de fechar (para o clique na própria pílula fechar, e não reabrir).
@@ -1109,6 +1114,8 @@ impl Janela {
             arranjo: None,
             arranjo_ligado: false,
             ctrl_desde: None,
+            foco_armado: false,
+            modificadores: Default::default(),
             _gravar_arranjo: None,
             confirmando_saida: false,
             ultrathink: HashSet::new(),
@@ -1297,7 +1304,7 @@ impl Janela {
         cx.notify();
     }
 
-    /// Modo foco (Linear, 25/11/2026, Ctrl+.): só as conversas, sem a lista, a barra de baixo e o
+    /// Modo foco (Linear, 25/11/2026; Ctrl+Alt): só as conversas, sem a lista, a barra de baixo e o
     /// painel da direita; o uso dos agentes flutua no canto. De novo, volta como estava.
     pub(super) fn alternar_foco(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((lista, painel)) = self.antes_do_foco.take() {
@@ -1739,6 +1746,24 @@ impl Janela {
             }
         });
         cx.notify();
+    }
+
+    /// O Ctrl+Alt alterna o modo foco (dono, 27/11/2026): arma quando os dois ficam apertados sem
+    /// mais nenhum modificador, vindo de menos (não de soltar o Shift de um Ctrl+Alt+Shift), e
+    /// dispara quando um deles solta, se nenhuma tecla nem clique passou no meio. Só com a janela
+    /// ativa e sem diálogo: um atalho do sistema com Ctrl+Alt costuma levar o foco embora.
+    fn modificadores_mudaram(&mut self, agora: gpui_kit::Modifiers, window: &mut Window, cx: &mut Context<Self>) {
+        let so_ctrl_alt = |m: &gpui_kit::Modifiers| m.control && m.alt && !m.shift && !m.platform && !m.function;
+        let antes = std::mem::replace(&mut self.modificadores, agora);
+        if so_ctrl_alt(&agora) {
+            self.foco_armado = !(antes.shift || antes.platform || antes.function);
+            return;
+        }
+        let armado = std::mem::take(&mut self.foco_armado);
+        let soltou = !(agora.shift || agora.platform || agora.function);
+        if armado && soltou && window.is_window_active() && !window.has_active_dialog(cx) {
+            self.alternar_foco(window, cx);
+        }
     }
 
     /// O Ctrl foi apertado ou solto. Com "Só segurando Ctrl", os números das abas e da lista
@@ -2385,7 +2410,13 @@ impl Janela {
             .track_focus(&self.foco)
             // Digitar com o foco fora de campo escreve na caixa do painel ativo (item 1.1).
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| this.tecla_na_janela(ev, window, cx)))
-            .on_modifiers_changed(cx.listener(|this, ev: &ModifiersChangedEvent, _, cx| this.ctrl_mudou(ev.modifiers.control, cx)))
+            .on_modifiers_changed(cx.listener(|this, ev: &ModifiersChangedEvent, window, cx| {
+                this.ctrl_mudou(ev.modifiers.control, cx);
+                this.modificadores_mudaram(ev.modifiers, window, cx);
+            }))
+            // Uma tecla ou um clique com o Ctrl+Alt apertado é outro atalho: o modo foco desarma.
+            .capture_key_down(cx.listener(|this, _: &KeyDownEvent, _, _| this.foco_armado = false))
+            .capture_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, _, _| this.foco_armado = false))
             .on_action(cx.listener(|this, _: &NovaConversa, window, cx| this.novo_chat_direto(window, cx)))
             // O Ctrl+K seleciona o termo anterior: o que se digita troca a busca, em vez de se
             // somar a ela ("WMSPesagem"). O Esc da lista, que também foca a busca, não seleciona.

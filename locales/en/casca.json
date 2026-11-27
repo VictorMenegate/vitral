@@ -427,5 +427,6 @@
  "Voltar ao título de antes": "Back to the previous title",
  "Limpar a conversa (/clear)": "Clear the conversation (/clear)",
  "IA": "AI",
- "Apagar…": "Delete…"
+ "Apagar…": "Delete…",
+ "Contexto do chat aberto: {usados} de {janela}": "Context of the open chat: {usados} of {janela}"
 }

@@ -119,7 +119,7 @@ impl Direto {
             NovoChatEmOutraPasta => tr!("Novo chat em outra pasta…").to_string(),
             Importar => tr!("Importar do Claude Code…").to_string(),
             // O antigo "modo foco": esconde as ferramentas em todos os chats. O nome "Modo foco" é do
-            // Ctrl+. desde o Linear (25/11/2026).
+            // Ctrl+Alt (era Ctrl+. no Linear de 25/11/2026).
             ModoFoco if chat.is_some_and(|c| c.modo_foco) => tr!("Mostrar as ferramentas (todos os chats)").to_string(),
             ModoFoco => tr!("Esconder ferramentas (todos os chats)").to_string(),
             PastaDeTrabalho => tr!("Escolher a pasta de trabalho…").to_string(),

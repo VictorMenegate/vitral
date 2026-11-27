@@ -3,6 +3,30 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.13.1
+
+Conserta a 0.13.0, que fechava sozinha, e traz ajustes de desenho e de uso.
+
+- **Fechava em qualquer clique.** Com uma conversa importada do Claude Code aberta, e duas ou
+  mais chamadas seguidas no histórico dela, o Vitral caía a cada desenho da conversa. Consertado.
+- **Modo foco.** O atalho passa a ser Ctrl+Alt, apertados e soltos sem outra tecla (era Ctrl+.).
+- **Contexto.** Com a barra de baixo à vista, a porcentagem sai da caixa de mensagem e a pílula
+  "Contexto" da barra abre o uso da conversa, com o Compactar. Sem a barra (o modo foco), o anel
+  continua na caixa.
+- **Menu "/".** Abre em qualquer palavra da mensagem, não só na primeira. No meio do texto ele
+  oferece as skills; os comandos de barra continuam valendo só no começo.
+- **Trilha do turno.** Sai o cartão de fio fino em volta do grupo de chamadas. O "Pensando por"
+  fica em cima da trilha do turno, ligado a ela por um fio. O ponto que pulsa ficou mais visível.
+- **Este chat.** Ao trocar de chat, os grupos do painel entram um depois do outro.
+- **Desenho.** As teclas das dicas sem o relevo em volta; o bloco de código, a saída de comando e
+  o diff chapados, sem o fio claro; a mensagem presa no alto volta a ser um balão como os da
+  conversa; a citação do "Responder" redesenhada.
+- **Visualizador de imagens.** Volta ao desenho de antes, com + e − para o zoom, 0 para caber na
+  janela, 1 para o tamanho real, Ctrl+C e o botão Copiar, e o botão que abre a pasta.
+- **Conversa nova.** A tela de começo cabe no painel estreito (os botões saíam cortados), não
+  pisca mais quando a lista recolhe, e o brilho embaixo da caixa não deixa mais uma linha reta
+  no alto enquanto acende.
+
 ## 0.13.0
 
 Contas extras no Windows, economia de tokens, o título pelo modelo escolhido, uma trilha do turno

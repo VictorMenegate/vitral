@@ -144,6 +144,11 @@ pub struct Painel {
     pub empurrao_da_presa: Pixels,
     /// A altura da faixa presa no último quadro em que ela apareceu (medida no desenho dela).
     pub altura_da_presa: std::rc::Rc<std::cell::Cell<Pixels>>,
+    /// De qual chat a tela "O que vamos fazer?" já entrou neste painel, e quando. As linhas dela
+    /// entram uma depois da outra só nessa primeira vez: a entrada toca "uma vez por montagem", e
+    /// a lista que sai ou volta (o modo foco, o Ctrl+B) remonta as conversas, o que fazia a tela
+    /// piscar a cada ida e volta (dono, 27/11/2026: "essa parte fica piscando").
+    pub inicial_em: std::cell::RefCell<Option<(String, std::time::Instant)>>,
     /// A área de mensagens como vista em cache (ver `vista_mensagens`).
     pub vista: Entity<super::vista_mensagens::VistaDasMensagens>,
     /// O cartão do painel e o cabeçalho dele como vistas em cache (ver `vista_mensagens`).
@@ -602,6 +607,7 @@ impl Janela {
             presa_vista: false,
             empurrao_da_presa: px(0.),
             altura_da_presa: Default::default(),
+            inicial_em: Default::default(),
             alturas: Default::default(),
         };
         if let Some(chat) = chat {
