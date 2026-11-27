@@ -2982,6 +2982,21 @@ fn linha_de_log<E: Styled>(linha: E) -> E {
     linha.h(ALTURA_DO_LOG).mx(r(-8.)).px(esp::E8).gap(linear::PASSO_VAO).rounded(raio::CONTROLE).metadado().text_size(r(12.5))
 }
 
+/// Onde começa o turno do grupo de chamadas que abre no item `primeira` e se o agente já falou
+/// nesse turno antes dele. `primeira` nem sempre é um índice de `itens`: o histórico trazido do
+/// Claude Code numera os dele a partir de 2^40 (`historico::BASE`), e fatiar `itens` com esse
+/// número derrubava o app a cada desenho da conversa (a 0.13.0 fechava em qualquer clique com uma
+/// conversa importada aberta; queda.log do dono, 27/11/2026). Fora de `itens`, o grupo é passado:
+/// não é do turno que roda.
+fn turno_antes_do_grupo(itens: &[Item], primeira: usize) -> (usize, bool) {
+    let Some(antes) = itens.get(..primeira) else {
+        return (itens.len(), false);
+    };
+    let inicio = antes.iter().rposition(|i| matches!(i, Item::Usuario { .. })).map_or(0, |u| u + 1);
+    let ja_falou = antes[inicio..].iter().any(|i| matches!(i, Item::Assistente { texto, .. } if !texto.trim().is_empty()));
+    (inicio, ja_falou)
+}
+
 /// A coluna de 16 do ícone de uma linha da trilha, na primeira borda.
 fn coluna_do_icone() -> Div {
     div().flex_none().size(r(14.)).flex().items_center().justify_center()
@@ -3582,11 +3597,8 @@ impl Janela {
         // O agente já falou neste turno, antes deste grupo: o grupo começa recolhido, com só a linha
         // viva à vista, em vez de a trilha abrir e fechar a cada fala (o "Chain of Thought" no nível
         // de Linear/v0/Cursor, 27/11/2026). A escolha feita à mão vale sempre.
-        let inicio_do_turno = contexto.chat.itens[..chamadas[0].0].iter().rposition(|i| matches!(i, Item::Usuario { .. })).map_or(0, |u| u + 1);
-        let ja_falou = contexto.chat.itens[inicio_do_turno..chamadas[0].0]
-            .iter()
-            .any(|i| matches!(i, Item::Assistente { texto, .. } if !texto.trim().is_empty()));
-        let do_turno_atual = contexto.rodando && chamadas[0].0 >= inicio_do_turno && contexto.chat.itens.len().saturating_sub(chamadas[0].0) < 200;
+        let (inicio_do_turno, ja_falou) = turno_antes_do_grupo(&contexto.chat.itens, chamadas[0].0);
+        let do_turno_atual = contexto.rodando && (inicio_do_turno..contexto.chat.itens.len()).contains(&chamadas[0].0) && contexto.chat.itens.len() - chamadas[0].0 < 200;
         let aberto = !recolhivel || self.expandidos.contains(&chave)
             || (ao_vivo && !ja_falou && !self.expandidos.contains(&format!("{chave}:fechado")));
         let mostradas = if aberto {
@@ -6679,6 +6691,7 @@ mod testes {
     }
     // Sem `super::*`: o `gpui_kit::*` lá de cima traz um `test` que troca o `#[test]`.
     use super::{
+        turno_antes_do_grupo,
         Bloco, ClasseAvisoChat, comando_de_barra, detalhe_da_chamada, entrada_da_chamada, entrada_do_bloco, entrada_do_cabecalho, espaco_antes,
         com_quebras_duras, dica_da_pilha, linhas_da_edicao, resposta_repete_o_erro, texto_da_citacao, trechos_com_citacoes, marco_da_conversa, nome_e_id, previa, resumo_da_trilha, erros::partes_do_erro,
         resumo_das_chamadas, sem_marcacao,
@@ -7072,6 +7085,16 @@ mod testes {
         assert_eq!(com_quebras_duras(tabela), tabela);
         // A linha que já termina com a quebra dura não ganha outra.
         assert_eq!(com_quebras_duras("um  \ndois"), "um  \ndois");
+    }
+
+    #[test]
+    fn grupo_do_historico_importado_nao_fatia_a_conversa() {
+        let rodar = ferramenta("Bash", "Bash · cargo test", Some("ok"), false);
+        let itens = [rodar.clone(), rodar];
+        // O índice de um item do histórico trazido do Claude Code (2^40 + i) não cabe em `itens`.
+        assert_eq!(turno_antes_do_grupo(&itens, (1 << 40) + 6452), (2, false));
+        assert_eq!(turno_antes_do_grupo(&itens, 1), (0, false));
+        assert_eq!(turno_antes_do_grupo(&[], 0), (0, false));
     }
 
     #[test]

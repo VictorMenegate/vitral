@@ -81,8 +81,7 @@ public static class Tela {
 }
 '@
 
-# Depois de cada clique: se o Vitral saiu, o código de saída (0xC00000FD é a pilha estourada;
-# 27/11/2026, a 0.13.0 fechava no primeiro clique no Windows).
+# Depois de cada clique: se o Vitral saiu, o código de saída (0xC00000FD é a pilha estourada).
 function Saiu([string] $quando) {
     $p.Refresh()
     if ($p.HasExited) {

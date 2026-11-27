@@ -4,31 +4,11 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    pilha_do_windows();
     juntar_as_traducoes();
     // O `cfg` de um build.rs é o do sistema que compila; o Vitral do Windows só compila nele (os
     // shaders do GPUI precisam do fxc.exe).
     #[cfg(windows)]
     recursos_do_windows();
-}
-
-/// No Windows, a thread principal tem 1 MB de pilha (no Linux, 8 MB), e a montagem da interface
-/// do GPUI é recursiva: com a árvore mais funda da 0.13.0 (as animações embrulham linhas, colunas e
-/// seções), ela estourava e o Vitral fechava no primeiro clique, sem pânico e sem `queda.log`
-/// (dono, 27/11/2026: "no Windows ele tá fechando sozinho quando clica ... em qualquer lugar").
-/// 8 MB, como no Linux (e como o Zed faz no Windows). Pelo alvo, não pelo sistema que compila.
-fn pilha_do_windows() {
-    const PILHA: u32 = 8 * 1024 * 1024;
-    let alvo = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let ambiente = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
-    if alvo != "windows" {
-        return;
-    }
-    if ambiente == "msvc" {
-        println!("cargo:rustc-link-arg-bins=/STACK:{PILHA}");
-    } else {
-        println!("cargo:rustc-link-arg-bins=-Wl,--stack,{PILHA}");
-    }
 }
 
 /// As traduções (`src/i18n.rs`): cada língua tem uma pasta `locales/<língua>/` com um JSON por
