@@ -745,7 +745,10 @@ mod testes {
 
 /// O ponto da etapa ativa: o miolo de 6 px na cor e um halo que cresce e some a cada batida.
 fn pintar_ponto(b: Bounds<Pixels>, cor: Hsla, fase: f32, window: &mut Window) {
-    let centro = b.center();
+    // Um pouco abaixo do meio do lugar: o centro que o olho lê numa linha de texto é o das
+    // minúsculas, e no meio exato o ponto parecia alto (dono, 27/11/2026: "o ponto pulsando não tá
+    // centralizado certo"; no print dele, 2 px acima). Proporcional, para valer em qualquer zoom.
+    let centro = point(b.center().x, b.center().y + b.size.height * 0.12);
     let miolo = px(3.);
     let halo = px(3. + 5. * fase);
     window.paint_quad(fill(Bounds::new(point(centro.x - halo, centro.y - halo), size(halo * 2., halo * 2.)), cor.opacity(0.35 * (1. - fase))).corner_radii(halo));

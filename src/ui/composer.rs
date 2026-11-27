@@ -763,9 +763,11 @@ fn envio(rodando: bool, vazio: bool) -> Envio {
     }
 }
 
-/// A miniatura de uma imagem anexada na caixa: 56 de altura, até 96 de largura.
-const ALTURA_DA_MINIATURA: f32 = 56.;
-const LARGURA_DA_MINIATURA: f32 = 96.;
+/// A miniatura de uma imagem anexada na caixa: 40 de altura, até 120 de largura, com a imagem
+/// inteira dentro (era 56 e cortava: o print largo e baixo virava um pedaço ampliado do meio; dono,
+/// 27/11/2026: "ficou muito grande isso").
+const ALTURA_DA_MINIATURA: f32 = 40.;
+const LARGURA_DA_MINIATURA: f32 = 120.;
 
 impl Janela {
     /// A caixa de mensagem do painel, em moldura dupla (a base AI Input With Loading): por fora,
@@ -1577,15 +1579,15 @@ impl Janela {
                         .relative()
                         .flex_none()
                         .w(r(largura_mini.max(ALTURA_DA_MINIATURA)))
-                        .h(r(altura_mini.max(ALTURA_DA_MINIATURA)))
-                        .rounded(raio::de(14.))
+                        .h(r(ALTURA_DA_MINIATURA))
+                        .rounded(raio::de(12.))
                         .bg(Cores::preto())
                         .overflow_hidden()
                         .cursor_pointer()
                         // A aberta na ilha leva o anel do destaque.
                         .when(aberta, |s| s.border_2().border_color(Cores::destaque()))
                         .on_click(abrir_ilha)
-                        .child(img(caminho.clone()).size_full().object_fit(ObjectFit::Cover))
+                        .child(img(caminho.clone()).size_full().object_fit(ObjectFit::Contain))
                         // O X num disco escuro no canto, que aparece por inteiro com o ponteiro.
                         .child(
                             div()
