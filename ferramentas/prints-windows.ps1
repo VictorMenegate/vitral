@@ -81,6 +81,15 @@ public static class Tela {
 }
 '@
 
+# Depois de cada clique: se o Vitral saiu, o código de saída (0xC00000FD é a pilha estourada;
+# 27/11/2026, a 0.13.0 fechava no primeiro clique no Windows).
+function Saiu([string] $quando) {
+    $p.Refresh()
+    if ($p.HasExited) {
+        Anotar ("o Vitral saiu {0}: código 0x{1:X8}" -f $quando, $p.ExitCode)
+    }
+}
+
 function Print([string] $nome) {
     $tela = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
     $imagem = New-Object System.Drawing.Bitmap $tela.Width, $tela.Height
@@ -154,6 +163,7 @@ if ($achadas.ContainsKey(20)) {
 if ($achadas.ContainsKey(9)) {
     [Tela]::Clicar($achadas[9][0], $achadas[9][1], 1)
     Start-Sleep -Seconds 3
+    Saiu 'depois do clique no □'
     Anotar ("clique no □: maximizada = {0}" -f [Tela]::IsZoomed($janela))
     Print '03-maximizada'
     [void][Tela]::GetWindowRect($janela, [ref] $r)
@@ -161,6 +171,7 @@ if ($achadas.ContainsKey(9)) {
     Anotar ("área no meio da faixa maximizada: {0}" -f [Tela]::Area($janela, $meio, $r.Top + 28))
     [Tela]::Clicar($meio, $r.Top + 28, 2)
     Start-Sleep -Seconds 3
+    Saiu 'depois do clique duplo na faixa'
     Anotar ("clique duplo na faixa: maximizada = {0}" -f [Tela]::IsZoomed($janela))
     Print '04-restaurada'
 } else {
@@ -171,9 +182,11 @@ if ($achadas.ContainsKey(9)) {
 [void][Tela]::GetWindowRect($janela, [ref] $r)
 [Tela]::Clicar($r.Left + 200, $r.Top + 330, 1)
 Start-Sleep -Seconds 4
+Saiu 'depois do clique na conversa'
 Print '05-conversa'
 [Tela]::Clicar($r.Left + 200, $r.Top + 140, 1)
 Start-Sleep -Seconds 4
+Saiu 'depois do clique na outra conversa'
 Print '06-outra-conversa'
 
 # O × (a janela voltou para o mesmo lugar depois de restaurada).
