@@ -1108,24 +1108,23 @@ impl Janela {
                     })
                     .child(
                     div().map(coluna_de_leitura).child(
-                        // Uma barra, e não outro balão: no azul dos balões, a mensagem seguinte
-                        // chegando por baixo parecia uma segunda bolha grudada nela (dono,
-                        // 27/11/2026: "tá bugado as mensagens em cima, melhora mais"). No preto dos
-                        // menus, numa linha, com a seta de subir até ela.
-                        h_flex()
+                        // O mesmo desenho do balão da conversa: a cor cheia, o canto, a folga e a
+                        // letra dele, em até duas linhas. A barra preta de uma linha da 0.13.0 saiu
+                        // (dono, 27/11/2026: "ainda não voltou pra como era aqui ... tô falando do
+                        // design ser igual da normal").
+                        div()
                             .id(("mensagem-presa", painel_id as usize))
                             .relative()
                             .w_full()
-                            .h(r(36.))
-                            .gap(esp::E8)
-                            .px(esp::E12)
-                            .rounded(raio::CONTROLE)
+                            // A folga dos balões, também no painel mínimo (lá ficava 2 px fora).
+                            .px(r(folga_do_balao(nivel)))
+                            .py(linear::BALAO_ALTO)
+                            // O mesmo canto do balão na conversa (dono, 26/11/2026: "o border
+                            // radius dos dois tá diferente"; era o da peça, 20).
+                            .rounded(linear::RAIO_DO_BALAO)
                             .cursor_pointer()
-                            .bg(Cores::preto())
-                            .hover(|s| s.bg(Cores::preto().blend(Cores::hover())))
-                            .child(div().flex_none().w(px(3.)).h(r(16.)).rounded_full().bg(Cores::balao()))
-                            .child(div().flex_1().min_w_0().truncate().text_size(r(13.)).text_color(Cores::texto_da_fala()).child(texto))
-                            .child(icone_de(Lucide::CornerLeftUp, 14.).text_color(Cores::tenue()))
+                            .bg(Cores::balao())
+                            .child(div().relative().fala().text_color(Cores::texto_do_balao()).line_clamp(2).child(texto))
                             .dica_no_ponteiro(|window, cx| Tooltip::new(crate::tr!("Ir até esta mensagem")).build(window, cx))
                             .on_click(move |_, _, cx| {
                                 let _ = janela.update(cx, |j, cx| j.ir_para_a_mensagem(painel_id, i, alto, cx));
