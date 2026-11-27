@@ -18,7 +18,9 @@ use gpui_kit::*;
 
 use super::{
     Janela,
-    componentes::{EstadoDaMoldura, LarguraPainel, TamanhoBotao, azulejo, botao_claro, botao_fantasma, miolo_da_moldura, moldura_dupla},
+    componentes::{
+        EstadoDaMoldura, LarguraPainel, TamanhoBotao, azulejo, botao_claro, botao_fantasma, miolo_da_moldura, moldura_dupla,
+    },
     mensagens::{icone_de, minima},
 };
 use crate::tema::{Cores, Lucide, Tipo as _, esp, halo_foco, r, raio};
@@ -159,21 +161,26 @@ pub(super) struct EstadoDaPergunta {
 /// sobravam só os botões.
 const MINIMO_DA_PERGUNTA: Rems = r(240.);
 
-/// O marcador de uma opção: redondo na escolha única, quadrado quando dá para marcar várias.
-fn marcador(marcado: bool, varias: bool) -> Div {
-    let raio_do_marcador = if varias { px(5.) } else { raio::PILULA };
-    div()
+/// O selo à esquerda de uma opção: o número dela (que também responde, escrito na caixa), em
+/// azul quando escolhida; na que aceita várias, o certo no lugar do número quando marcada. A
+/// "Outra…" leva o lápis (dono, 27/11/2026: "melhora o design e usabilidade de quando a IA pede
+/// pra responder entre alternativas").
+fn selo_da_opcao(numero: Option<usize>, marcado: bool, varias: bool) -> Div {
+    let base = div()
         .flex_none()
-        .size(r(16.))
-        .mt(r(2.))
+        .size(r(20.))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(raio_do_marcador)
-        .border_1()
-        .map(|s| if marcado { s.bg(Cores::claro()).border_color(Cores::claro()) } else { s.border_color(Cores::borda_forte()) })
-        .when(marcado && varias, |s| s.child(icone_de(Lucide::Check, 12.).text_color(Cores::sobre_cor())))
-        .when(marcado && !varias, |s| s.child(div().size(r(6.)).rounded(raio::PILULA).bg(Cores::sobre_cor())))
+        .rounded(raio::de(20.))
+        .text_size(r(11.5))
+        .font_weight(FontWeight::SEMIBOLD);
+    let base = if marcado { base.bg(Cores::destaque()).text_color(Cores::sobre_cor()) } else { base.bg(Cores::recuo()).text_color(Cores::tenue()) };
+    match numero {
+        _ if marcado && varias => base.child(icone_de(Lucide::Check, 12.)),
+        Some(n) => base.child(n.to_string()),
+        None => base.child(icone_de(Lucide::Pencil, 11.)),
+    }
 }
 
 impl Janela {
@@ -294,12 +301,17 @@ impl Janela {
             let feitas = respondidas(perguntas, estado.map(|e| e.escolhas.as_slice()).unwrap_or_default(), &self.outras_da_pergunta(id, cx));
             tr!("{feitas} de {total} respondidas", feitas = feitas, total = perguntas.len()).to_string()
         });
+        // Uma pergunta só, de escolha única e com opções: o clique numa opção responde, sem o
+        // Enviar.
+        let um_clique = matches!(perguntas, [p] if !p.varias && !p.opcoes.is_empty());
         let blocos = perguntas.iter().enumerate().map(|(n, pergunta)| {
             let escolha = estado.and_then(|e| e.escolhas.get(n)).cloned().unwrap_or_default();
             let campo = estado.and_then(|e| e.campos.get(n)).cloned();
             let varias = pergunta.varias;
             // Uma linha de opção: o marcador, o rótulo e, embaixo, a descrição (as duas quebram).
-            let linha = |chave: SharedString, marcado: bool, rotulo: String, descricao: String| {
+            // Uma linha de opção: o selo, o rótulo e, embaixo, a descrição (as duas quebram). A
+            // escolhida ganha o fundo do destaque, não só o selo.
+            let linha = |chave: SharedString, numero: Option<usize>, marcado: bool, rotulo: String, descricao: String| {
                 h_flex()
                     .id(chave)
                     .w_full()
@@ -309,15 +321,15 @@ impl Janela {
                     .py(esp::E6)
                     .rounded(raio::CONTROLE)
                     .cursor_pointer()
-                    // Só o marcador diz o que está escolhido: o fundo é do ponteiro.
-                    .hover(|s| s.bg(Cores::hover()))
+                    .map(|s| if marcado { s.bg(Cores::tinta(Cores::destaque())) } else { s.hover(|s| s.bg(Cores::hover())) })
                     .tab_index(0)
                     .focus_visible(|s| s.shadow(halo_foco()))
-                    .child(marcador(marcado, varias))
+                    .child(selo_da_opcao(numero, marcado, varias))
                     .child(
                         v_flex()
                             .flex_1()
                             .min_w_0()
+                            .pt(esp::E2)
                             .child(div().rotulo().text_color(Cores::forte()).child(rotulo))
                             .when(!descricao.is_empty(), |s| s.child(div().metadado().text_color(Cores::tenue()).child(descricao))),
                     )
@@ -326,6 +338,7 @@ impl Janela {
                 let id = id.to_string();
                 linha(
                     SharedString::from(format!("opcao-{id}-{n}-{k}")),
+                    Some(k + 1),
                     escolha.escolhida(k),
                     opcao.rotulo.clone(),
                     opcao.descricao.clone(),
@@ -333,6 +346,10 @@ impl Janela {
                 .on_click(cx.listener(move |this: &mut Janela, _: &ClickEvent, _, cx| {
                     if let Some(escolha) = this.perguntas.get_mut(&id).and_then(|e| e.escolhas.get_mut(n)) {
                         escolha.alternar(k, varias);
+                    }
+                    // Uma pergunta só, de escolha única: o clique já é a resposta.
+                    if um_clique {
+                        this.enviar_pergunta(&id, cx);
                     }
                     cx.notify();
                 }))
@@ -342,7 +359,7 @@ impl Janela {
             let sem_opcoes = pergunta.opcoes.is_empty();
             let outra = (!sem_opcoes).then(|| {
                 let id = id.to_string();
-                linha(SharedString::from(format!("outra-{id}-{n}")), escolha.outra, tr!("Outra…").to_string(), String::new()).on_click(
+                linha(SharedString::from(format!("outra-{id}-{n}")), None, escolha.outra, tr!("Outra…").to_string(), String::new()).on_click(
                     cx.listener(move |this: &mut Janela, _: &ClickEvent, window, cx| {
                         if let Some(estado) = this.perguntas.get_mut(&id)
                             && let Some(escolha) = estado.escolhas.get_mut(n)
@@ -360,17 +377,15 @@ impl Janela {
                 )
             });
             let campo = campo.filter(|_| escolha.outra || sem_opcoes).map(|campo| {
-                // Alinhado com o texto das opções (o marcador de 16 e o vão de 8).
-                div().when(!sem_opcoes, |s| s.pl(r(32.))).pr(esp::E8).pt(esp::E2).child(Input::new(&campo))
+                // Alinhado com o texto das opções (os 8 da linha, o selo de 20 e o vão de 8).
+                div().when(!sem_opcoes, |s| s.ml(esp::E4).pl(esp::E32)).pr(esp::E8).pt(esp::E2).child(Input::new(&campo))
             });
             v_flex()
                 .gap(esp::E6)
                 .child(
                     v_flex()
                         .gap(esp::E2)
-                        .when(!pergunta.cabecalho.is_empty(), |s| {
-                            s.child(div().etiqueta().text_color(Cores::apagado()).child(pergunta.cabecalho.to_uppercase()))
-                        })
+                        .when(!pergunta.cabecalho.is_empty(), |s| s.child(div().metadado().text_color(Cores::tenue()).child(pergunta.cabecalho.clone())))
                         .child(div().corpo_ui().text_color(Cores::forte()).child(pergunta.texto.trim().to_string()))
                         .when(varias, |s| s.child(div().metadado().text_color(Cores::tenue()).child(tr!("Dá para marcar mais de uma.")))),
                 )
@@ -390,7 +405,22 @@ impl Janela {
             .when(minima, |b| b.w_full())
             .on_click(enviar);
         let andamento = andamento.map(|texto| div().min_w_0().truncate().metadado().text_color(Cores::tenue()).child(texto));
-        let rodape = if minima {
+        let rodape = if um_clique {
+            // Sem o Enviar: a dica de como responder e o "Não responder".
+            h_flex()
+                .gap(esp::E8)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .metadado()
+                        .text_color(Cores::tenue())
+                        .child(tr!("Clique numa opção ou escreva o número na caixa")),
+                )
+                .child(nao_responder(TamanhoBotao::Controle))
+                .into_any_element()
+        } else if minima {
             // Na largura mínima, o andamento em cima e os dois botões lado a lado, o Enviar com
             // o que sobra.
             v_flex()

@@ -601,7 +601,8 @@ fn fatos_do_sinal(motor: &Motor, c: &Chat) -> FatosDoSinal {
     let execucao = motor.execucao(&c.id);
     let espera = !c.arquivado;
     FatosDoSinal {
-        erro: espera && matches!(execucao, Execucao::Erro(_)),
+        // O erro já visto não marca mais (`motor::espera`).
+        erro: espera && matches!(execucao, Execucao::Erro(_)) && motor.nao_lido(c),
         pedido: espera && execucao == Execucao::EsperandoVoce,
         parada: espera && motor.precisa_retomar(&c.id),
         nova: espera && motor.nao_lido(c),

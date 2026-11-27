@@ -698,7 +698,7 @@ impl QuadroDeIdeias {
                 let atraso = std::time::Duration::from_millis(raia as u64 * 60 + i.min(10) as u64 * 35);
                 // A chave é a do chat ou da ideia, com a raia: o cartão que muda de lugar na raia não toca
                 // de novo, e o que muda de raia entra nela.
-                super::movimento::entrar_depois(div().child(cartao), chave, super::movimento::De::Baixo, atraso).into_any_element()
+                super::movimento::entrar_depois_em(div().child(cartao), chave, super::movimento::De::Baixo, atraso, super::movimento::CARTAO).into_any_element()
             })
             .collect();
         let mais = (raia == Raia::Ideias).then(|| {
@@ -1421,6 +1421,7 @@ impl Janela {
         if self.quadro.take().is_none() {
             return;
         }
+        self.voltou_do_quadro_em = Some(std::time::Instant::now());
         self.vista_da_lista.update(cx, |_, cx| cx.notify());
         self.focar_composer(window, cx);
         cx.notify();

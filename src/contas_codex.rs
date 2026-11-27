@@ -3,7 +3,8 @@
 //! `~/.codex`). Cada conta extra tem uma pasta própria usada como `CODEX_HOME`, onde só o login
 //! (`auth.json`) é dela: a configuração, as instruções, os prompts, as skills e as sessões são
 //! links para a principal, e o `CODEX_SQLITE_HOME` aponta para ela, então as conversas aparecem em
-//! todas as contas.
+//! todas as contas. No Windows os links são junções e hard links, sem pedir administrador
+//! (`ligacoes`).
 //!
 //! O Codex não continua uma conversa noutra conta (o que ele guarda da conversa vai cifrado para
 //! a conta): trocar a conta de um chat do Codex abre uma sessão nova, com a conversa até ali num
@@ -91,12 +92,23 @@ fn ligar_na_principal(original: &Path, pasta: &Path) -> Result<()> {
         if matches!(item, "sessions" | "archived_sessions") && !fonte.exists() {
             fs::create_dir_all(&fonte)?;
         }
-        let destino = pasta.join(item);
-        if fonte.exists() && fs::symlink_metadata(&destino).is_err() {
-            crate::contas::ligar(&fonte, &destino)?;
+        if fonte.exists() && fs::symlink_metadata(pasta.join(item)).is_err() {
+            crate::ligacoes::ligar_item(original, pasta, item)
+                .with_context(|| format!("não liguei {item} da principal na conta"))?;
         }
     }
     Ok(())
+}
+
+/// Antes de cada turno do Codex: confere as ligações de todas as contas extras, como o
+/// `contas::conferir_ligacoes` faz com as do Claude.
+pub fn conferir_ligacoes() {
+    let Some(original) = crate::codex::raiz() else {
+        return;
+    };
+    for pasta in carregar().iter().filter_map(ContaCodex::pasta) {
+        crate::ligacoes::conferir(&original, &pasta, &LIGADOS);
+    }
 }
 
 /// Uma conta nova (o nome é "Codex 2", "Codex 3"…), com a pasta pronta para o login.
@@ -146,8 +158,10 @@ pub fn comando_de_login(conta: &ContaCodex) -> String {
 mod testes {
     use super::{ContaCodex, PRINCIPAL, ligar_na_principal};
 
-    /// A conta extra liga a configuração e as sessões da principal e fica com o login só dela.
-    #[cfg(unix)]
+    /// A conta extra liga a configuração e as sessões da principal e fica com o login só dela. No
+    /// Linux os dois são links simbólicos; no Windows, a pasta é junção e o arquivo é link
+    /// simbólico ou hard link (`ligacoes::ligar`): lá o que se confere é que os dois lados são o
+    /// mesmo, gravando por um e lendo pelo outro.
     #[test]
     fn a_conta_extra_divide_tudo_menos_o_login() {
         let base = std::env::temp_dir().join(format!("vitral-codex-{}", crate::modelo::novo_id()));
@@ -157,8 +171,16 @@ mod testes {
         std::fs::write(principal.join("config.toml"), "model = \"x\"").unwrap();
         std::fs::write(principal.join("auth.json"), "{}").unwrap();
         ligar_na_principal(&principal, &conta).unwrap();
-        assert!(std::fs::symlink_metadata(conta.join("config.toml")).unwrap().file_type().is_symlink());
-        assert!(std::fs::symlink_metadata(conta.join("sessions")).unwrap().file_type().is_symlink());
+        #[cfg(unix)]
+        {
+            assert!(std::fs::symlink_metadata(conta.join("config.toml")).unwrap().file_type().is_symlink());
+            assert!(std::fs::symlink_metadata(conta.join("sessions")).unwrap().file_type().is_symlink());
+        }
+        assert!(crate::ligacoes::mesmo_arquivo(&principal.join("config.toml"), &conta.join("config.toml")).unwrap());
+        std::fs::write(conta.join("config.toml"), "model = \"y\"").unwrap();
+        assert_eq!(std::fs::read_to_string(principal.join("config.toml")).unwrap(), "model = \"y\"");
+        std::fs::write(conta.join("sessions").join("s.jsonl"), "{}").unwrap();
+        assert!(principal.join("sessions").join("s.jsonl").is_file(), "a sessão da conta fica na principal");
         assert!(principal.join("sessions").is_dir(), "as sessões nascem na principal");
         assert!(!conta.join("auth.json").exists(), "o login não é ligado");
         // Ligar de novo não falha nem duplica.

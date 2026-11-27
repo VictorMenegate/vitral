@@ -377,7 +377,9 @@ impl Janela {
         // arquivo fica na dica da coluna.
         let _ = dica;
         window.open_dialog(cx, move |dialogo, window, _| {
-            moldura(dialogo, super::configuracoes::LARGURA_DAS_CONFIGURACOES, window)
+            // Sobe de baixo com o fade, como o `cartao-entra` do protótipo; antes descia do topo
+            // da janela (dono, 27/11/2026: "tá faltando um monte de animações").
+            moldura(dialogo.entrance(gpui_kit::component::dialog::DialogEntrance::FadeRise), super::configuracoes::LARGURA_DAS_CONFIGURACOES, window)
                 .p_0()
                 .bg(Cores::preto())
                 .border_color(gpui_kit::transparent_black())
@@ -832,6 +834,37 @@ impl Janela {
             return;
         }
         super::lateral::avisar_arquivadas(motor, vec![chat], tr!("Conversa arquivada").to_string(), window, cx);
+    }
+
+    /// "Apagar…" no menu do chat: pergunta antes, e o chat sai do Vitral de vez (dono, 27/11/2026:
+    /// "algo que dê pra apagar o chat mesmo pra controle de memória"). O Enter só fecha.
+    pub(super) fn confirmar_apagar_chat(&mut self, chat: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let Some(titulo) = motor.read(cx).chat(&chat).map(|c| c.titulo.clone()) else {
+            return;
+        };
+        let janela = cx.entity().downgrade();
+        super::componentes::confirmar(
+            super::componentes::Confirmacao {
+                tom: super::componentes::TomConfirmacao::Perigo,
+                icone: Lucide::Trash.into(),
+                titulo: tr!("Apagar “{titulo}”?", titulo = titulo).into(),
+                texto: tr!("A conversa sai do Vitral de vez, com a fila e as imagens. Não dá para desfazer.").into(),
+                detalhes: vec![(Lucide::FileText.into(), tr!("A sessão do agente continua no disco dele").into(), false)],
+                ok: tr!("Apagar").into(),
+                cancelar: tr!("Cancelar").into(),
+                ok_perigo: true,
+            },
+            move |window, cx| {
+                motor.update(cx, |m, cx| m.apagar_chat(&chat, cx));
+                let _ = janela.update(cx, |this, cx| this.largar_chats(std::slice::from_ref(&chat), true, window, cx));
+            },
+            None,
+            window,
+            cx,
+        );
     }
 
     /// Ctrl+Alt+A: arquiva o chat do painel ativo, como o "Arquivar" do menu do chat (com o aviso e

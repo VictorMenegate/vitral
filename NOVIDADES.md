@@ -3,6 +3,36 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.13.0
+
+Contas extras no Windows, economia de tokens, o título pelo modelo escolhido, uma trilha do turno
+nova e as animações que faltavam do protótipo.
+
+- **Windows.** As contas extras do Claude e do Codex funcionam também no Windows, sem administrador
+  nem Modo de Desenvolvedor. O computador não suspende com um chat trabalhando, e a dica do relógio
+  mostra a memória do chat.
+- **Economia de tokens.** No "…" da caixa: o Claude planeja no Opus e executa no Sonnet, e passa a
+  parte braçal para subagentes mais baratos.
+- **Título.** Em Configurações › Chats, quem dá o título (o automático, Claude, Codex ou Gemini) e
+  com que modelo; o Codex e os outros também ganham título. O clique direito volta ao de antes.
+- **Revisão.** Só a IA e o modelo; ela revisa até um chat dela mesma. O botão virou "Revisar".
+- **Trilha do turno.** Um ponto que pulsa no lugar do anel, "Pensando por 3,2 s" com décimos, as
+  chamadas num cartão de fio fino que abre e fecha na altura e recolhe quando a resposta começa.
+- **Pedidos.** Na pergunta com alternativas, as opções numeradas e um clique responde (ou o número
+  na caixa); na permissão, o "Sempre" num botão. Os textos do meio do turno ficam à vista com ele
+  recolhido.
+- **Arquivos.** O que a resposta entrega (página, imagem, PDF, planilha, vídeo) ganha um cartão
+  com os jeitos de abrir: o HTML no navegador ou o código aqui. Imagens anexadas em miniatura e um
+  visualizador de imagens novo.
+- **Conversas.** O `/clear` limpa de verdade, "Apagar…" tira o chat de vez, a conversa nova tem
+  começos prontos, e a mensagem presa no alto virou uma barra.
+- **Contas.** A conta principal também se desconecta, para trocar quando há uma só; os agentes
+  novos com os logos deles.
+- **Animações.** O escolhido desliza na lista, as seções abrem na altura, o modo foco, as
+  Configurações e as Tarefas entram animados, e os tempos do protótipo.
+- **Consertos.** O vão no histórico ao trocar de chat, o erro já visto sem vermelho e o "Esc" sem
+  fundo.
+
 ## 0.12.0
 
 Seis agentes novos, o Vitral em inglês e espanhol, as Tarefas no lugar do Quadro de ideias e

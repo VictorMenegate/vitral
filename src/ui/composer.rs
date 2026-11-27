@@ -763,6 +763,10 @@ fn envio(rodando: bool, vazio: bool) -> Envio {
     }
 }
 
+/// A miniatura de uma imagem anexada na caixa: 56 de altura, até 96 de largura.
+const ALTURA_DA_MINIATURA: f32 = 56.;
+const LARGURA_DA_MINIATURA: f32 = 96.;
+
 impl Janela {
     /// A caixa de mensagem do painel, em moldura dupla (a base AI Input With Loading): por fora,
     /// uma moldura preta de raio 20; dentro, com 2 de folga, o campo opaco com o texto
@@ -837,6 +841,8 @@ impl Janela {
             .pt(linear::CAIXA_ALTO)
             .pr(linear::CAIXA_DIREITA)
             .pb(linear::CAIXA_BAIXO)
+            // A citação mora no miolo, quase na coluna do texto (os 10 do campo do kit; 8 na escala).
+            .children(citacao.map(|cartao| div().ml(esp::E8).mb(esp::E6).child(cartao)))
             .child(
                 // Só o campo da mensagem fica em "Composer": o Shift+Tab troca o modo aqui, e não
                 // na busca de um popover da caixa. Sem margem própria, o texto (com os 10 do campo
@@ -957,7 +963,7 @@ impl Janela {
             let t = movimento::valor(
                 ("aro-caixa", painel_id as usize),
                 if focada { 1f32 } else { 0. },
-                if focada { movimento::MOVER } else { movimento::COR },
+                movimento::PAINEL,
                 Curva::Mover,
                 window,
                 cx,
@@ -988,7 +994,6 @@ impl Janela {
             })
             // Os anexos moram na casca, em cima do campo (a referência do dono, 13/11/2026: a
             // "prompt box" da 21st.dev): pílulas com a miniatura, e a imagem abre na ilha.
-            .children(citacao.map(|cartao| div().px(esp::E2).pt(esp::E2).pb(esp::E6).child(cartao)))
             .children(tem_anexos.then(|| div().px(esp::E4).pt(esp::E2).child(pilulas)))
             .child(miolo)
             .children(linha_de_estado);
@@ -1313,49 +1318,43 @@ impl Janela {
         cx.notify();
     }
 
-    /// O cartão do trecho citado, na casca da caixa, em cima das pílulas dos anexos. É da família
-    /// das pílulas (a mesma superfície, o mesmo fio, a mesma luz de tecla), e o azul fica só no
-    /// que diz "isto é uma citação": a barra arredondada, as aspas e o rótulo. O trecho vai em
-    /// até duas linhas, um degrau mais baixo que o texto que você escreve (dono, 13/11/2026:
-    /// "melhora o de responder e coloca aí também" e "melhora um pouco o design").
+    /// O trecho citado, dentro do miolo, em cima do campo (protótipo Linear, `.citacao`): um recuo
+    /// no preto da moldura, sem borda nem sombra, com o fio azul de 2 solto da beirada, o trecho no
+    /// tênue em até duas linhas (12,5/17) e o X de 20. Sem rótulo: o fio e o lugar já dizem que é
+    /// uma resposta. Entra subindo, como no protótipo; outro trecho entra de novo (dono, 27/11/2026:
+    /// "melhora o design disso", sobre o cartão com borda, sombra e o "Respondendo a").
     fn cartao_da_citacao(&self, chat: &str, trecho: &str, _: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
         let chat = chat.to_string();
-        h_flex()
+        let marca = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            trecho.hash(&mut h);
+            h.finish()
+        };
+        let cartao = h_flex()
             .relative()
-            .items_center()
-            .gap(esp::E8)
-            .pl(esp::E24)
-            .pr(esp::E6)
-            .py(esp::E8)
-            .rounded(raio::CARTAO)
-            .bg(Cores::cartao_elevado())
-            .border_1()
-            .border_color(Cores::borda_forte())
-            .shadow(crate::tema::aresta_de_tecla())
-            // A barra da citação: solta da beirada, arredondada, na altura do texto.
-            .child(div().absolute().left(esp::E8).top(esp::E8).bottom(esp::E8).w(px(3.)).rounded_full().bg(Cores::destaque()))
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(esp::E2)
-                    .child(
-                        h_flex()
-                            .gap(esp::E4)
-                            .child(super::mensagens::icone_de(Lucide::MessageSquareQuote, 11.).text_color(Cores::destaque_texto()))
-                            .child(div().etiqueta().text_color(Cores::destaque_texto()).child(tr!("Respondendo a"))),
-                    )
-                    .child(div().min_w_0().line_clamp(2).text_ellipsis().corpo_ui().text_color(Cores::tenue()).child(trecho.to_string())),
-            )
+            .items_start()
+            .gap(esp::E6)
+            .pl(esp::E12)
+            .pr(esp::E4)
+            .py(esp::E4)
+            .rounded(raio::de(11.))
+            .bg(Cores::preto())
+            .text_size(r(12.5))
+            .line_height(r(17.))
+            .text_color(Cores::tenue())
+            .child(div().absolute().left(r(5.)).top(esp::E6).bottom(esp::E6).w(px(2.)).rounded_full().bg(Cores::destaque_texto()))
+            .child(div().flex_1().min_w_0().line_clamp(2).text_ellipsis().child(trecho.to_string()))
             .child(
                 BotaoRedondo::new(SharedString::from(format!("tirar-citacao-{chat}")), Some(Lucide::X.into()), tr!("Tirar a citação"))
                     .variante(VarianteRedonda::Plano)
-                    .diametro(24.)
+                    .diametro(20.)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.citacoes.remove(&chat);
                         cx.notify();
                     })),
-            )
+            );
+        movimento::entrar_em(cartao, SharedString::from(format!("citacao-{marca}")), movimento::De::Baixo, movimento::SUBIR_LEVE)
     }
 
     /// "Compactar" (o do anel, o da faixa da conversa grande parada, o do "…" e o do cartão de
@@ -1536,110 +1535,113 @@ impl Janela {
                 } else {
                     format!("{detalhe}\n{}", caminho.display())
                 });
-                let (largura_mini, altura_mini) = super::imagens::medida_da_miniatura(
-                    lido.medidas,
-                    super::imagens::ALTURA_CHIP,
-                    super::imagens::LARGURA_MAXIMA_CHIP,
-                );
+                // A imagem é uma miniatura de 56 de altura (a largura pela proporção, até 96), sem
+                // fio claro, com o X no canto por cima; o arquivo é uma pílula escura com o ícone,
+                // o nome e o tamanho (dono, 27/11/2026: "melhora o design das imagens anexadas";
+                // era um risco de 24 de altura numa pílula de borda clara).
+                let (largura_mini, altura_mini) = super::imagens::medida_da_miniatura(lido.medidas, ALTURA_DA_MINIATURA, LARGURA_DA_MINIATURA);
                 let aberta = self.ilha.as_ref().is_some_and(|(c, p)| *c == chat && *p == caminho);
-                let miniatura = (imagem && lido.existe).then(|| {
-                    div()
-                        .id(("mini-anexo", i))
-                        .flex_none()
-                        .w(r(largura_mini))
-                        .h(r(altura_mini))
-                        .rounded(raio::CONTROLE)
-                        .bg(Cores::preto())
-                        .overflow_hidden()
-                        .child(img(caminho.clone()).size_full().rounded(raio::CONTROLE).object_fit(ObjectFit::Cover))
-                });
-                // O clique na pílula de uma imagem abre a ilha em cima da caixa (e fecha, se é a
-                // dela que está aberta).
                 let abre_ilha = imagem && lido.existe;
                 let (chat_ilha, alvo_ilha) = (chat.clone(), caminho.clone());
-                let icone = miniatura.is_none().then(|| {
+                let tirar = {
+                    let chat = chat.clone();
+                    BotaoRedondo::new(("tirar-anexo", i), Some(Lucide::X.into()), tr!("Remover o anexo"))
+                        .variante(VarianteRedonda::Plano)
+                        .diametro(20.)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(lista) = this.anexos.get_mut(&chat)
+                                && i < lista.len()
+                            {
+                                lista.remove(i);
+                            }
+                            this.ilha = None;
+                            cx.notify();
+                            // Não é um clique na peça (que abriria a ilha).
+                            cx.stop_propagation();
+                        }))
+                };
+                let abrir_ilha = cx.listener(move |this, _, _, cx| {
+                    // O apertar fora da ilha já a fechou: o clique na própria peça não a reabre.
+                    let fechou_agora = this
+                        .ilha_fechada
+                        .take()
+                        .is_some_and(|(p, quando)| p == alvo_ilha && quando.elapsed() < std::time::Duration::from_millis(500));
+                    this.ilha = (!fechou_agora).then(|| (chat_ilha.clone(), alvo_ilha.clone()));
+                    cx.notify();
+                });
+                let peca = if abre_ilha {
+                    const GRUPO: &str = "miniatura-do-anexo";
+                    div()
+                        .id(("anexo-pendente", i))
+                        .group(GRUPO)
+                        .relative()
+                        .flex_none()
+                        .w(r(largura_mini.max(ALTURA_DA_MINIATURA)))
+                        .h(r(altura_mini.max(ALTURA_DA_MINIATURA)))
+                        .rounded(raio::de(14.))
+                        .bg(Cores::preto())
+                        .overflow_hidden()
+                        .cursor_pointer()
+                        // A aberta na ilha leva o anel do destaque.
+                        .when(aberta, |s| s.border_2().border_color(Cores::destaque()))
+                        .on_click(abrir_ilha)
+                        .child(img(caminho.clone()).size_full().object_fit(ObjectFit::Cover))
+                        // O X num disco escuro no canto, que aparece por inteiro com o ponteiro.
+                        .child(
+                            div()
+                                .absolute()
+                                .top(esp::E4)
+                                .right(esp::E4)
+                                .rounded_full()
+                                .bg(Cores::preto().opacity(0.72))
+                                .opacity(0.8)
+                                .group_hover(GRUPO, |s| s.opacity(1.))
+                                .child(tirar),
+                        )
+                } else {
                     let (lucide, cor) = match (imagem, lido.existe) {
                         (true, false) => (Lucide::ImageOff, Cores::apagado()),
                         (false, false) => (Lucide::FileX, Cores::apagado()),
                         (true, true) => (Lucide::Image, Cores::tenue()),
                         (false, true) => (Lucide::File, Cores::tenue()),
                     };
-                    div().flex_none().text_color(cor).child(super::componentes::icone(lucide, 14., window))
-                });
-                div()
-                    .id(("anexo-pendente", i))
-                    .flex()
-                    .items_center()
-                    .gap(esp::E6)
-                    .h(r(28.))
-                    .map(|s| if miniatura.is_some() { s.pl(esp::E2) } else { s.pl(esp::E8) })
-                    .pr(esp::E2)
-                    .rounded(raio::de(28.))
-                    .border_1()
-                    // A pílula da imagem aberta inverte: é ela que está em cima.
-                    .map(|s| {
-                        if aberta {
-                            s.bg(Cores::forte()).border_color(Cores::forte())
-                        } else {
-                            s.bg(Cores::cartao_elevado()).border_color(Cores::borda_forte())
-                        }
-                    })
-                    .when(abre_ilha, |s| {
-                        s.cursor_pointer().on_click(cx.listener(move |this, _, _, cx| {
-                            // O apertar fora da ilha já a fechou: o clique na própria pílula não
-                            // a reabre.
-                            let fechou_agora = this
-                                .ilha_fechada
-                                .take()
-                                .is_some_and(|(p, quando)| p == alvo_ilha && quando.elapsed() < std::time::Duration::from_millis(500));
-                            this.ilha = (!fechou_agora).then(|| (chat_ilha.clone(), alvo_ilha.clone()));
-                            cx.notify();
-                        }))
-                    })
-                    .children(icone)
-                    .children(miniatura)
-                    // A imagem fica só na miniatura (o nome e o tamanho vão na dica): uma bolinha.
-                    .when(!(imagem && lido.existe), |s| s.child(
-                        div()
-                            .max_w(r(220.))
-                            // Corta no meio: a extensão fica à vista.
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis_middle()
-                            .metadado()
-                            .text_color(if aberta {
-                                Cores::preto()
-                            } else if lido.existe {
-                                Cores::texto()
-                            } else {
-                                Cores::tenue()
-                            })
-                            .child(nome),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .metadado()
-                            .text_color(Cores::tenue())
-                            .child(lido.tamanho.map(|t| t.to_string()).unwrap_or_else(|| tr!("sumiu").to_string())),
-                    ))
-                    .child(
-                        BotaoRedondo::new(("tirar-anexo", i), Some(Lucide::X.into()), tr!("Remover o anexo"))
-                            .variante(VarianteRedonda::Plano)
-                            .diametro(24.)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if let Some(lista) = this.anexos.get_mut(&chat)
-                                    && i < lista.len()
-                                {
-                                    lista.remove(i);
-                                }
-                                this.ilha = None;
-                                cx.notify();
-                                // Não é um clique na pílula (que abriria a ilha).
-                                cx.stop_propagation();
-                            })),
-                    )
-                    .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                    div()
+                        .id(("anexo-pendente", i))
+                        .flex()
+                        .items_center()
+                        .gap(esp::E6)
+                        .h(r(32.))
+                        .pl(esp::E8)
+                        .pr(esp::E4)
+                        .rounded(raio::de(32.))
+                        .bg(Cores::preto())
+                        .child(div().flex_none().text_color(cor).child(super::componentes::icone(lucide, 14., window)))
+                        .child(
+                            div()
+                                .max_w(r(220.))
+                                // Corta no meio: a extensão fica à vista.
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis_middle()
+                                .metadado()
+                                .text_color(if lido.existe { Cores::texto() } else { Cores::tenue() })
+                                .child(nome),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .metadado()
+                                .text_color(Cores::tenue())
+                                .child(lido.tamanho.map(|t| t.to_string()).unwrap_or_else(|| tr!("sumiu").to_string())),
+                        )
+                        .child(tirar)
+                };
+                // Entra subindo ao anexar (o print colado aparece, não salta).
+                movimento::entrar(
+                    peca.dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
+                    SharedString::from(format!("entra-anexo-{}", caminho.display())),
+                    movimento::De::Baixo,
+                )
             }))
     }
 
@@ -2150,7 +2152,7 @@ fn comandos_fora_do_claude(chat: &Chat) -> Option<Vec<String>> {
 
 fn descricao_comando(comando: &str) -> Option<SharedString> {
     Some(match comando {
-        "clear" => tr!("Começa uma sessão nova (o agente esquece a conversa)"),
+        "clear" => tr!("Limpa a conversa e começa do zero"),
         "conta" => tr!("Troca a conta deste chat (/conta nome ou padrão)"),
         "compact" => tr!("Resume a conversa para liberar contexto"),
         "context" => tr!("Mostra o uso do contexto"),

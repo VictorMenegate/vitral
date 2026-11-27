@@ -12,7 +12,6 @@ use gpui_kit::base::InteractiveElementExt as _;
 use gpui_kit::component::{
     ActiveTheme as _, ElementExt as _, Icon, StyledExt as _,
     button::{Button, ButtonVariants as _},
-    checkbox::Checkbox,
     h_flex,
     input::{Enter, Input, InputEvent, InputState},
     menu::{DropdownMenu as _, PopupMenuItem},
@@ -520,7 +519,7 @@ impl Janela {
         // Cada bloco com o índice do (primeiro) item dele, que identifica a entrada.
         let mut blocos: Vec<Planejado> = Vec::new();
         if chat.itens.is_empty() && chat.importada.is_none() {
-            blocos.push(Planejado::pronto(Bloco::Texto, None, eu.dica_inicial(motor, chat, window, cx)));
+            blocos.push(Planejado::pronto(Bloco::Texto, None, eu.dica_inicial(motor, chat, painel_id, window, cx)));
         }
         if let Some((importada, lido)) = &lido {
             blocos.extend(eu.blocos_do_historico(&contexto_do_historico, importada, lido, ix, window, cx));
@@ -744,8 +743,20 @@ impl Janela {
                 && parcial.is_none()
                 && texto_atividade(&chat.itens, false, motor.dirigidas_no_turno(&chat.id)) == *crate::tr!("Pensando…")
             {
-                let rotulo = rotulo_do_turno_calado(compactando, motor.esperando_agentes(&chat.id));
-                blocos.push(Planejado::pronto(Bloco::Log, None, linha_pensando(painel_id, crate::i18n::traduzir(rotulo).into(), cx.theme().font_family.clone())));
+                let esperando = motor.esperando_agentes(&chat.id);
+                let rotulo = rotulo_do_turno_calado(compactando, esperando);
+                // Pensando de verdade, o relógio conta desde o último passo do turno (ou o começo dele).
+                let desde = (!compactando && !esperando)
+                    .then(|| {
+                        let comeco = match motor.execucao(&chat.id) {
+                            Execucao::Rodando { desde } => desde,
+                            _ => 0,
+                        };
+                        chat.itens.last().map_or(comeco, |i| i.em()).max(comeco)
+                    })
+                    .filter(|desde| *desde > 0)
+                    .map(|desde| desde as f64);
+                blocos.push(Planejado::pronto(Bloco::Log, None, linha_pensando(painel_id, crate::i18n::traduzir(rotulo).into(), cx.theme().font_family.clone(), desde)));
             }
         }
         // Só o que está à vista (e a sobra em volta) é montado; o resto entra como um espaço da
@@ -759,7 +770,7 @@ impl Janela {
         let altura_da_vista = rolagem.bounds().size.height;
         let vista = {
             let p = &eu.paineis[ix];
-            if p.busca.aberta || eu.selecionando || p.alvo.is_some() {
+            if p.busca.aberta || eu.selecionando || p.alvo.is_some() || p.montar_tudo {
                 Vista::Tudo
             } else if p.seguindo && !p.manter_lugar {
                 Vista::NoFim { altura: altura_da_vista }
@@ -827,6 +838,8 @@ impl Janela {
         let outra_altura: Rc<std::cell::Cell<bool>> = Default::default();
         // Quantos blocos entraram como espaço: se a largura mudou, eles usaram altura velha.
         let mut espacos = 0usize;
+        // Onde cada espaço ficou na tela: um que caia na área à vista é um vão em branco.
+        let espacos_na_tela: Rc<std::cell::RefCell<Vec<Bounds<Pixels>>>> = Default::default();
         let (n_blocos, inicio_do_desenho) = (blocos.len(), std::time::Instant::now());
         for (k, planejado) in blocos.into_iter().enumerate() {
             let Planejado { indice, chave, fica_montado, sem_entrada, antes_de, presa: sua, montar, .. } = planejado;
@@ -870,7 +883,8 @@ impl Janela {
                     if let Some(chave) = chave.filter(|_| fica_montado) {
                         alturas.borrow_mut().virou_espaco(chave);
                     }
-                    div().mt(margem).h(altura).flex_none()
+                    let na_tela = espacos_na_tela.clone();
+                    div().mt(margem).h(altura).flex_none().on_prepaint(move |limites, _, _| na_tela.borrow_mut().push(limites))
                 }
             };
             let montado = a_montar[k] || guardadas[k].is_none();
@@ -934,6 +948,16 @@ impl Janela {
                 // pode ter entrado na vista. Mais um desenho, já com a altura nova.
                 if outra_altura.get() && espacos > 0 {
                     redesenhar = true;
+                }
+                // Um espaço dentro da área à vista: o próximo desenho monta tudo (`montar_tudo`).
+                let vista = p.rolagem.bounds();
+                let vao = espacos_na_tela.borrow().iter().any(|e| {
+                    let (alto, pe) = (e.top().max(vista.top()), e.bottom().min(vista.bottom()));
+                    pe - alto > px(1.)
+                });
+                if vao != p.montar_tudo {
+                    p.montar_tudo = vao;
+                    redesenhar |= vao;
                 }
                 // A mensagem presa, como o "sticky" do VS Code: a sua mensagem mais recente que já
                 // subiu além do alto da vista gruda lá (a de verdade fica por baixo da faixa).
@@ -1061,9 +1085,6 @@ impl Janela {
             .filter(|_| !self.paineis[ix].busca.aberta)
             .map(|(texto, alto, i)| {
                 let janela = cx.entity().downgrade();
-                // O mesmo canto do balão na conversa (dono, 26/11/2026: "o border radius dos dois
-                // tá diferente"; era o da peça, 20).
-                let raio = linear::RAIO_DO_BALAO;
                 // A faixa do topo até a mensagem não tem fundo: a conversa é que não é desenhada
                 // embaixo dela (`recortada_no_alto`, na lista abaixo). Com as camadas do cartão
                 // repetidas por cima, ela tapava o texto mas ficava mais escura que o painel com a
@@ -1087,18 +1108,24 @@ impl Janela {
                     })
                     .child(
                     div().map(coluna_de_leitura).child(
-                        div()
+                        // Uma barra, e não outro balão: no azul dos balões, a mensagem seguinte
+                        // chegando por baixo parecia uma segunda bolha grudada nela (dono,
+                        // 27/11/2026: "tá bugado as mensagens em cima, melhora mais"). No preto dos
+                        // menus, numa linha, com a seta de subir até ela.
+                        h_flex()
                             .id(("mensagem-presa", painel_id as usize))
                             .relative()
                             .w_full()
-                            // A folga dos balões, também no painel mínimo (lá ficava 2 px fora).
-                            .px(r(folga_do_balao(nivel)))
-                            .py(linear::BALAO_ALTO)
-                            .rounded(raio)
+                            .h(r(36.))
+                            .gap(esp::E8)
+                            .px(esp::E12)
+                            .rounded(raio::CONTROLE)
                             .cursor_pointer()
-                            // A cor cheia dos balões da conversa (Linear, 25/11/2026).
-                            .bg(Cores::balao())
-                            .child(div().relative().fala().text_color(Cores::texto_do_balao()).line_clamp(2).child(texto))
+                            .bg(Cores::preto())
+                            .hover(|s| s.bg(Cores::preto().blend(Cores::hover())))
+                            .child(div().flex_none().w(px(3.)).h(r(16.)).rounded_full().bg(Cores::balao()))
+                            .child(div().flex_1().min_w_0().truncate().text_size(r(13.)).text_color(Cores::texto_da_fala()).child(texto))
+                            .child(icone_de(Lucide::CornerLeftUp, 14.).text_color(Cores::tenue()))
                             .dica_no_ponteiro(|window, cx| Tooltip::new(crate::tr!("Ir até esta mensagem")).build(window, cx))
                             .on_click(move |_, _, cx| {
                                 let _ = janela.update(cx, |j, cx| j.ir_para_a_mensagem(painel_id, i, alto, cx));
@@ -1194,8 +1221,10 @@ impl Janela {
         }
     }
 
-    /// Conversa vazia: o chat diz onde trabalha.
-    fn dica_inicial(&self, motor: &Motor, chat: &Chat, _window: &Window, _cx: &Context<Self>) -> AnyElement {
+    /// Conversa vazia: quem responde, onde trabalha, quatro começos que vão para a caixa e as
+    /// teclas que ajudam (dono, 27/11/2026: "melhora o design de quando abre uma nova conversa";
+    /// era só o ícone, "Converse com este chat" e a pasta quebrando em duas linhas).
+    fn dica_inicial(&self, motor: &Motor, chat: &Chat, painel: u64, _window: &Window, cx: &Context<Self>) -> AnyElement {
         // A conversa de um subagente que ainda não tem nada: a leitura do arquivo dele não voltou,
         // ou ele acabou de abrir.
         if let Some(sub) = motor.subconversa(&chat.id) {
@@ -1208,9 +1237,86 @@ impl Janela {
             };
             return EstadoVazio::new(Lucide::Workflow, titulo).texto(texto).amplo().into_any_element();
         }
-        EstadoVazio::new(Lucide::MessagesSquare, crate::tr!("Converse com este chat"))
-            .texto(onde_o_chat_trabalha(motor, chat))
-            .amplo()
+        let pasta: SharedString = if motor.sem_pasta(chat) {
+            crate::tr!("Pasta só deste chat")
+        } else {
+            super::trilho::pasta_curta(&chat.cwd).into()
+        };
+        let comecos: [(Lucide, SharedString, SharedString); 4] = [
+            (Lucide::Compass, crate::tr!("Explicar o projeto"), crate::tr!("Explique o que este projeto faz e como ele está organizado.")),
+            (Lucide::TextSearch, crate::tr!("Revisar o que mudou"), crate::tr!("Revise o que mudou desde o último commit e aponte os problemas.")),
+            (Lucide::Terminal, crate::tr!("Rodar os testes"), crate::tr!("Rode os testes e conserte o que falhar.")),
+            (Lucide::ListChecks, crate::tr!("Planejar uma mudança"), crate::tr!("Antes de mexer nos arquivos, me ajude a planejar esta mudança: ")),
+        ];
+        let entra = |el: Div, i: usize| movimento::entrar_depois_em(el, ("nova-conversa", i), De::Baixo, std::time::Duration::from_millis(40 + 45 * i as u64), movimento::PASSO);
+        let mut botoes: Vec<AnyElement> = comecos.into_iter().enumerate().map(|(i, (icone, rotulo, texto))| {
+            h_flex()
+                .id(("comeco", i))
+                .flex_1()
+                .min_w_0()
+                .h(r(36.))
+                .px(esp::E12)
+                .gap(esp::E8)
+                .rounded(raio::CONTROLE)
+                .bg(Cores::preto())
+                .cursor_pointer()
+                .hover(|s| s.bg(Cores::hover()))
+                .text_size(r(13.))
+                .text_color(Cores::texto())
+                .child(icone_de(icone, 14.).text_color(Cores::tenue()))
+                .child(div().min_w_0().truncate().child(rotulo))
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.escrever_na_caixa(painel, &texto, window, cx)))
+                .into_any_element()
+        }).collect();
+        // Dois por linha.
+        let segunda: Vec<AnyElement> = botoes.split_off(2);
+        let grade = v_flex()
+            .w(r(456.))
+            .max_w_full()
+            .gap(esp::E6)
+            .child(h_flex().gap(esp::E6).children(botoes))
+            .child(h_flex().gap(esp::E6).children(segunda));
+        let teclas = h_flex()
+            .gap(esp::E12)
+            .metadado()
+            .text_color(Cores::apagado())
+            .child(crate::tr!("/ comandos"))
+            .child(crate::tr!("@ arquivos"))
+            .child(crate::tr!("Ctrl+V imagem"));
+        v_flex()
+            .w_full()
+            .items_center()
+            .gap(esp::E16)
+            .py(esp::E32)
+            .child(entra(div().child(Marca::do_agente(chat.agente).disco(40.)), 0))
+            .child(entra(
+                v_flex()
+                    .items_center()
+                    .gap(esp::E6)
+                    .child(div().titulo_tela().text_color(Cores::forte()).child(crate::tr!("O que vamos fazer?")))
+                    .child(
+                        h_flex()
+                            .max_w(r(420.))
+                            .gap(esp::E6)
+                            .text_size(r(12.5))
+                            .text_color(Cores::tenue())
+                            .child(icone_de(Lucide::Folder, 13.))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis_start()
+                                    .font_family(crate::tema::FONTE_MONO)
+                                    .text_size(r(12.5))
+                                    .child(pasta),
+                            )
+                            .child(div().flex_none().text_color(Cores::apagado()).child(crate::tr!("· {agente}", agente = chat.agente.nome()))),
+                    ),
+                1,
+            ))
+            .child(entra(div().child(grade), 2))
+            .child(entra(div().child(teclas), 3))
             .into_any_element()
     }
 
@@ -1704,6 +1810,8 @@ impl Janela {
             let existe = self.comandos_de(contexto.chat).iter().any(|c| c == nome);
             existe.then(|| super::links_arquivo::link_do_comando(&contexto.chat.id, nome))
         });
+        // Os arquivos que a resposta liga, para os cartões de entrega embaixo dela.
+        let ligados = super::links_arquivo::arquivos_ligados(&ligado);
         let realce = contexto.busca.realce(indice, Campo::Texto);
         // As imagens que a resposta aponta em `![](…)`: o kit desenha a imagem do markdown na
         // altura de uma linha de texto (tamanho de ícone) ou, sozinha num parágrafo, sem teto
@@ -1766,6 +1874,23 @@ impl Janela {
                 s.child(h_flex().flex_wrap().gap(esp::E6).children(apontadas.iter().enumerate().map(|(i, caminho)| {
                     pilula_de_arquivo(format!("resposta-{chave}-{i}"), caminho, &chat_id, false, cx)
                 })))
+            })
+            // Os arquivos que a resposta entrega para ver (a página, o PDF, a planilha), cada um com
+            // os jeitos de abrir dele. As imagens já em miniatura acima não repetem.
+            .children({
+                let entregas: Vec<(String, super::links_arquivo::Entrega)> = ligados
+                    .into_iter()
+                    .filter_map(|c| super::links_arquivo::entrega_de(&c).map(|e| (c, e)))
+                    .filter(|(c, _)| !apontadas.iter().any(|a| a == Path::new(c)))
+                    .filter(|(c, _)| Path::new(c).exists())
+                    .take(6)
+                    .collect();
+                (!entregas.is_empty()).then(|| {
+                    h_flex()
+                        .flex_wrap()
+                        .gap(esp::E6)
+                        .children(entregas.into_iter().enumerate().map(|(i, (caminho, tipo))| cartao_de_entrega(format!("entrega-{chave}-{i}"), &caminho, tipo, window, cx)))
+                })
             })
             // A barra fica embaixo da resposta, no vão até o bloco seguinte (32 antes do seu balão
             // e no fim da lista): em cima ela cobria metade da primeira linha (relatório de
@@ -2256,9 +2381,11 @@ fn poco_de_codigo(raio: Rems) -> StyleRefinement {
     poco
 }
 
-/// As ações de uma mensagem numa barra flutuante (28 em pílula, botões de 24): aparece seca no
-/// hover da mensagem, sem reservar altura. Quem chama a posiciona. Um fade aqui viraria animação
-/// em cadeia ao passar o ponteiro pela conversa.
+/// As ações de uma mensagem numa barra flutuante (28 em pílula, botões de 24): aparece com o fade
+/// do protótipo (a `.barra-msg`) no hover da mensagem, sem reservar altura, e some seca. Quem chama
+/// a posiciona. Era seca também ao aparecer, para não animar em cadeia ao passar o ponteiro pela
+/// conversa; só a barra da mensagem sob o ponteiro existe, então é um fade por vez (dono,
+/// 27/11/2026: "tá faltando um monte de animações").
 /// O mesmo para a barra embaixo da resposta, que ocupa os 30 depois do texto: 32 de folga
 /// embaixo, devolvidos pela margem.
 fn com_alcance_da_barra_embaixo<E: Styled>(elemento: E) -> E {
@@ -2289,15 +2416,16 @@ impl Janela {
     }
 }
 
-fn barra_de_acoes(acoes: Vec<AnyElement>, _: &App) -> Div {
-    h_flex()
+fn barra_de_acoes(acoes: Vec<AnyElement>, _: &App) -> impl IntoElement + use<> {
+    let barra = h_flex()
         .h(r(28.))
         .p(esp::E2)
         .gap(esp::E2)
         // Chapada (Linear, 25/11/2026): o quase preto dos menus, sem fio nem sombra.
         .bg(Cores::flutuante())
         .rounded(raio::de(28.))
-        .children(acoes)
+        .children(acoes);
+    movimento::entrar(barra, "barra-de-acoes", De::Parado)
 }
 
 /// À direita de uma linha: a seta de abrir e, com o ponteiro em cima, as ações no lugar dela.
@@ -2580,6 +2708,75 @@ fn pilha_de_imagens(chat: &str, lista: &[(usize, PathBuf)], cx: &Context<Janela>
 /// imagem abre o visor. O que saiu do disco fica apagado, com "sumiu". Dentro do seu balão
 /// (`no_balao`), a pílula vai no poço escuro, da família do código do balão: o cinza opaco parecia
 /// colado de fora no azul (balão e cartão de erro, 16/11/2026).
+/// Um arquivo que a resposta entrega: o ícone do tipo, o nome e os jeitos de abrir. A página vai
+/// ao navegador ou ao código aqui; a imagem, ao visor ou ao aplicativo; o SVG, ao navegador ou ao
+/// código; a planilha, ao aplicativo ou ao texto aqui; o documento, a mídia e o pacote, ao
+/// aplicativo ou à pasta.
+fn cartao_de_entrega(id: String, caminho: &str, tipo: super::links_arquivo::Entrega, window: &Window, cx: &Context<Janela>) -> AnyElement {
+    use super::links_arquivo::Entrega;
+    let completo = PathBuf::from(caminho);
+    let nome = imagens::nome_do_arquivo(&completo);
+    let link = super::links_arquivo::link_de(caminho, None);
+    let icone = match tipo {
+        Entrega::Pagina => Lucide::Globe,
+        Entrega::Imagem | Entrega::Svg => Lucide::FileImage,
+        Entrega::Documento => Lucide::FileText,
+        Entrega::Planilha => Lucide::Rows3,
+        Entrega::Midia => Lucide::MonitorPlay,
+        Entrega::Pacote => Lucide::Archive,
+    };
+    // Abrir aqui (no painel da direita, ou no visor a imagem), abrir fora e mostrar na pasta.
+    let aqui = |id: &'static str, rotulo: SharedString, simbolo: Lucide| {
+        let link = link.clone();
+        botao_fantasma(id, Some(simbolo.into()), rotulo, TamanhoBotao::Barra, window, cx)
+            .on_click(move |_, window, cx| window.dispatch_action(Box::new(super::links_arquivo::AbrirLinkVitral(link.clone())), cx))
+            .into_any_element()
+    };
+    let fora = |id: &'static str, rotulo: SharedString, simbolo: Lucide| {
+        let alvo = completo.clone();
+        botao_fantasma(id, Some(simbolo.into()), rotulo, TamanhoBotao::Barra, window, cx)
+            .on_click(move |_, _, cx| crate::sistema::abrir_fora(&alvo, cx))
+            .into_any_element()
+    };
+    let pasta = |id: &'static str| {
+        // A pasta em que ele está (com o arquivo, o sistema abriria o próprio arquivo).
+        let alvo = completo.parent().map(Path::to_path_buf).unwrap_or_else(|| completo.clone());
+        botao_fantasma(id, Some(Lucide::FolderOpen.into()), crate::tr!("Na pasta"), TamanhoBotao::Barra, window, cx)
+            .on_click(move |_, _, cx| crate::sistema::abrir_pasta(&alvo, cx))
+            .into_any_element()
+    };
+    let acoes: Vec<AnyElement> = match tipo {
+        Entrega::Pagina => vec![
+            fora("entrega-navegador", crate::tr!("Navegador"), Lucide::ExternalLink),
+            aqui("entrega-codigo", crate::tr!("Código"), Lucide::CodeXml),
+        ],
+        Entrega::Imagem => vec![aqui("entrega-ver", crate::tr!("Ver"), Lucide::Eye), fora("entrega-fora", crate::tr!("Abrir fora"), Lucide::ExternalLink)],
+        Entrega::Svg => vec![
+            fora("entrega-navegador", crate::tr!("Navegador"), Lucide::ExternalLink),
+            aqui("entrega-codigo", crate::tr!("Código"), Lucide::CodeXml),
+        ],
+        Entrega::Planilha => vec![fora("entrega-fora", crate::tr!("Abrir fora"), Lucide::ExternalLink), aqui("entrega-texto", crate::tr!("Texto"), Lucide::FileText)],
+        Entrega::Documento | Entrega::Midia => vec![fora("entrega-fora", crate::tr!("Abrir"), Lucide::ExternalLink), pasta("entrega-pasta")],
+        Entrega::Pacote => vec![pasta("entrega-pasta")],
+    };
+    h_flex()
+        .id(SharedString::from(id))
+        .h(r(36.))
+        .pl(esp::E12)
+        .pr(esp::E4)
+        .gap(esp::E8)
+        .rounded(raio::CONTROLE)
+        .bg(Cores::preto())
+        .child(icone_de(icone, 14.).text_color(Cores::tenue()))
+        .child(div().max_w(r(220.)).overflow_hidden().whitespace_nowrap().text_ellipsis_middle().text_size(r(13.)).text_color(Cores::texto()).child(nome))
+        .child(h_flex().flex_none().gap(esp::E2).children(acoes))
+        .dica_no_ponteiro({
+            let dica = SharedString::from(completo.display().to_string());
+            move |window, cx| Tooltip::new(dica.clone()).build(window, cx)
+        })
+        .into_any_element()
+}
+
 fn pilula_de_arquivo(id: String, caminho: &Path, chat: &str, no_balao: bool, cx: &Context<Janela>) -> AnyElement {
     let lido = imagens::anexo(caminho);
     let nome = imagens::nome_do_arquivo(caminho);
@@ -2955,11 +3152,13 @@ fn resumo_ao_vivo(itens: &[Item], turno: TurnoRecolhivel) -> String {
     partes.join(" · ")
 }
 
-/// O que fica à vista com o turno recolhido: o texto intermediário que termina em pergunta, o
-/// aviso de erro e o cartão de falha.
+/// O que fica à vista com o turno recolhido: todo texto que o agente escreve no meio do turno, o
+/// aviso de erro e o cartão de falha. O recolhido esconde as ferramentas, não o que ele diz (dono,
+/// 27/11/2026: "mesmo quando tá minimizado tinha que aparecer os textos de retorno que manda
+/// durante o chat"; antes só ficava o texto que terminava em pergunta).
 pub(super) fn fica_fora_do_recolhido(item: &Item) -> bool {
     match item {
-        Item::Assistente { texto, .. } => texto.trim_end().ends_with('?'),
+        Item::Assistente { texto, .. } => !texto.trim().is_empty(),
         // O marco de compactação diz onde o contexto foi cortado: fica à vista.
         Item::Aviso { texto, erro, .. } => {
             *erro || tipo_aviso(texto, *erro) == ClasseAvisoChat::Alerta || texto.starts_with(crate::motor::CONTEXTO_COMPACTADO)
@@ -3378,8 +3577,16 @@ impl Janela {
         let recolhivel = chamadas.len() > 1;
         // Os itens só crescem no fim: o índice da primeira chamada identifica o grupo.
         let chave = format!("{}:{}:grupo", contexto.chat.id, chamadas[0].0);
+        // O agente já falou neste turno, antes deste grupo: o grupo começa recolhido, com só a linha
+        // viva à vista, em vez de a trilha abrir e fechar a cada fala (o "Chain of Thought" no nível
+        // de Linear/v0/Cursor, 27/11/2026). A escolha feita à mão vale sempre.
+        let inicio_do_turno = contexto.chat.itens[..chamadas[0].0].iter().rposition(|i| matches!(i, Item::Usuario { .. })).map_or(0, |u| u + 1);
+        let ja_falou = contexto.chat.itens[inicio_do_turno..chamadas[0].0]
+            .iter()
+            .any(|i| matches!(i, Item::Assistente { texto, .. } if !texto.trim().is_empty()));
+        let do_turno_atual = contexto.rodando && chamadas[0].0 >= inicio_do_turno && contexto.chat.itens.len().saturating_sub(chamadas[0].0) < 200;
         let aberto = !recolhivel || self.expandidos.contains(&chave)
-            || (ao_vivo && !self.expandidos.contains(&format!("{chave}:fechado")));
+            || (ao_vivo && !ja_falou && !self.expandidos.contains(&format!("{chave}:fechado")));
         let mostradas = if aberto {
             chamadas
         } else if ao_vivo {
@@ -3422,7 +3629,7 @@ impl Janela {
                 .when(falhas > 0, |s| {
                     s.child(Selo::cor(contagem(falhas, &crate::tr!("falhou"), &crate::tr!("falharam")), Cores::vermelho()))
                 })
-                .when(rodando_escondida, |s| s.child(super::componentes::lugar_do_anel(contexto.painel, Cores::destaque(), 14.)))
+                .when(rodando_escondida, |s| s.child(super::componentes::lugar_do_ponto(contexto.painel, Cores::destaque(), 14.)))
                 .child(div().flex_none().text_color(Cores::apagado()).child(chevron(&chave, aberto)))
                 .on_click(cx.listener({ let chave = chave.clone(); move |j, _, _, cx| {
                     if aberto { j.expandidos.remove(&chave); j.expandidos.insert(format!("{chave}:fechado")); }
@@ -3473,7 +3680,6 @@ impl Janela {
             });
             self.editados_do_recolhido(contexto, &format!("{chave}:ed"), escondidas, mais)
         });
-        let ultima = mostradas.len().saturating_sub(1);
         let (base, vistos) = contexto.entrada;
         let primeira = chamadas[0].0;
         // A chamada que chega numa trilha já à vista entra com fade e 8 px de baixo (a primeira
@@ -3483,23 +3689,39 @@ impl Janela {
             Some(nova) => movimento::entrada(("entra-grupo", primeira), nova, De::Parado, c).into_any_element(),
             None => c.into_any_element(),
         });
-        let linhas = v_flex().w_full().children(
-            mostradas
-                .iter()
-                .enumerate()
-                // Recolhido e ao vivo, a chamada à vista é uma linha solta, sem trilho.
-                .map(|(k, (indice, item))| {
-                    let linha = self.chamada(contexto, *indice, item, aberto.then_some(k < ultima), cx);
-                    match entrada_da_chamada(*indice == primeira, *indice, base, vistos) {
-                        Some(nova) => movimento::entrada(("entra-chamada", *indice), nova, De::Baixo, div().child(linha)).into_any_element(),
-                        None => linha,
-                    }
-                }),
-        );
-        // Aberto pelo clique, o que estava escondido entra com fade e 6 px de cima.
-        let linhas = if recolhivel && aberto { self.ao_abrir(&chave, linhas) } else { linhas.into_any_element() };
+        let montar = |lista: &[(usize, &Item)], com_trilho: bool| {
+            let ultima = lista.len().saturating_sub(1);
+            v_flex().w_full().children(lista.iter().enumerate().map(|(k, (indice, item))| {
+                let linha = self.chamada(contexto, *indice, item, com_trilho.then_some(k < ultima), cx);
+                match entrada_da_chamada(*indice == primeira, *indice, base, vistos) {
+                    Some(nova) => movimento::entrada(("entra-chamada", *indice), nova, De::Baixo, div().child(linha)).into_any_element(),
+                    None => linha,
+                }
+            }))
+        };
+        let linhas = if recolhivel {
+            // O acordeão: as chamadas abrem e fecham na altura (300 ms), também quando o grupo
+            // recolhe sozinho porque a resposta começou. Fora do turno que roda, o grupo fechado
+            // nem monta as linhas.
+            let todas = (aberto || do_turno_atual).then(|| montar(chamadas, true));
+            let acordeao = todas.map(|todas| movimento::na_altura(SharedString::from(format!("acordeao-{chave}")), aberto, movimento::DESLIZAR, move || todas.into_any_element()));
+            // Recolhido e ao vivo, a chamada que roda fica à vista, solta, sem trilho.
+            let viva = (!aberto && ao_vivo).then(|| montar(&chamadas[chamadas.len() - 1..], false));
+            v_flex().w_full().children(acordeao).children(viva).into_any_element()
+        } else {
+            montar(mostradas, aberto).into_any_element()
+        };
+        // O grupo num cartão de fundo quase transparente, com o fio de meio pixel e o raio dos
+        // cartões; a chamada solta fica como estava.
         v_flex()
             .w_full()
+            .when(recolhivel, |s| {
+                s.p(esp::E2)
+                    .rounded(raio::CARTAO)
+                    .bg(gpui_kit::hsla(0., 0., 1., 0.025))
+                    .border(px(0.5))
+                    .border_color(gpui_kit::hsla(0., 0., 1., 0.10))
+            })
             .children(cabecalho)
             .children(editados_do_grupo.flatten())
             .children(fileira)
@@ -3549,7 +3771,7 @@ impl Janela {
             .tab_index(0)
             .focus_visible(|s| s.shadow(halo_foco()))
             .child(coluna_do_icone().text_color(Cores::tenue()).child(if turno.ao_vivo {
-                super::componentes::lugar_do_anel(contexto.painel, Cores::destaque(), 14.).into_any_element()
+                super::componentes::lugar_do_ponto(contexto.painel, Cores::destaque(), 14.).into_any_element()
             } else {
                 icone_de(Lucide::Clock, 14.).into_any_element()
             }))
@@ -4004,8 +4226,10 @@ impl Janela {
         let grupo = SharedString::from(format!("chamada-{chave}"));
         // Sem resultado e fora do turno que está rodando: foi interrompida.
         let interrompida = resultado.is_none() && !pendente;
+        // A etapa ativa: o ponto que pulsa com o halo, no lugar do anel girando (a trilha "no
+        // nível de Linear/v0/Cursor", 27/11/2026).
         let icone = if pendente {
-            super::componentes::lugar_do_anel(contexto.painel, Cores::destaque(), 14.).into_any_element()
+            super::componentes::lugar_do_ponto(contexto.painel, Cores::destaque(), 14.).into_any_element()
         } else {
             let cor = if *erro {
                 Cores::vermelho()
@@ -4573,15 +4797,6 @@ fn resumo_da_trilha(nomes: &[&str]) -> String {
         .join(" · ")
 }
 
-/// Onde o chat trabalha, para a conversa vazia: direto na pasta dele, ou na pasta só dele (o chat
-/// sem pasta).
-fn onde_o_chat_trabalha(motor: &Motor, chat: &Chat) -> String {
-    if motor.sem_pasta(chat) {
-        return crate::tr!("Este chat tem uma pasta só dele: os arquivos que ele criar ficam lá.").to_string();
-    }
-    crate::tr!("Este chat mexe direto em {pasta}.", pasta = super::trilho::pasta_curta(&chat.cwd)).to_string()
-}
-
 /// Como cada aviso do chat aparece.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ClasseAvisoChat {
@@ -4726,15 +4941,20 @@ fn selo_dirigido(painel: u64, n: usize, estreita: bool) -> AnyElement {
         .into_any_element()
 }
 
-/// A linha viva do turno que pensa, com o desenho de uma chamada em andamento na trilha: o anel
-/// girando e o rótulo com o brilho passando.
-fn linha_pensando(painel: u64, rotulo: SharedString, fonte: SharedString) -> AnyElement {
+/// A linha viva do turno que pensa: o ponto que pulsa com o halo e, pensando, "Pensando por 3,2 s",
+/// com o relógio em décimos. O ponto e o relógio são só lugares: quem os pinta a cada batida é a
+/// vista dos anéis (`AneisDaConversa`), sem redesenhar a conversa.
+fn linha_pensando(painel: u64, rotulo: SharedString, fonte: SharedString, desde: Option<f64>) -> AnyElement {
     h_flex()
         .h(ALTURA_DO_LOG)
         .gap(esp::E8)
-        // Só o lugar do anel: ele gira por cima, numa vista própria (`AneisDaConversa`).
-        .child(coluna_do_icone().child(super::componentes::lugar_do_anel(painel, Cores::destaque(), 14.)))
-        .child(div().font_family(fonte).metadado().text_color(Cores::texto()).child(rotulo))
+        .child(coluna_do_icone().child(super::componentes::lugar_do_ponto(painel, Cores::destaque(), 14.)))
+        .map(|s| match desde {
+            Some(desde) => s
+                .child(div().font_family(fonte).metadado().text_color(Cores::texto()).child(crate::tr!("Pensando por")))
+                .child(super::componentes::lugar_do_relogio(painel, Cores::tenue(), desde, 72.)),
+            None => s.child(div().font_family(fonte).metadado().text_color(Cores::texto()).child(rotulo)),
+        })
         .into_any_element()
 }
 
@@ -4821,7 +5041,7 @@ impl Janela {
             h_flex()
                 .flex_none()
                 .gap(esp::E6)
-                .children(teclas(&PararTurno, Some("Caixa"), window))
+                .children(super::componentes::teclas_soltas(&PararTurno, Some("Caixa"), window))
                 .when(!estreita, |s| s.child(rotulo))
                 .into_any_element()
         };
@@ -5389,19 +5609,14 @@ impl Janela {
         // A regra só existe fora do perigoso e do que um hook mandou perguntar: o mesmo filtro do
         // desenho.
         let com_regra = regra_do_cartao(ferramenta, entrada, &chat.cwd, manual, motivo_do_hook.is_some()).is_some();
-        let permitir = {
+        let permitir = responder(true);
+        // O "Sempre": permite e passa a regra (só existe com regra, fora do perigoso e do hook).
+        let sempre = {
             let id = id.to_string();
             cx.listener(move |this: &mut Janela, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
-                let sempre = com_regra && this.sempre_marcado.contains(&id);
                 if let Some(m) = &this.motor {
-                    m.update(cx, |m, cx| {
-                        if sempre {
-                            m.permitir_sempre(&id, cx)
-                        } else {
-                            m.responder_permissao(&id, true, None, cx)
-                        }
-                    });
+                    m.update(cx, |m, cx| if com_regra { m.permitir_sempre(&id, cx) } else { m.responder_permissao(&id, true, None, cx) });
                 }
             })
         };
@@ -5412,17 +5627,6 @@ impl Janela {
                     m.update(cx, |m, cx| m.responder_permissao(&id, true, None, cx));
                 }
             }
-        };
-        let marcar = {
-            let id = id.to_string();
-            cx.listener(move |this: &mut Janela, marcado: &bool, _, cx| {
-                if *marcado {
-                    this.sempre_marcado.insert(id.clone());
-                } else {
-                    this.sempre_marcado.remove(&id);
-                }
-                cx.notify();
-            })
         };
         let explicar = {
             let id = id.to_string();
@@ -5449,14 +5653,13 @@ impl Janela {
             nivel,
             manual,
             motivo_do_hook,
-            marcado: self.sempre_marcado.contains(id),
             explicando,
         };
         let respostas = RespostasDoPedido {
             negar: Rc::new(responder(false)),
             permitir: Rc::new(permitir),
+            sempre: Rc::new(sempre),
             uma_vez: Rc::new(uma_vez),
-            marcar: Rc::new(marcar),
             explicar: Rc::new(explicar),
             cancelar_explicacao: Rc::new(cancelar_explicacao),
             enviar_explicacao: Rc::new(cx.listener(|this, _: &ClickEvent, _, cx| this.negar_explicando(cx))),
@@ -5966,8 +6169,6 @@ pub(super) struct Pedido {
     /// Um hook `PreToolUse` do usuário mandou perguntar, com este motivo (vazio se ele não deu):
     /// o cartão mostra a linha do hook e não oferece a caixa "Não perguntar de novo".
     pub motivo_do_hook: Option<String>,
-    /// A caixa "Não perguntar de novo" marcada.
-    pub marcado: bool,
     /// O campo de "negar e explicar" aberto.
     pub explicando: Option<Entity<InputState>>,
 }
@@ -5979,8 +6180,8 @@ type AoClicar = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 pub(super) struct RespostasDoPedido {
     pub negar: AoClicar,
     pub permitir: AoClicar,
+    pub sempre: AoClicar,
     pub uma_vez: Rc<dyn Fn(&mut App)>,
-    pub marcar: Rc<dyn Fn(&bool, &mut Window, &mut App)>,
     pub explicar: AoClicar,
     pub cancelar_explicacao: AoClicar,
     pub enviar_explicacao: AoClicar,
@@ -6129,7 +6330,7 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
             let explicar = botao_icone(
                 id_texto("explicar"),
                 Lucide::MessageSquareQuote,
-                crate::tr!("Negar e explicar…\nNega e diz ao Claude o que fazer em vez disso"),
+                crate::tr!("Negar e explicar…\nNega e diz ao agente o que fazer em vez disso"),
                 TamanhoBotao::Controle,
                 window,
                 cx,
@@ -6137,16 +6338,13 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
             .on_click(botao(&r_.explicar));
             let negar =
                 botao_fantasma(id_texto("negar"), None, crate::tr!("Negar"), TamanhoBotao::Controle, window, cx).on_click(botao(&r_.negar));
-            // A caixa "Não perguntar de novo: ..." só existe fora do perigoso e quando há regra.
-            let caixa = regra.map(|(objeto, dica)| {
-                let marcar = r_.marcar.clone();
-                Checkbox::new(id_texto("sempre"))
-                    .label(crate::tr!("Não perguntar de novo: {objeto}", objeto = objeto))
-                    .checked(p.marcado)
+            // O "Sempre" no lugar da caixa "Não perguntar de novo": um clique só, com o que passa a
+            // valer escrito no botão (dono, 27/11/2026: "melhora o design e usabilidade ... o de
+            // permitir também").
+            let sempre = regra.map(|(objeto, dica)| {
+                botao_fantasma(id_texto("sempre"), None, crate::tr!("Sempre: {objeto}", objeto = objeto), TamanhoBotao::Controle, window, cx)
                     .tooltip(dica)
-                    .on_click(move |marcado, window, cx| marcar(marcado, window, cx))
-                    .text_color(Cores::tenue())
-                    .metadado()
+                    .on_click(botao(&r_.sempre))
             });
             let principal = if perigoso {
                 segurar(id_texto("segurar"), TamanhoBotao::Controle).map(|b| if minima { b.largo() } else { b }).into_any_element()
@@ -6156,20 +6354,27 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
                     .on_click(botao(&r_.permitir))
                     .into_any_element()
             };
+            // Escrever na caixa e dar Enter nega explicando (`Motor::responder_pedido_escrevendo`).
+            let dica = div()
+                .min_w_0()
+                .truncate()
+                .metadado()
+                .text_color(Cores::tenue())
+                .child(crate::tr!("Ou escreva na caixa para negar explicando"));
             if minima {
-                // Na largura mínima, a caixa vai em cima e o Permitir ocupa a largura.
+                // Na largura mínima, o Permitir ocupa a largura, e o resto vai em cima.
                 v_flex()
                     .gap(esp::E8)
-                    .children(caixa)
-                    .child(h_flex().gap(esp::E8).child(explicar).child(negar))
+                    .child(h_flex().gap(esp::E8).child(explicar).child(negar).children(sempre))
                     .child(principal)
                     .into_any_element()
             } else {
                 h_flex()
                     .gap(esp::E8)
-                    .child(div().flex_1().min_w_0().children(caixa))
+                    .child(div().flex_1().min_w_0().child(dica))
                     .child(explicar)
                     .child(negar)
+                    .children(sempre)
                     .child(principal)
                     .into_any_element()
             }
@@ -7174,9 +7379,10 @@ mod testes {
         // Sem texto intermediário (só a trilha e a resposta), não recolhe: a trilha já basta.
         let curto = vec![usuario("faz"), ferramenta("Bash", "ls", Some("ok"), false), assistente("Feito.")];
         assert!(turnos_recolhiveis(&curto, false).is_empty());
-        // A pergunta do meio e o erro ficam à vista.
+        // Os textos do meio (o "Vou olhar." e a pergunta) e o erro ficam à vista; a ferramenta, não.
         assert!(fica_fora_do_recolhido(&itens[4]));
-        assert!(!fica_fora_do_recolhido(&itens[1]));
+        assert!(fica_fora_do_recolhido(&itens[1]));
+        assert!(!fica_fora_do_recolhido(&itens[2]));
         assert!(fica_fora_do_recolhido(&Item::Aviso { texto: "O turno terminou com erro: x".into(), erro: true, em: 0 }));
         // Sem hora, sem número.
         let sem_hora: Vec<Item> = itens.iter().map(|i| match i {

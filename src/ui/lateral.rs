@@ -4,7 +4,7 @@
 //! aberto; no pé, as arquivadas, os agentes rodando, o sino, a busca e o "+".
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
@@ -577,6 +577,10 @@ struct Contexto {
     teclado: bool,
     motor: Entity<Motor>,
     janela: WeakEntity<Janela>,
+    /// Quanto cada seção está aberta (0 a 1), andando quando ela abre ou fecha.
+    aberturas: HashMap<&'static str, f32>,
+    /// O marcador desliza atrás das linhas neste desenho: a linha escolhida fica sem fundo.
+    marcador: bool,
 }
 
 /// Um cartão que o teclado alcança: o chat, a posição entre os filhos da lista (para rolar até
@@ -595,6 +599,12 @@ struct Montagem {
     /// As posições (entre os filhos da lista) que estão perto da área à vista: fora delas, o cartão
     /// vira um espaço da mesma altura. `None` desenha tudo.
     a_vista: Option<Range<usize>>,
+}
+
+/// Quanto uma seção da lista está aberta (0 a 1): anda em 280 ms quando ela abre ou fecha, como a
+/// altura das seções do protótipo (dono, 27/11/2026: "tá faltando um monte de animações").
+fn abertura_da_secao(nome: &'static str, aberta: bool, window: &mut Window, cx: &mut App) -> f32 {
+    movimento::valor(SharedString::from(format!("abertura-secao-{nome}")), if aberta { 1f32 } else { 0f32 }, movimento::DESLIZAR, movimento::Curva::Mover, window, cx)
 }
 
 /// As posições da lista corrida que ficam perto da área à vista, com uma tela de folga para cada
@@ -616,6 +626,19 @@ impl Montagem {
     /// O título de uma seção.
     fn secao(&mut self, s: SecaoDaLista) {
         self.itens.push(s.into_any_element());
+    }
+
+    /// As linhas de uma seção que abre ou fecha (`t` de 0 a 1): cada uma na altura de `t` vezes a
+    /// dela, com o fade, como a seção inteira abrindo na altura no protótipo (as linhas da lista têm
+    /// todas a mesma altura). Parada e aberta, nada muda.
+    fn na_altura(&mut self, ini: usize, t: f32) {
+        if t >= 1. {
+            return;
+        }
+        for item in &mut self.itens[ini..] {
+            let linha = std::mem::replace(item, div().into_any_element());
+            *item = div().flex_none().overflow_hidden().h(r(ALTURA_DA_LINHA_DE_CHAT * t)).opacity(t).child(linha).into_any_element();
+        }
     }
 
     fn navegavel(&mut self, e: AnyElement, chat: &str, pendencia: bool) {
@@ -859,7 +882,11 @@ fn linha_da_arvore(
         _ if crate::claude::imagem_de_ver(Path::new(&caminho)) => Lucide::FileImage,
         _ => Lucide::File,
     };
-    let seta = e_pasta.then(|| icone(if expandida { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12., window));
+    // A seta gira ao abrir e fechar a pasta (220 ms no protótipo), em vez de trocar de ícone.
+    let seta = e_pasta.then(|| {
+        let id = SharedString::from(format!("seta-arvore-{caminho}"));
+        movimento::com_estado(move |window, cx| super::componentes::seta_que_gira(id, expandida, 12., window, cx).into_any_element())
+    });
     let cor_do_nome = if mudou_dentro {
         Cores::ambar()
     } else if ignorado {
@@ -1011,8 +1038,21 @@ impl Janela {
         // é o que o Enter abre (rodada de uso, item 4.1).
         let busca_ativa = !busca.is_empty() && self.busca.read(cx).focus_handle(cx).is_focused(window);
         let teclado = (self.foco_lista.is_focused(window) && window.last_input_was_keyboard()) || busca_ativa;
+        // Quanto cada seção da lista está aberta, andando quando ela abre ou fecha: calculado aqui,
+        // onde há a janela para guardar o estado (a montagem da lista só lê).
+        let aberturas: HashMap<&'static str, f32> = ["Rodando", "Esperando você", "Fixadas", "Hoje", "Esta semana", "Mais antigas"]
+            .into_iter()
+            .map(|nome| (nome, abertura_da_secao(nome, !(busca.is_empty() && self.secoes_recolhidas.contains(nome)), window, cx)))
+            .collect();
+        // O escolhido desliza (o `.marcador` do `#chats` do protótipo; dono, 27/11/2026: "tá
+        // faltando um monte de animações"): a linha dele foi medida no desenho anterior, e o
+        // marcador anda até lá. Sem a medida (a linha não está na tela), a linha pinta o fundo.
+        let medido = self.marcador_da_lista.replace(None);
+        let marcador_y = medido.map(|alvo| movimento::valor("marcador-dos-chats", alvo, movimento::DESLIZAR, movimento::Curva::Mover, window, cx));
         let motor = motor_entidade.read(cx);
         let ctx = Contexto {
+            marcador: marcador_y.is_some(),
+            aberturas,
             busca: busca.clone(),
             aperto,
             teclado,
@@ -1046,6 +1086,21 @@ impl Janela {
                     .track_focus(&self.foco_lista)
                     .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
                         this.tecla_na_lista(&navegaveis, ev, window, cx)
+                    }))
+                    // O topo do conteúdo (rola junto), para a linha escolhida medir onde está.
+                    .child({
+                        let topo = self.topo_da_lista.clone();
+                        div().flex_none().h_0().on_prepaint(move |limites, _, _| topo.set(f32::from(limites.origin.y)))
+                    })
+                    .children(marcador_y.map(|y| {
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .top(px(y))
+                            .h(r(ALTURA_DA_LINHA_DE_CHAT))
+                            .rounded(raio::controle())
+                            .bg(Cores::selecao_da_lista())
                     }))
                     .children(montagem.itens)
                     .child(div().flex_none().h(esp::E16));
@@ -1451,15 +1506,28 @@ impl Janela {
             (sec, !recolhida)
         };
         let com_aberta = |membros: &[&DaLista]| membros.iter().any(|f| self.aberta_em_painel(&f.0.id));
+        // A abertura de cada seção: a que anda (`Contexto::aberturas`), menos quando a seção
+        // recolhida está aberta à força (tem um chat aberto num painel), que fica inteira.
+        let t_de = |nome: &'static str, aberta: bool| {
+            let forcada = aberta && busca.is_empty() && self.secoes_recolhidas.contains(nome);
+            match ctx.aberturas.get(nome) {
+                Some(&t) if !forcada => t,
+                _ if aberta => 1.,
+                _ => 0.,
+            }
+        };
 
         let rodando_agora = da_secao(Secao::Rodando);
         if !rodando_agora.is_empty() {
             let (sec, aberta) = secao("Rodando", rodando_agora.len(), com_aberta(&rodando_agora));
             m.secao(sec);
-            if aberta {
+            let t = t_de("Rodando", aberta);
+            if aberta || t > 0. {
+                let ini = m.itens.len();
                 for f in rodando_agora {
                     self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
                 }
+                m.na_altura(ini, t);
             }
         }
 
@@ -1488,11 +1556,14 @@ impl Janela {
                 )));
             }
             m.secao(sec);
-            if aberta {
+            let t = t_de("Esperando você", aberta);
+            if aberta || t > 0. {
+                let ini = m.itens.len();
                 m.itens.extend(self.linhas_de_ciclo(motor, de_ciclo, window, cx));
                 for f in esperando {
                     self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
                 }
+                m.na_altura(ini, t);
             }
         }
 
@@ -1500,10 +1571,13 @@ impl Janela {
         if !fixadas.is_empty() {
             let (sec, aberta) = secao("Fixadas", fixadas.len(), com_aberta(&fixadas));
             m.secao(sec);
-            if aberta {
+            let t = t_de("Fixadas", aberta);
+            if aberta || t > 0. {
+                let ini = m.itens.len();
                 for f in fixadas {
                     self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
                 }
+                m.na_altura(ini, t);
             }
         }
 
@@ -1517,10 +1591,13 @@ impl Janela {
             }
             let (sec, aberta) = secao(faixa.nome(), membros.len(), com_aberta(&membros));
             m.secao(sec);
-            if aberta {
+            let t = t_de(faixa.nome(), aberta);
+            if aberta || t > 0. {
+                let ini = m.itens.len();
                 for f in membros {
                     self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
                 }
+                m.na_altura(ini, t);
             }
         }
 
@@ -1607,13 +1684,20 @@ impl Janela {
         let (janela, entidade, id_menu) = (ctx.janela.clone(), ctx.motor.clone(), chat.id.clone());
         // A dica da linha: a pasta e o ramo do git em que ela está (lido quando a dica aparece). O
         // balão da frente, que levava a pasta na dica, saiu da linha; os botões dela têm a deles.
+        // O nome inteiro do chat vem em cima (na lista ele corta; dono, 27/11/2026: "quando passa o
+        // mouse em cima tem que aparecer o nome do chat também").
         let pasta_da_dica = (!ctx.motor.read(cx).sem_pasta(chat)).then(|| chat.cwd.clone());
+        let titulo_da_dica = chat.titulo.clone();
         div()
             .id(SharedString::from(format!("linha-{}", chat.id)))
             // Sem vão entre as linhas, como no protótipo Linear (25/11/2026).
             .child(cartao)
-            .when_some(pasta_da_dica, |s, pasta| {
-                s.dica_no_ponteiro(move |window, cx| Tooltip::new(super::ramo::com_ramo(&com_til(&pasta), &pasta)).build(window, cx))
+            .dica_no_ponteiro(move |window, cx| {
+                let texto = match &pasta_da_dica {
+                    Some(pasta) => format!("{titulo_da_dica}\n{}", super::ramo::com_ramo(&com_til(pasta), pasta)),
+                    None => titulo_da_dica.clone(),
+                };
+                Tooltip::new(texto).build(window, cx)
             })
             .on_drag(arrasto, move |a, _, _, cx| cx.new(|_| PreviaArrasto { titulo: a.titulo.clone(), simbolo: None }))
             .on_aux_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
@@ -1765,6 +1849,7 @@ impl Janela {
         let tem_pendencia = pendencia.is_some();
         let titulo_do_cartao: SharedString = chat.titulo.clone().into();
         let mut cartao = CartaoDeLista::new(SharedString::from(format!("cartao-{}", chat.id)), titulo_do_cartao)
+            .fundo_por_fora(selecionado && ctx.marcador)
             .map(|c| match subtitulo {
                 None => c.uma_linha().meta(h_flex().gap(linear::CHAT_VAO).child(indicadores).children(quando)),
                 Some(subtitulo) => match quando {
@@ -1792,7 +1877,16 @@ impl Janela {
         if let Some(titulo) = titulo_rico(&chat.titulo, &ctx.busca, nao_lido) {
             cartao = cartao.titulo_rico(titulo);
         }
-        self.envolver(cartao, chat, ctx, cx)
+        let linha = self.envolver(cartao, chat, ctx, cx);
+        if !selecionado {
+            return linha;
+        }
+        // A linha escolhida diz onde está, para o marcador do próximo desenho.
+        let (marcador, topo) = (self.marcador_da_lista.clone(), self.topo_da_lista.clone());
+        div()
+            .on_prepaint(move |limites, _, _| marcador.set(Some(f32::from(limites.origin.y) - topo.get())))
+            .child(linha)
+            .into_any_element()
     }
 
     /// Põe o cursor na caixa de mensagem do painel ativo.
@@ -2136,6 +2230,8 @@ impl Janela {
             teclado: false,
             motor: motor_entidade.clone(),
             janela: cx.entity().downgrade(),
+            aberturas: HashMap::new(),
+            marcador: false,
         };
         let busca_e = self.busca_arquivos.clone();
         let conteudo = self.conteudo_arquivos(&arquivos, &ctx, &busca_e, marcas, window, cx);
@@ -2357,7 +2453,8 @@ mod testes {
     fn regra_do_que_precisa_de_voce() {
         let erro = Execucao::Erro("caiu".into());
         assert_eq!(motivo(&Execucao::EsperandoVoce, false, false), Some(Motivo::Pedido));
-        assert_eq!(motivo(&erro, false, false), Some(Motivo::Erro));
+        // O erro pede atenção até você ver o chat (27/11/2026); visto, sai da espera.
+        assert_eq!(motivo(&erro, false, false), None);
         assert_eq!(motivo(&Execucao::Parado, true, false), Some(Motivo::Nova));
         assert_eq!(motivo(&Execucao::Parado, false, false), None);
         // O erro vence a resposta nova.

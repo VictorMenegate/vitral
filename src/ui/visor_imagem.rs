@@ -27,8 +27,8 @@ actions!(vitral, [ImagemAnterior, ImagemSeguinte]);
 
 /// Margem entre o diálogo do visor e a borda da janela.
 const FOLGA: f32 = 24.;
-/// Altura da barra de cima (nome, medidas e botões), que sai da área da imagem.
-const BARRA: f32 = 44.;
+/// Altura da pílula das ferramentas, que flutua embaixo, por cima da imagem.
+const PILULA: f32 = 40.;
 
 /// Até quanto se afasta e se aproxima, em vezes o tamanho que cabe na janela.
 const ZOOM_MINIMO: f32 = 0.25;
@@ -124,101 +124,119 @@ impl VisorImagem {
         }
     }
 
-    /// A barra de cima: o nome e as medidas à esquerda, a contagem e os botões à direita.
-    fn barra(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// O nome e as medidas, num selo no canto de cima, por cima da imagem.
+    fn selo_do_nome(&self) -> impl IntoElement + use<> {
         let anexo = imagens::anexo(self.caminho());
         let detalhe = anexo.detalhe();
+        v_flex()
+            .absolute()
+            .top(esp::E12)
+            .left(esp::E12)
+            .max_w(relative(0.5))
+            .px(esp::E12)
+            .py(esp::E6)
+            .rounded(raio::CONTROLE)
+            .bg(Cores::flutuante())
+            .child(div().truncate().text_size(r(13.)).text_color(Cores::forte()).child(imagens::nome_do_arquivo(self.caminho())))
+            .when(!detalhe.is_empty(), |s| s.child(div().metadado().text_color(Cores::tenue()).child(detalhe)))
+    }
+
+    /// As setas grandes dos lados, no meio da altura, só com mais de uma imagem.
+    fn setas(&self, window: &mut Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        if self.imagens.len() < 2 {
+            return Vec::new();
+        }
+        let seta = |id: &'static str, icone: Lucide, dica: SharedString, desligada: bool, adiante: bool, window: &mut Window, cx: &mut Context<Self>| {
+            // Uma coluna da altura toda, com a seta no meio dela.
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .map(|s| if adiante { s.right(esp::E12) } else { s.left(esp::E12) })
+                .flex()
+                .items_center()
+                .child(
+                    div().rounded_full().bg(Cores::flutuante()).when(desligada, |s| s.opacity(0.4)).child(
+                        botao_icone(id, icone, dica, TamanhoBotao::Barra, window, cx)
+                            .disabled(desligada)
+                            .on_click(cx.listener(move |this, _, _, cx| this.andar(adiante, cx))),
+                    ),
+                )
+                .into_any_element()
+        };
+        vec![
+            seta("visor-anterior", Lucide::ChevronLeft, tr!("Imagem anterior"), self.atual == 0, false, window, cx),
+            seta("visor-seguinte", Lucide::ChevronRight, tr!("Imagem seguinte"), self.atual + 1 == self.imagens.len(), true, window, cx),
+        ]
+    }
+
+    /// A pílula das ferramentas, flutuando embaixo e no meio: a posição na conversa, o zoom, o
+    /// caber e o tamanho real, abrir fora e fechar (dono, 27/11/2026: "melhora o design desse
+    /// visualizador de imagens"; era uma barra de cima que tirava altura da imagem).
+    fn ferramentas(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let anexo = imagens::anexo(self.caminho());
         let caminho = self.caminho().to_path_buf();
         let varias = self.imagens.len() > 1;
         let cabendo = self.zoom == 1. && self.desloc == Point::default();
-        let (rotulo, icone) = if cabendo { (tr!("Tamanho real"), Lucide::Maximize) } else { (tr!("Ajustar à janela"), Lucide::Minimize) };
+        let (rotulo, icone) = if cabendo { (tr!("Tamanho real"), Lucide::Maximize) } else { (tr!("Ajustar"), Lucide::Minimize) };
         // A porcentagem é a do tamanho real da imagem, não a do "caber".
         let area = self.area.get().size;
         let porcento = anexo
             .medidas
             .filter(|_| area.width > px(0.))
             .map(|medidas| format!("{:.0}%", encaixe(medidas, area) * self.zoom * 100.));
-        h_flex()
-            .h(r(BARRA))
-            .w_full()
-            .flex_none()
+        let vao = || div().flex_none().w(esp::E8);
+        let pilula = h_flex()
+            .h(r(PILULA))
+            .px(esp::E4)
+            .gap(esp::E2)
             .items_center()
-            .gap(esp::E8)
-            .child(
-                v_flex()
-                    .min_w_0()
-                    .flex_1()
-                    .child(
-                        div()
-                            .truncate()
-                            .corpo_ui()
-                            .text_color(Cores::forte())
-                            .child(imagens::nome_do_arquivo(&caminho)),
-                    )
-                    .when(!detalhe.is_empty(), |s| {
-                        s.child(div().metadado().text_color(Cores::tenue()).child(detalhe))
-                    }),
-            )
+            .rounded(raio::de(PILULA))
+            .bg(Cores::flutuante())
             .when(varias, |s| {
                 s.child(
-                    h_flex()
-                        .flex_none()
-                        .items_center()
-                        .gap(esp::E4)
-                        .child(
-                            botao_icone("visor-anterior", Lucide::ChevronLeft, tr!("Imagem anterior"), TamanhoBotao::Barra, window, cx)
-                                .disabled(self.atual == 0)
-                                .on_click(cx.listener(|this, _, _, cx| this.andar(false, cx))),
-                        )
-                        .child(
-                            div()
-                                .metadado()
-                                .text_color(Cores::tenue())
-                                .child(tr!("{n} de {total}", n = self.atual + 1, total = self.imagens.len())),
-                        )
-                        .child(
-                            botao_icone("visor-seguinte", Lucide::ChevronRight, tr!("Imagem seguinte"), TamanhoBotao::Barra, window, cx)
-                                .disabled(self.atual + 1 == self.imagens.len())
-                                .on_click(cx.listener(|this, _, _, cx| this.andar(true, cx))),
-                        ),
+                    div()
+                        .px(esp::E8)
+                        .metadado()
+                        .tabular()
+                        .text_color(Cores::tenue())
+                        .child(tr!("{n} de {total}", n = self.atual + 1, total = self.imagens.len())),
                 )
+                .child(vao())
             })
             .child(
-                h_flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(esp::E4)
-                    .child(
-                        botao_icone("visor-menos", Lucide::ZoomOut, tr!("Afastar"), TamanhoBotao::Barra, window, cx)
-                            .disabled(self.zoom <= ZOOM_MINIMO)
-                            .on_click(cx.listener(|this, _, _, cx| this.aproximar(this.zoom / PASSO_DO_ZOOM, None, cx))),
-                    )
-                    .children(porcento.map(|p| div().min_w(r(40.)).text_center().metadado().text_color(Cores::tenue()).child(p)))
-                    .child(
-                        botao_icone("visor-mais", Lucide::ZoomIn, tr!("Aproximar"), TamanhoBotao::Barra, window, cx)
-                            .disabled(self.zoom >= ZOOM_MAXIMO)
-                            .on_click(cx.listener(|this, _, _, cx| this.aproximar(this.zoom * PASSO_DO_ZOOM, None, cx))),
-                    ),
+                botao_icone("visor-menos", Lucide::ZoomOut, tr!("Afastar"), TamanhoBotao::Barra, window, cx)
+                    .disabled(self.zoom <= ZOOM_MINIMO)
+                    .on_click(cx.listener(|this, _, _, cx| this.aproximar(this.zoom / PASSO_DO_ZOOM, None, cx))),
             )
+            .children(porcento.map(|p| div().min_w(r(44.)).text_center().metadado().tabular().text_color(Cores::texto()).child(p)))
             .child(
-                botao_fantasma("visor-zoom", Some(icone.into()), rotulo, TamanhoBotao::Barra, window, cx)
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                botao_icone("visor-mais", Lucide::ZoomIn, tr!("Aproximar"), TamanhoBotao::Barra, window, cx)
+                    .disabled(self.zoom >= ZOOM_MAXIMO)
+                    .on_click(cx.listener(|this, _, _, cx| this.aproximar(this.zoom * PASSO_DO_ZOOM, None, cx))),
+            )
+            .child(vao())
+            .child(
+                botao_fantasma("visor-zoom", Some(icone.into()), rotulo, TamanhoBotao::Barra, window, cx).on_click(cx.listener(
+                    move |this, _, _, cx| {
                         if cabendo {
                             this.aproximar(this.zoom_real(), None, cx);
                         } else {
                             this.caber(cx);
                         }
-                    })),
+                    },
+                )),
             )
             .child({
                 let fora = caminho.clone();
-                botao_fantasma("visor-fora", Some(Lucide::ExternalLink.into()), tr!("Abrir fora"), TamanhoBotao::Barra, window, cx)
-                    .on_click(move |_, _, cx| crate::sistema::abrir_pasta(&fora, cx))
+                botao_icone("visor-fora", Lucide::ExternalLink, tr!("Abrir fora"), TamanhoBotao::Barra, window, cx)
+                    .on_click(move |_, _, cx| crate::sistema::abrir_fora(&fora, cx))
             })
             .child(
                 botao_icone("visor-fechar", Lucide::X, tr!("Fechar (Esc)"), TamanhoBotao::Barra, window, cx)
                     .on_click(|_, window, cx| window.close_dialog(cx)),
-            )
+            );
+        h_flex().absolute().bottom(esp::E16).left_0().right_0().justify_center().child(pilula)
     }
 }
 
@@ -231,7 +249,7 @@ impl Render for VisorImagem {
         let area = area_da_imagem(window);
         let caminho = self.caminho().to_path_buf();
         let anexo = imagens::anexo(&caminho);
-        let barra = self.barra(window, cx);
+        let (selo, setas, ferramentas) = (self.selo_do_nome(), self.setas(window, cx), self.ferramentas(window, cx));
         let corpo = if !anexo.existe {
             v_flex()
                 .size_full()
@@ -264,7 +282,7 @@ impl Render for VisorImagem {
                 .cursor(if self.arrasto.is_some() { CursorStyle::ClosedHand } else { CursorStyle::OpenHand })
                 // Só para saber onde a área está na tela (o zoom em volta do ponteiro).
                 .child(canvas(move |limites, _, _| onde.set(limites), |_, _, _, _| {}).absolute().size_full())
-                .child(img(caminho).absolute().left(px(esquerda)).top(px(topo)).w(px(largura)).h(px(altura)))
+                .child(img(caminho).absolute().left(px(esquerda)).top(px(topo)).w(px(largura)).h(px(altura)).rounded(raio::de(8.)))
                 .on_scroll(cx.listener(|this, evento: &ScrollEvent, window, cx| {
                     let passo = evento.delta.pixel_delta(window.line_height()).y.as_f32();
                     if passo != 0. {
@@ -315,9 +333,9 @@ impl Render for VisorImagem {
             .on_action(cx.listener(|this, _: &ImagemAnterior, _, cx| this.andar(false, cx)))
             .on_action(cx.listener(|this, _: &ImagemSeguinte, _, cx| this.andar(true, cx)))
             .w_full()
-            .child(barra)
             .child(
                 div()
+                    .relative()
                     .w_full()
                     .h(area.height)
                     .flex()
@@ -326,18 +344,23 @@ impl Render for VisorImagem {
                     // um cinza: o traço escuro sem fundo sumia no preto).
                     .bg(imagens::fundo_da_imagem(self.caminho()))
                     .overflow_hidden()
-                    .child(corpo),
+                    .child(corpo)
+                    .child(selo)
+                    .children(setas)
+                    .child(ferramentas),
             )
     }
 }
 
-/// O espaço que sobra para a imagem dentro da janela, tirando a folga do diálogo, a margem dele e
-/// a barra de cima.
+/// O espaço que sobra para a imagem dentro da janela, tirando a folga do diálogo e a margem dele
+/// (as ferramentas flutuam por cima da imagem).
 fn area_da_imagem(window: &Window) -> Size<Pixels> {
     let folga = gpui_kit::component::window_paddings(window);
     let vista = window.viewport_size();
     let largura = vista.width - folga.left - folga.right - tam(window, FOLGA * 2. + 32.);
-    let altura = vista.height - folga.top - folga.bottom - tam(window, FOLGA * 2. + BARRA + 40.);
+    // Os 84 são o que o diálogo toma de altura além da folga (a barra de cima, que saiu, também
+    // contava aqui: a área ficou do mesmo tamanho).
+    let altura = vista.height - folga.top - folga.bottom - tam(window, FOLGA * 2. + 84.);
     size(largura.max(px(120.)), altura.max(px(120.)))
 }
 

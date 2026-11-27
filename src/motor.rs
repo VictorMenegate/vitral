@@ -185,7 +185,10 @@ pub fn espera(execucao: &Execucao, nao_lido: bool, parada: bool) -> Option<Esper
     match execucao {
         Execucao::EsperandoVoce => Some(Espera::Pedido),
         _ if parada => Some(Espera::Parada),
-        Execucao::Erro(_) => Some(Espera::Erro),
+        // O erro pede atenção só até você ver o chat: depois o cartão do erro fica na conversa,
+        // mas a lista, a aba e o sino param de marcar vermelho (dono, 27/11/2026: "quando o
+        // agente dá erro que não dá pra fazer mais nada ... se eu já foquei no chat sair o aviso").
+        Execucao::Erro(_) if nao_lido => Some(Espera::Erro),
         _ if nao_lido => Some(Espera::Nova),
         _ => None,
     }
@@ -383,6 +386,8 @@ pub struct Motor {
     /// Quantas vezes cada chat já pediu o título gerado ao Claude Code nesta abertura do app
     /// (`titulo_a_pedir`).
     titulos_pedidos: HashMap<String, u8>,
+    /// Os chats com um `/clear` esperando o turno parar (`nova_sessao`).
+    limpar_ao_parar: HashSet<String>,
     /// Chats com mensagens ainda não gravadas: vão para o disco a cada poucos segundos.
     chats_sujos: HashSet<String>,
     /// Chats cujo turno já foi repetido depois de um erro de sessão (uma vez só).
@@ -575,6 +580,13 @@ impl Motor {
                         for sinal in sinais {
                             redesenhar |= motor.tratar(sinal, cx);
                         }
+                        // O `/clear` que esperava o turno parar (`nova_sessao`).
+                        if !motor.limpar_ao_parar.is_empty() {
+                            for chat in motor.limpar_ao_parar.iter().cloned().collect::<Vec<_>>() {
+                                motor.limpar_se_pedido(&chat, cx);
+                            }
+                            redesenhar = true;
+                        }
                         match aviso_do_lote(redesenhar, std::mem::take(&mut motor.texto_chegando)) {
                             AvisoDoLote::Tudo => cx.notify(),
                             AvisoDoLote::Texto(chats) => cx.emit(TextoChegando { chats }),
@@ -741,6 +753,7 @@ impl Motor {
             filas,
             interrompidos: Vec::new(),
             titulos_pedidos: HashMap::new(),
+            limpar_ao_parar: HashSet::new(),
             chats_sujos: HashSet::new(),
             repetidos_sessao: HashSet::new(),
             passagens: HashMap::new(),
@@ -1096,6 +1109,7 @@ impl Motor {
         let mut chat = Chat::novo(id.clone(), "Nova conversa", cwd);
         chat.criado_por = criado_por.to_string();
         chat.agente = self.config.agente_padrao;
+        chat.economia = self.config.economia_nos_novos;
         self.chats.push(chat);
         self.salvar();
         cx.notify();
@@ -1437,7 +1451,20 @@ impl Motor {
     pub fn renomear(&mut self, chat: &str, titulo: String, cx: &mut Context<Self>) {
         if let Some(c) = self.chat_mut(chat) {
             c.titulo = titulo;
+            c.titulo_antes = None;
         }
+        self.salvar();
+        cx.notify();
+    }
+
+    /// A economia de tokens do "…" da caixa: liga ou desliga no chat, e a escolha vale para os
+    /// chats novos. Vale a partir do próximo turno.
+    pub fn alternar_economia(&mut self, chat: &str, cx: &mut Context<Self>) {
+        let Some(c) = self.chat_mut(chat) else {
+            return;
+        };
+        c.economia = !c.economia;
+        self.config.economia_nos_novos = c.economia;
         self.salvar();
         cx.notify();
     }
@@ -1477,6 +1504,19 @@ impl Motor {
             }
             return false;
         }
+        self.tirar_do_vitral(chat, cx);
+        true
+    }
+
+    /// "Apagar…" no menu do chat: o chat sai do Vitral de vez, com as mensagens, a fila e as
+    /// imagens, e o processo que ainda rodava cai junto (dono, 27/11/2026: "algo que dê pra
+    /// apagar o chat mesmo pra controle de memória"). A sessão do agente continua no disco dele.
+    pub fn apagar_chat(&mut self, chat: &str, cx: &mut Context<Self>) {
+        self.limpar_ao_parar.remove(chat);
+        self.tirar_do_vitral(chat, cx);
+    }
+
+    fn tirar_do_vitral(&mut self, chat: &str, cx: &mut Context<Self>) {
         let cwd = self.chat_gravado(chat).map(|c| c.cwd.clone());
         self.chats.retain(|c| c.id != chat);
         self.filas.remove(chat);
@@ -1488,7 +1528,6 @@ impl Motor {
             let _ = std::fs::remove_dir(cwd);
         }
         cx.notify();
-        true
     }
 
     /// Arquiva várias conversas de uma vez (o "Arquivar estas" da lista e o automático).
@@ -1546,17 +1585,23 @@ impl Motor {
     /// Com algum chat trabalhando, o computador não suspende sozinho por inatividade: deixar um
     /// turno longo rodando e ir para outro aplicativo (ou sair de perto) não o congela no meio
     /// (dono, 17/11/2026: "se deixar rodando e for mexer em outro aplicativo ele não vai parar").
-    /// É uma trava `sleep` do logind (`systemd-inhibit`): a tela ainda apaga e bloqueia, e fechar
-    /// a tampa ainda suspende (o logind ignora a trava na tampa). Ela morre junto com o Vitral
-    /// (`tail --pid`), mesmo numa queda. Só no Linux.
+    /// No Linux é uma trava `sleep` do logind (`systemd-inhibit`): a tela ainda apaga e bloqueia, e
+    /// fechar a tampa ainda suspende (o logind ignora a trava na tampa). Ela morre junto com o
+    /// Vitral (`tail --pid`), mesmo numa queda. No Windows é o `SetThreadExecutionState`
+    /// (`segurar_a_suspensao`), com o mesmo efeito.
     fn acertar_trava(&mut self) {
-        if !cfg!(target_os = "linux") {
+        if !cfg!(any(target_os = "linux", windows)) {
             return;
         }
         // Só turno andando: o chat parado num pedido de permissão (ou com o processo vivo à toa)
         // não segura a suspensão de um notebook que ninguém está olhando.
         let trabalhando =
             self.processos.keys().any(|chat| matches!(self.execucao_real(chat), Execucao::Rodando { .. }));
+        if cfg!(windows) {
+            #[cfg(windows)]
+            segurar_a_suspensao(trabalhando);
+            return;
+        }
         if let Some(trava) = self.trava_de_suspensao.as_mut()
             && trava.try_wait().ok().flatten().is_some()
         {
@@ -2625,6 +2670,11 @@ impl Motor {
                 {
                     processo.pedir_titulo(&descricao);
                 }
+                // Nos outros caminhos (outro agente escolhido, ou um chat que não é do Claude), o
+                // título vem de um pedido avulso, em paralelo ao turno.
+                if !self.revisoes_do_par.contains_key(chat_id) {
+                    self.pedir_titulo_avulso(chat_id, cx);
+                }
                 self.processos.insert(chat_id.to_string(), processo);
                 self.geracao_atual.insert(chat_id.to_string(), geracao);
                 self.motivos_de_hook.esquecer(chat_id);
@@ -2729,6 +2779,11 @@ impl Motor {
             prompt_sistema.push_str("\n\n");
             prompt_sistema.push_str(pedido_da_lingua);
         }
+        let economia = chat.economia && chat.agente == Agente::Claude;
+        if economia {
+            prompt_sistema.push_str("\n\n");
+            prompt_sistema.push_str(prompts::ECONOMIA);
+        }
         // Por arquivo, o prompt novo vale já no turno de uma sessão retomada; num Claude Code mais
         // velho (ou antes de saber a versão), vai na linha de comando.
         let prompt_arquivo = self.versao_claude.filter(|v| *v >= claude::VERSAO_PROMPT_POR_ARQUIVO).and_then(|_| {
@@ -2754,7 +2809,9 @@ impl Motor {
             cortar_em: chat.bifurcado_de.as_ref().filter(|_| !chat.sessao_criada && copia).and_then(|b| b.ate.clone()),
             // A família vai como a versão mais nova que o Claude Code instalado oferece (ver
             // `claude::modelo_para_o_turno`); num Claude Code sem as versões exatas, como está.
-            modelo: self.modelo_do_turno(chat),
+            // Com a economia, o Opus (e o Fable) viram o `opusplan`: Opus no Planejar, Sonnet no
+            // resto (conferido no 2.1.328 em 27/11/2026 pelo `modelUsage`).
+            modelo: self.modelo_do_turno(chat).map(|m| if economia { modelo_com_economia(&m) } else { m }),
             permissao: self.permissao_de(chat),
             prompt_sistema,
             prompt_arquivo,
@@ -3665,6 +3722,37 @@ impl Motor {
         cx.notify();
     }
 
+    /// Sai do login da conta principal (`claude auth logout`, em segundo plano): com uma conta só,
+    /// é o jeito de trocar por outra (dono, 27/11/2026). O e-mail e o plano dela somem da tela, e
+    /// o próximo turno (ou o "Entrar de novo") pede o login.
+    pub fn sair_da_conta_principal(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |motor, cx| {
+            let saiu = cx
+                .background_spawn(async move {
+                    let mut comando = crate::processos::comando_leve(claude::binario_claude(), "logout");
+                    comando
+                        .args(["auth", "logout"])
+                        .env_remove("CLAUDE_CONFIG_DIR")
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null());
+                    let Ok((mut filho, _escopo)) = crate::processos::abrir(comando) else {
+                        return false;
+                    };
+                    filho.wait().is_ok_and(|s| s.success())
+                })
+                .await;
+            let _ = motor.update(cx, |m, cx| {
+                if saiu && let Some(c) = m.contas.iter_mut().find(|c| c.id == contas::PRINCIPAL) {
+                    c.email.clear();
+                    c.plano.clear();
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub fn remover_conta(&mut self, id: &str, cx: &mut Context<Self>) {
         if id == contas::PRINCIPAL {
             return;
@@ -3704,26 +3792,45 @@ impl Motor {
         cx.notify();
     }
 
-    /// `/clear`: a conversa continua na tela, mas o Claude começa uma sessão nova, sem memória.
+    /// `/clear`: começa do zero, como o do Claude Code. A conversa sai da tela e da memória do
+    /// Vitral, e o agente (e o parceiro, numa dupla) abre uma sessão nova; a sessão antiga continua
+    /// no disco do agente. Com o turno rodando, ele para antes, e a limpeza vem quando o processo
+    /// sai (dono, 27/11/2026: "a meio bugado e não apaga o chat mesmo"; antes a conversa ficava na
+    /// tela, o turno rodando ignorava o comando em silêncio e o Codex tentava retomar uma sessão
+    /// que não existia).
     pub fn nova_sessao(&mut self, chat: &str, cx: &mut Context<Self>) {
         if self.processos.contains_key(chat) {
+            self.limpar_ao_parar.insert(chat.to_string());
+            self.parar(chat, cx);
             return;
         }
-        if let Some(c) = self.chat_mut(chat) {
-            c.sessao = uuid::Uuid::new_v4().to_string();
-            c.sessao_criada = false;
-            c.contexto = None;
-            if let Some(i) = c.importada.as_mut() {
-                i.marcar_continuada();
-            }
+        self.limpar_conversa(chat, cx);
+    }
+
+    /// A limpeza do `/clear` (`nova_sessao`).
+    fn limpar_conversa(&mut self, chat: &str, cx: &mut Context<Self>) {
+        let Some(c) = self.chat_mut(chat) else {
+            return;
+        };
+        limpar(c);
+        let nome = c.agente.nome();
+        self.execucao.remove(chat);
+        self.parcial.remove(chat);
+        self.sugestoes.remove(chat);
+        self.repetidos_sessao.remove(chat);
+        self.avisar(chat, &format!("Conversa limpa: o {nome} começa do zero."), false);
+        if let Some(c) = self.chat_gravado(chat) {
+            let _ = self.dados.salvar_chat(c);
         }
-        self.avisar(
-            chat,
-            "Sessão nova: o Claude não lembra das mensagens acima.",
-            false,
-        );
         self.salvar();
         cx.notify();
+    }
+
+    /// O `/clear` que esperava o turno parar: o processo saiu, a limpeza vem agora.
+    fn limpar_se_pedido(&mut self, chat: &str, cx: &mut Context<Self>) {
+        if !self.processos.contains_key(chat) && self.limpar_ao_parar.remove(chat) {
+            self.limpar_conversa(chat, cx);
+        }
     }
 
     /// Trata um sinal e diz se a janela precisa redesenhar: o pedaço de texto de uma conversa
@@ -4577,7 +4684,7 @@ impl Motor {
     /// que isso seria uma chamada ao modelo a cada turno de um chat que ele não soube titular.
     fn titulo_a_pedir(&mut self, chat_id: &str) -> Option<String> {
         const VEZES: u8 = 2;
-        if !crate::opcoes::titulo_pelo_claude_vale(self.config.titulo_pelo_claude, true) {
+        if caminho_do_titulo(&self.config, self.chat(chat_id)?) != Some(CaminhoDoTitulo::NoTurno) {
             return None;
         }
         if !self.versao_do_claude().is_some_and(|v| v >= claude::VERSAO_TITULO_GERADO) {
@@ -4595,7 +4702,7 @@ impl Motor {
     /// Code gravou na sessão (`ai-title`), se houver. Uma vez só, e nunca por cima de um nome dado
     /// à mão (`titulo_gerado_para`). Lê só o fim do arquivo da sessão.
     fn trocar_pelo_titulo_gerado(&mut self, chat_id: &str) {
-        if !crate::opcoes::titulo_pelo_claude_vale(self.config.titulo_pelo_claude, true) {
+        if self.chat(chat_id).and_then(|c| caminho_do_titulo(&self.config, c)) != Some(CaminhoDoTitulo::NoTurno) {
             return;
         }
         let Some(chat) = self.chat(chat_id).filter(|c| c.agente == Agente::Claude && titulo_automatico(c)) else {
@@ -4609,8 +4716,72 @@ impl Motor {
             return;
         };
         if let Some(c) = self.chat_mut(chat_id) {
-            c.titulo = titulo;
+            c.titulo_antes = Some(std::mem::replace(&mut c.titulo, titulo));
         }
+    }
+
+    /// O título por pedido avulso (`crate::titulo`), quando o caminho deste chat é esse: em
+    /// segundo plano, uma vez por chat em cada abertura do app. Sem o Claude instalado, o
+    /// automático pede ao próprio agente do chat, se ele souber titular.
+    fn pedir_titulo_avulso(&mut self, chat_id: &str, cx: &mut Context<Self>) {
+        let Some(chat) = self.chat(chat_id) else {
+            return;
+        };
+        let Some(CaminhoDoTitulo::Avulso(mut agente, modelo)) = caminho_do_titulo(&self.config, chat) else {
+            return;
+        };
+        if self.config.titulo_agente.trim().is_empty() && !agente.instalado() {
+            if !crate::titulo::TITULADORES.contains(&chat.agente) {
+                return;
+            }
+            agente = chat.agente;
+        }
+        let Some(descricao) = descricao_para_o_titulo(chat) else {
+            return;
+        };
+        let pasta = self.dados.cache.join("perguntas");
+        let conta_claude = self.conta_para(chat).pasta();
+        let ambiente_codex = crate::contas_codex::ambiente(&self.conta_codex_para(chat));
+        let pedidos = self.titulos_pedidos.entry(chat_id.to_string()).or_default();
+        if *pedidos > 0 {
+            return;
+        }
+        *pedidos += 1;
+        let id = chat_id.to_string();
+        cx.spawn(async move |motor, cx| {
+            let titulo = cx
+                .background_spawn(async move { crate::titulo::gerar(agente, modelo.as_deref(), &descricao, &pasta, conta_claude, &ambiente_codex) })
+                .await;
+            if let Some(titulo) = titulo {
+                let _ = motor.update(cx, |m, cx| m.aplicar_titulo_gerado(&id, titulo, cx));
+            }
+        })
+        .detach();
+    }
+
+    /// Põe o título que chegou do pedido avulso, se o do chat ainda é o automático.
+    fn aplicar_titulo_gerado(&mut self, chat_id: &str, titulo: String, cx: &mut Context<Self>) {
+        let Some(c) = self.chat_mut(chat_id) else {
+            return;
+        };
+        if c.titulo_desfeito || !titulo_automatico(c) || c.titulo == titulo {
+            return;
+        }
+        c.titulo_antes = Some(std::mem::replace(&mut c.titulo, titulo));
+        self.salvar();
+        cx.notify();
+    }
+
+    /// "Voltar ao título de antes": desfaz o gerado, e o chat não pede outro.
+    pub fn voltar_titulo_de_antes(&mut self, chat_id: &str, cx: &mut Context<Self>) {
+        if let Some(c) = self.chat_mut(chat_id)
+            && let Some(antes) = c.titulo_antes.take()
+        {
+            c.titulo = antes;
+            c.titulo_desfeito = true;
+        }
+        self.salvar();
+        cx.notify();
     }
 
     fn fim_de_turno(&mut self, chat_id: &str, erro: bool, texto: String, cx: &mut Context<Self>) {
@@ -5239,11 +5410,62 @@ const MAX_DESCRICAO_DO_TITULO: usize = 2000;
 /// O que vai no pedido do título gerado (`Processo::pedir_titulo`): a primeira fala, num chat do
 /// Claude cujo título ainda é o automático. `None` quando não há o que pedir.
 fn descricao_para_o_titulo(chat: &Chat) -> Option<String> {
-    if chat.agente != Agente::Claude || !titulo_automatico(chat) {
+    if !titulo_automatico(chat) {
         return None;
     }
     let fala = primeira_fala(chat)?.trim();
     (fala.chars().count() >= MENOR_DESCRICAO_DO_TITULO).then(|| fala.chars().take(MAX_DESCRICAO_DO_TITULO).collect())
+}
+
+/// O que o `/clear` faz no chat: a conversa sai, e o agente e o parceiro ficam com sessões novas
+/// (o id novo com a sessão por criar abre uma conversa nova em qualquer agente).
+fn limpar(c: &mut Chat) {
+    c.itens.clear();
+    (c.sessao, c.sessao_criada, c.contexto) = (uuid::Uuid::new_v4().to_string(), false, None);
+    c.bifurcado_de = None;
+    c.revisao_do_par = None;
+    if let Some(p) = c.parceiro.as_mut() {
+        (p.sessao, p.sessao_criada, p.contexto) = (uuid::Uuid::new_v4().to_string(), false, None);
+        p.bifurcado_de = None;
+    }
+    if let Some(i) = c.importada.as_mut() {
+        i.marcar_continuada();
+    }
+}
+
+/// O modelo do turno com a economia de tokens: o Opus e o Fable (e o padrão vazio) viram o
+/// `opusplan`; o Sonnet e o Haiku já são os baratos e ficam como estão.
+fn modelo_com_economia(modelo: &str) -> String {
+    let minusculo = modelo.to_lowercase();
+    if minusculo.is_empty() || minusculo == "default" || minusculo.contains("opus") || minusculo.contains("fable") {
+        "opusplan".to_string()
+    } else {
+        modelo.to_string()
+    }
+}
+
+/// Como o título de um chat é pedido.
+#[derive(Clone, Debug, PartialEq)]
+enum CaminhoDoTitulo {
+    /// Ao Claude Code, dentro do turno do próprio chat (`Processo::pedir_titulo`).
+    NoTurno,
+    /// Num pedido avulso a este agente, com este modelo (`crate::titulo`).
+    Avulso(Agente, Option<String>),
+}
+
+/// O caminho do título deste chat pela configuração, ou `None` (desligado, ou o gerado foi
+/// desfeito). O automático usa o Claude Code no chat do Claude e o Haiku avulso nos outros.
+fn caminho_do_titulo(config: &crate::modelo::Config, chat: &Chat) -> Option<CaminhoDoTitulo> {
+    if !config.titulo_pelo_claude || chat.titulo_desfeito {
+        return None;
+    }
+    let escolhido = crate::titulo::TITULADORES.into_iter().find(|a| a.nome().eq_ignore_ascii_case(config.titulo_agente.trim()));
+    let modelo = (!config.titulo_modelo.trim().is_empty()).then(|| config.titulo_modelo.trim().to_string());
+    Some(match escolhido {
+        Some(agente) => CaminhoDoTitulo::Avulso(agente, modelo),
+        None if chat.agente == Agente::Claude => CaminhoDoTitulo::NoTurno,
+        None => CaminhoDoTitulo::Avulso(Agente::Claude, None),
+    })
 }
 
 /// O título que o Claude Code gerou para a sessão (a linha `ai-title`), se é hora de pô-lo no
@@ -5479,6 +5701,39 @@ mod testes_do_titulo_gerado_e_do_aviso {
         assert_eq!(titulo_gerado_para(&chat_com(PRIMEIRA), &gerado("  ")), None);
     }
 
+    /// A economia troca o Opus e o Fable pelo `opusplan` e deixa os baratos como estão.
+    #[test]
+    fn a_economia_planeja_no_opus_e_executa_no_sonnet() {
+        assert_eq!(modelo_com_economia("claude-opus-5-5"), "opusplan");
+        assert_eq!(modelo_com_economia("claude-fable-5-2"), "opusplan");
+        assert_eq!(modelo_com_economia(""), "opusplan");
+        assert_eq!(modelo_com_economia("claude-sonnet-5-5"), "claude-sonnet-5-5");
+        assert_eq!(modelo_com_economia("haiku"), "haiku");
+    }
+
+    /// O caminho do título pela escolha nas Configurações (dono, 27/11/2026: o título pelo modelo
+    /// escolhido, também nos chats que não são do Claude).
+    #[test]
+    fn o_titulo_vem_do_agente_escolhido() {
+        let mut config = crate::modelo::Config::default();
+        let claude = chat_com(PRIMEIRA);
+        let codex = Chat { agente: Agente::Codex, ..chat_com(PRIMEIRA) };
+        // Automático: o Claude Code no chat dele; o Haiku avulso nos outros.
+        assert_eq!(caminho_do_titulo(&config, &claude), Some(CaminhoDoTitulo::NoTurno));
+        assert_eq!(caminho_do_titulo(&config, &codex), Some(CaminhoDoTitulo::Avulso(Agente::Claude, None)));
+        // Escolhido: esse, com o modelo, em todo chat.
+        config.titulo_agente = "codex".into();
+        config.titulo_modelo = "gpt-5.4-mini".into();
+        let esperado = Some(CaminhoDoTitulo::Avulso(Agente::Codex, Some("gpt-5.4-mini".into())));
+        assert_eq!(caminho_do_titulo(&config, &claude), esperado);
+        assert_eq!(caminho_do_titulo(&config, &codex), esperado);
+        // Desfeito ou desligado: nada.
+        let desfeito = Chat { titulo_desfeito: true, ..chat_com(PRIMEIRA) };
+        assert_eq!(caminho_do_titulo(&config, &desfeito), None);
+        config.titulo_pelo_claude = false;
+        assert_eq!(caminho_do_titulo(&config, &claude), None);
+    }
+
     #[test]
     fn a_descricao_do_pedido_do_titulo_e_a_primeira_fala() {
         assert_eq!(descricao_para_o_titulo(&chat_com(PRIMEIRA)).as_deref(), Some(PRIMEIRA));
@@ -5493,8 +5748,9 @@ mod testes_do_titulo_gerado_e_do_aviso {
         // Título que não é o automático não pede nada.
         let renomeado = Chat { titulo: "Bug da soma".into(), ..chat_com(PRIMEIRA) };
         assert_eq!(descricao_para_o_titulo(&renomeado), None);
+        // Desde 27/11/2026 o chat do Codex também ganha título (pelo pedido avulso).
         let codex = Chat { agente: Agente::Codex, ..chat_com(PRIMEIRA) };
-        assert_eq!(descricao_para_o_titulo(&codex), None);
+        assert_eq!(descricao_para_o_titulo(&codex).as_deref(), Some(PRIMEIRA));
         // A mensagem enorme vai cortada (num limite de letra, não no meio de uma).
         let longa = format!("{PRIMEIRA} {}", "ação ".repeat(2000));
         let c = chat_com(&longa);
@@ -6146,13 +6402,43 @@ fn respostas_escritas(entrada: &Value, texto: &str) -> Vec<(String, String)> {
     if texto.is_empty() {
         return Vec::new();
     }
-    entrada["questions"]
+    let perguntas: Vec<&Value> = entrada["questions"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|p| p["question"].as_str().filter(|t| !t.trim().is_empty()))
-        .map(|pergunta| (pergunta.to_string(), texto.to_string()))
+        .filter(|p| p["question"].as_str().is_some_and(|t| !t.trim().is_empty()))
+        .collect();
+    // Numa pergunta só, o número da opção (os do cartão) é a opção: "2", ou "1, 3" na que aceita
+    // várias (dono, 27/11/2026: "melhora a usabilidade de quando a IA pede pra responder entre
+    // alternativas").
+    let so_uma = perguntas.len() == 1;
+    perguntas
+        .into_iter()
+        .map(|p| {
+            let resposta = so_uma.then(|| opcoes_pelo_numero(p, texto)).flatten().unwrap_or_else(|| texto.to_string());
+            (p["question"].as_str().unwrap_or_default().to_string(), resposta)
+        })
         .collect()
+}
+
+/// "2" vira o rótulo da segunda opção; "1, 3" (ou "1 3"), os dois rótulos, na que aceita várias.
+/// `None` quando o texto não é só número de opção que existe.
+fn opcoes_pelo_numero(pergunta: &Value, texto: &str) -> Option<String> {
+    let opcoes = pergunta["options"].as_array()?;
+    let varias = pergunta["multiSelect"].as_bool().unwrap_or(false);
+    let numeros = texto
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse::<usize>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    if numeros.is_empty() || (!varias && numeros.len() > 1) {
+        return None;
+    }
+    let rotulos = numeros
+        .iter()
+        .map(|n| opcoes.get(n.checked_sub(1)?)?["label"].as_str().map(str::to_string))
+        .collect::<Option<Vec<_>>>()?;
+    Some(rotulos.join(", "))
 }
 
 /// O que um pedido aberto é para o sino, a lista e o Ctrl+G: o plano, a pergunta com opções ou
@@ -6381,6 +6667,27 @@ pub fn janela_padrao(modelo: Option<&str>) -> u64 {
             1_000_000
         }
         _ => 200_000,
+    }
+}
+
+/// A trava da suspensão no Windows (`Motor::acertar_trava`): `ES_SYSTEM_REQUIRED` contínuo
+/// enquanto algum chat trabalha. Vale para a thread que chamou (a da interface, onde o motor anda)
+/// até ela chamar de novo ou acabar, então some sozinha com o Vitral, mesmo numa queda. Sem o
+/// `ES_DISPLAY_REQUIRED`, a tela ainda apaga e bloqueia; fechar a tampa ou mandar suspender ainda
+/// suspende. Só chama o Windows quando muda.
+#[cfg(windows)]
+fn segurar_a_suspensao(segurar: bool) {
+    use windows_sys::Win32::System::Power::{ES_CONTINUOUS, ES_SYSTEM_REQUIRED, SetThreadExecutionState};
+    thread_local! {
+        static SEGURANDO: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if SEGURANDO.get() == segurar {
+        return;
+    }
+    let estado = if segurar { ES_CONTINUOUS | ES_SYSTEM_REQUIRED } else { ES_CONTINUOUS };
+    // SAFETY: só muda o estado de energia desta thread; devolve 0 no erro.
+    if unsafe { SetThreadExecutionState(estado) } != 0 {
+        SEGURANDO.set(segurar);
     }
 }
 
@@ -7598,6 +7905,13 @@ mod testes_da_pergunta_do_plano_e_da_compactacao {
         assert_eq!(resposta_da_pergunta(&entrada, &escritas)["updatedInput"]["answers"]["Quais frutas?"], "roxo com bolinhas");
         assert!(respostas_escritas(&entrada, "  ").is_empty());
         assert!(respostas_escritas(&json!({}), "roxo").is_empty());
+        // Numa pergunta só, o número escolhe a opção (o cartão numera as opções).
+        let uma = json!({ "questions": [{ "question": "Qual?", "options": [{ "label": "Tabela" }, { "label": "Lista" }] }] });
+        assert_eq!(respostas_escritas(&uma, "2"), [("Qual?".to_string(), "Lista".to_string())]);
+        assert_eq!(respostas_escritas(&uma, "1, 2"), [("Qual?".to_string(), "1, 2".to_string())], "só uma na de escolha única");
+        assert_eq!(respostas_escritas(&uma, "7"), [("Qual?".to_string(), "7".to_string())], "número que não é opção vale como texto");
+        let varias = json!({ "questions": [{ "question": "Quais?", "multiSelect": true, "options": [{ "label": "A" }, { "label": "B" }, { "label": "C" }] }] });
+        assert_eq!(respostas_escritas(&varias, "1 3"), [("Quais?".to_string(), "A, C".to_string())]);
         // O "Não responder" do cartão: `allow` sem resposta nenhuma (a CLI diz ao modelo que
         // ninguém respondeu). A recusa de verdade (o Negar de outro lugar) tem a frase dela.
         assert_eq!(resposta_da_pergunta(&entrada, &[])["updatedInput"]["answers"], json!({}));

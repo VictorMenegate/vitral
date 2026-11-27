@@ -22,6 +22,9 @@ pub enum DialogEntrance {
     /// Travel comes from the theme's short motion distance and is limited by
     /// the space above the resolved surface inside the window.
     FadeSlide,
+    /// Vitral (27/11/2026): fade in while rising from just below the final position, like the
+    /// prototype's settings card (`cartao-entra`).
+    FadeRise,
     /// Show the surface and backdrop immediately without entrance animation.
     None,
 }
@@ -33,6 +36,8 @@ pub(super) struct EntranceSurface {
     travel: Pixels,
     top_limit: Pixels,
     pub(super) progress: f32,
+    /// Vitral: travel from below (no top limit applies).
+    rising: bool,
 }
 
 impl EntranceSurface {
@@ -42,7 +47,14 @@ impl EntranceSurface {
             travel,
             top_limit,
             progress: 0.,
+            rising: false,
         }
+    }
+
+    /// Vitral: rise from below instead of settling from above.
+    pub(super) fn rising(mut self, rising: bool) -> Self {
+        self.rising = rising;
+        self
     }
 }
 
@@ -85,9 +97,14 @@ impl Element for EntranceSurface {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let available = (bounds.top() - self.top_limit).max(px(0.));
-        let travel = self.travel.max(px(0.)).min(available);
-        let offset = point(px(0.), -travel * (1. - self.progress.clamp(0., 1.)));
+        let falta = 1. - self.progress.clamp(0., 1.);
+        let offset = if self.rising {
+            point(px(0.), self.travel.max(px(0.)) * falta)
+        } else {
+            let available = (bounds.top() - self.top_limit).max(px(0.));
+            let travel = self.travel.max(px(0.)).min(available);
+            point(px(0.), -travel * falta)
+        };
         window.with_element_offset(offset, |window| self.child.prepaint(window, cx));
     }
 

@@ -48,7 +48,6 @@
  "Com a cabeça solta em {nome}": "Detached HEAD at {nome}",
  "Comandos": "Commands",
  "Comece um chat": "Start a chat",
- "Começa uma sessão nova (o agente esquece a conversa)": "Starts a new session (the agent forgets the conversation)",
  "Começando…": "Starting…",
  "Compactar": "Compact",
  "Compactar a conversa": "Compact the chat",
@@ -212,7 +211,6 @@
  "Recentes": "Recent",
  "Relatório": "Report",
  "Remover o anexo": "Remove the attachment",
- "Respondendo a": "Replying to",
  "Responder": "Reply",
  "Resposta nova": "New reply",
  "Resume a conversa agora, sem mexer no que está escrito na caixa (com o turno rodando, entra na fila). Para compactar com foco, escreva “/compact” e a instrução na caixa.": "Summarizes the chat now, without touching what's typed in the box (with a turn running, it goes to the queue). To compact with a focus, type “/compact” and the instruction in the box.",
@@ -386,5 +384,8 @@
  "Última resposta copiada": "Last reply copied",
  "… (cortado)": "… (truncated)",
  "… mais {n} linhas": "… {n} more lines",
- "… mais {quantas} saíram": "… {quantas} more removed"
+ "… mais {quantas} saíram": "… {quantas} more removed",
+ "Limpa a conversa e começa do zero": "Clears the conversation and starts over",
+ "Economia de tokens": "Token saving",
+ "Limpar a conversa": "Clear the conversation"
 }

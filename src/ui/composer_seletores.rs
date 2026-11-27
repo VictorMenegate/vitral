@@ -1379,6 +1379,8 @@ impl Janela {
             compactar: !chat.agente.acp() && chat.sessao_criada,
             tem_agentes: crate::ui::mapa_agentes::tem_agentes(chat),
             rodando: b.rodando,
+            // O opusplan e os subagentes com modelo são do Claude Code.
+            economia: (chat.agente == crate::modelo::Agente::Claude).then_some(chat.economia),
         };
         let grupos = grupos_do_mais(&agora);
         // Mandar numa hora marcada (`agendar.rs`): quando as 5 h renovarem, ou na hora escrita.
@@ -1422,11 +1424,23 @@ impl Janela {
                                     let _ = janela.update(cx, |this, cx| this.abrir_mapa_de_agentes(chat.clone(), window, cx));
                                 },
                             )),
-                            ItemDoMais::SessaoNova => menu.item(PopupMenuItem::new(tr!("Sessão nova")).icon(Lucide::RefreshCw).on_click(move |_, _, cx| {
+                            ItemDoMais::SessaoNova => menu.item(PopupMenuItem::new(tr!("Limpar a conversa")).icon(Lucide::RefreshCw).on_click(move |_, _, cx| {
                                 if let Some(m) = &motor_e {
                                     m.update(cx, |m, cx| m.nova_sessao(&chat, cx));
                                 }
                             })),
+                            // Dono, 27/11/2026: "faz algo pra economia de tokens ... e faz dar pra ativar e
+                            // desativar no menu".
+                            ItemDoMais::Economia => menu.item(
+                                PopupMenuItem::new(tr!("Economia de tokens"))
+                                    .icon(Lucide::Leaf)
+                                    .checked(agora.economia == Some(true))
+                                    .on_click(move |_, _, cx| {
+                                        if let Some(m) = &motor_e {
+                                            m.update(cx, |m, cx| m.alternar_economia(&chat, cx));
+                                        }
+                                    }),
+                            ),
                             ItemDoMais::Fixar => menu.item(
                                 PopupMenuItem::new(if fixado { tr!("Desafixar") } else { tr!("Fixar") })
                                     .icon(if fixado { Lucide::PinOff } else { Lucide::Pin })
@@ -1472,6 +1486,8 @@ struct AgoraNoMais {
     compactar: bool,
     tem_agentes: bool,
     rodando: bool,
+    /// Num chat do Claude, se a economia de tokens está ligada; fora dele, sem o item.
+    economia: Option<bool>,
 }
 
 /// Uma linha (ou um bloco de linhas) do "…".
@@ -1487,6 +1503,8 @@ enum ItemDoMais {
     Compactar,
     Agentes,
     SessaoNova,
+    /// A economia de tokens (só no chat do Claude), com o certo quando ligada.
+    Economia,
     Fixar,
 }
 
@@ -1507,7 +1525,14 @@ fn grupos_do_mais(agora: &AgoraNoMais) -> Vec<Vec<ItemDoMais>> {
     } else {
         Vec::new()
     };
-    let conversa = [Some(Comandos), agora.compactar.then_some(Compactar), agora.tem_agentes.then_some(Agentes), (!agora.rodando).then_some(SessaoNova), Some(Fixar)]
+    let conversa = [
+        Some(Comandos),
+        agora.compactar.then_some(Compactar),
+        agora.tem_agentes.then_some(Agentes),
+        (!agora.rodando).then_some(SessaoNova),
+        agora.economia.is_some().then_some(Economia),
+        Some(Fixar),
+    ]
         .into_iter()
         .flatten()
         .collect();
@@ -1541,6 +1566,8 @@ mod testes {
         // Claude, sem compactar; com subagentes, o mapa deles.
         let larga = AgoraNoMais { estreita: false, rodando: true, compactar: false, tem_agentes: true, ..base };
         assert_eq!(grupos_do_mais(&larga), [vec![Comandos, Agentes, Fixar]]);
+        // No chat do Claude, a economia de tokens entra antes do Fixar.
+        assert_eq!(grupos_do_mais(&AgoraNoMais { economia: Some(false), ..larga }), [vec![Comandos, Agentes, Economia, Fixar]]);
         for agora in [base, com_texto, larga, AgoraNoMais::default()] {
             let grupos = grupos_do_mais(&agora);
             assert!(grupos.len() <= 3 && grupos.iter().all(|g| !g.is_empty()), "{grupos:?}");

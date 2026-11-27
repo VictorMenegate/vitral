@@ -144,8 +144,7 @@ pub enum Marca {
     Codex,
     Gemini,
     Linear,
-    /// Os agentes ACP novos (`agente_acp`): sem logo no Vitral, um disco na cor do agente com a
-    /// inicial (26/11/2026).
+    /// Os agentes ACP novos (`agente_acp`), com o logo deles (`imagem_do_agente`).
     Agente(crate::modelo::Agente),
 }
 
@@ -180,6 +179,30 @@ static DISCO_LINEAR: LazyLock<Arc<Image>> = LazyLock::new(|| {
     let svg = include_bytes!("../../../assets/marcas/linear.svg");
     Arc::new(Image::from_bytes(ImageFormat::Svg, svg.to_vec()))
 });
+
+/// Os logos dos agentes ACP novos (27/11/2026, dono: "tem que colocar o logo deles mesmo"), do
+/// lobe-icons (MIT): no disco branco e soltos, como os do Claude, do Codex e do Gemini.
+fn imagem_do_agente(agente: crate::modelo::Agente, solta: bool) -> Option<Arc<Image>> {
+    use crate::modelo::Agente::*;
+    macro_rules! logo {
+        ($disco:literal, $glifo:literal) => {{
+            static DISCO: LazyLock<Arc<Image>> =
+                LazyLock::new(|| Arc::new(Image::from_bytes(ImageFormat::Svg, include_bytes!(concat!("../../../assets/marcas/", $disco)).to_vec())));
+            static GLIFO: LazyLock<Arc<Image>> =
+                LazyLock::new(|| Arc::new(Image::from_bytes(ImageFormat::Svg, include_bytes!(concat!("../../../assets/marcas/", $glifo)).to_vec())));
+            if solta { GLIFO.clone() } else { DISCO.clone() }
+        }};
+    }
+    Some(match agente {
+        Copilot => logo!("copilot.svg", "copilot-glifo.svg"),
+        Cursor => logo!("cursor.svg", "cursor-glifo.svg"),
+        OpenCode => logo!("opencode.svg", "opencode-glifo.svg"),
+        Qwen => logo!("qwen.svg", "qwen-glifo.svg"),
+        Kimi => logo!("kimi.svg", "kimi-glifo.svg"),
+        Grok => logo!("grok.svg", "grok-glifo.svg"),
+        Claude | Codex | Gemini => return None,
+    })
+}
 
 impl Marca {
     /// A marca de quem responde num chat.
@@ -236,7 +259,10 @@ impl Marca {
             Marca::Codex => GLIFO_CODEX.clone(),
             Marca::Gemini => GLIFO_GEMINI.clone(),
             Marca::Linear => return self.disco(lado).into_any_element(),
-            Marca::Agente(a) => return monograma(a, lado, false),
+            Marca::Agente(a) => match imagem_do_agente(a, true) {
+                Some(imagem) => imagem,
+                None => return monograma(a, lado, false),
+            },
         };
         img(imagem).flex_none().size(r(lado)).into_any_element()
     }
@@ -286,14 +312,15 @@ impl DiscoDeMarca {
 
 impl RenderOnce for DiscoDeMarca {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        if let Marca::Agente(agente) = self.marca {
-            return monograma(agente, self.lado, self.apagada);
-        }
         let imagem = match self.marca {
             Marca::Claude => DISCO_CLAUDE.clone(),
             Marca::Codex => DISCO_CODEX.clone(),
             Marca::Gemini => DISCO_GEMINI.clone(),
-            Marca::Linear | Marca::Agente(_) => DISCO_LINEAR.clone(),
+            Marca::Linear => DISCO_LINEAR.clone(),
+            Marca::Agente(agente) => match imagem_do_agente(agente, false) {
+                Some(imagem) => imagem,
+                None => return monograma(agente, self.lado, self.apagada),
+            },
         };
         img(imagem)
             .flex_none()

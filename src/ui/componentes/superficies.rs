@@ -929,6 +929,13 @@ pub fn desenho_teclas(partes: Vec<SharedString>) -> AnyElement {
     desenho_de_teclas(partes, Cores::hover(), Cores::tenue(), FONTE_MONO.into(), raio::de(18.)).into_any_element()
 }
 
+/// O atalho de uma ação sem o fundo de tecla, só o texto mono no tênue (o Esc da linha de estado
+/// da caixa; dono, 27/11/2026: "deixa esse esc sem esse fundo").
+pub fn teclas_soltas(acao: &dyn Action, contexto: Option<&str>, window: &Window) -> Option<AnyElement> {
+    let kbd = Kbd::binding_for_action(acao, contexto, window)?;
+    Some(desenho_de_teclas(kbd.partes(), transparent_black(), Cores::tenue(), FONTE_MONO.into(), raio::de(18.)).into_any_element())
+}
+
 /// O atalho de uma ação, tirado do keymap, em teclas separadas (rodapés de dica).
 pub fn teclas(acao: &dyn Action, contexto: Option<&str>, window: &Window) -> Option<AnyElement> {
     let kbd = Kbd::binding_for_action(acao, contexto, window)?;

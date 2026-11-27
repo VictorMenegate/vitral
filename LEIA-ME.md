@@ -50,6 +50,16 @@ componentes do GPUI Kit.
   pede pela entrada: o `generate_session_title` com a primeira fala e o `persist`
   (`Processo::pedir_titulo`), até duas vezes por chat em cada abertura do app, num Claude Code 2.1.323
   ou mais novo. É uma chamada pequena a mais do Claude Code por chat novo.
+  **Título pelo modelo escolhido** (27/11/2026, `src/titulo.rs`): em Configurações › Chats,
+  **Quem dá o título** escolhe entre o **Automático** (o de cima no chat do Claude; nos outros
+  chats, um pedido avulso ao Claude Haiku) e Claude, Codex ou Gemini fixos, com o **Modelo do
+  título**. O pedido avulso roda em paralelo ao primeiro turno, numa pasta vazia do cache, sem
+  gravar sessão: `claude -p` sem ferramentas, MCP, configurações e hooks (2,5 s no Haiku, medido),
+  `codex exec --ephemeral -s read-only` com esforço baixo (5 s) ou `agy -p` (7 s). A primeira
+  mensagem vai como material, nunca como pedido, e a resposta é limpa (`titulo::limpar`: uma
+  linha, sem aspas nem markdown, até 60 letras). O título de antes fica em `Chat.titulo_antes`, e
+  o clique direito no chat tem **Voltar ao título de antes**, que marca `titulo_desfeito` para o
+  chat não pedir outro. Renomear à mão apaga o "de antes".
 - **Claude ou Codex.** Cada chat diz quem responde (`Chat.agente`, em `src/modelo.rs`): o Claude
   Code ou o Codex, a CLI da OpenAI. Escolhe-se no seletor de modelo, que tem as abas **Claude** e **Codex**
   (trocar de aba só mostra os modelos do outro; quem responde muda ao escolher um; a aba do Codex tem
@@ -188,6 +198,13 @@ componentes do GPUI Kit.
   `ui/mensagens/revisao.rs`, `Motor::pode_revisar`) pede a mesma revisão para qualquer turno. Na
   bancada, `[ferramenta EditGrande x.py]` faz um turno de 30 linhas e `[revisor-acha]` na mensagem
   faz o revisor de mentira achar algo.
+  **Quem revisa** (27/11/2026; dono: "tinha que ter como só escolher a IA e o modelo, aí até em um
+  chat dessa mesma IA ser ela"): em Configurações › Revisão › Revisor, só **IA** (as instaladas,
+  com o logo) e **Modelo**. A escolhida revisa todo chat, até um dela mesma, numa sessão à parte:
+  o parceiro nasce com o mesmo agente (`abrir_com`, sem passar pelo `iniciar_dupla`, que não
+  aceita dois iguais), e no fim a vez volta pela sessão guardada em `RevisaoEmCurso.sessao_principal`
+  (`vez_do_revisor`). Sem escolha, o Codex, ou o Claude sem ele (`revisor_da_config`). Num chat que
+  já é uma dupla, revisa o parceiro.
 - **Subagente em segundo plano.** Desde o Claude Code 2.1.3xx a chamada Agent volta na hora com
   `tool_use_result.status = "async_launched"`: isso vira `Evento::SubLancado`, e não resultado. O
   `system/task_progress` conta as ferramentas (`SubProgresso`) e o `system/task_notification`
@@ -1010,7 +1027,7 @@ subpasta com git próprio que o de cima ignora ou não conhece entra com o prefi
 pasta (o worktree, com `.git` em arquivo, duplicaria tudo). Em ~/eita, cuja raiz é lista-branca,
 é isso que faz o "@" achar o código dos projetos.
 Colar (Ctrl+V) imagem ou arquivos copiados, ou arrastar arquivos do gerenciador para a conversa,
-vira anexo. `/` abre os comandos de barra (os do seu Claude Code, com `/clear` para sessão nova e
+vira anexo. `/` abre os comandos de barra (os do seu Claude Code, com `/clear` e
 `/compact`), num menu acima da caixa: ↑/↓ andam pelo menu (o campo fica no contexto "Menu" só
 enquanto ele está à vista), Tab ou Enter completam o item marcado (o Enter com o nome exato de um
 comando envia), e Esc fecha o menu sem apagar o que foi escrito; a próxima letra o abre de novo. Passe o mouse numa mensagem para copiar (e, na sua, corrigir e mandar de novo): as ações aparecem numa barra flutuante no canto de cima do seu balão, à direita, a 16 da borda
@@ -1140,13 +1157,15 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   Com a resposta já dada e os agentes ainda rodando, ela diz o agente e o que ele faz ("Mapear o
   carrinho: Rodando cargo test…") ou, com mais de um, "3 agentes trabalhando em segundo plano…"
   (a linha da caixa só diz o que o chat faz com a conversa rolada para cima; no fim, quem diz são
-  as linhas dos agentes). **Memória do chat**: no Linux, a dica do relógio diz quanto o turno ocupa
+  as linhas dos agentes). **Memória do chat**: a dica do relógio diz quanto o turno ocupa
   agora, "Memória deste chat: 3,1 GB" (o agente e tudo o que ele abriu: comandos, testes,
-  servidores). O número é o `memory.current` do cgroup do escopo do systemd em que o chat roda
-  (`Escopo::memoria`, em `src/processos/unix.rs`, achado pelo `/proc/<pid>/cgroup` do processo e
-  só aceito se o cgroup é o do escopo), lido quando a linha pergunta e guardado por 3 s
-  (`src/motor/memoria.rs`); chat parado não é lido. No Windows, sem systemd ou sem o controlador
-  de memória no cgroup do usuário, a dica não aparece. Não há aviso de máquina no limite (o dono
+  servidores). No Linux o número é o `memory.current` do cgroup do escopo do systemd em que o chat
+  roda (`Escopo::memoria`, em `src/processos/unix.rs`, achado pelo `/proc/<pid>/cgroup` do processo
+  e só aceito se o cgroup é o do escopo); no Windows, a soma da coluna Memória do Gerenciador de
+  Tarefas (o conjunto de trabalho privado) dos processos do Job Object do chat
+  (`src/processos/windows.rs`). É lido quando a linha pergunta e guardado por 3 s
+  (`src/motor/memoria.rs`); chat parado não é lido. No Linux sem systemd ou sem o controlador de
+  memória no cgroup do usuário, a dica não aparece. Não há aviso de máquina no limite (o dono
   não quis aviso novo). **Esc que não custa caro** (rodada de uso, item 6.2): quando parar derrubaria o
   processo inteiro (agentes em segundo plano, a espera por eles, um turno com Ultracode), o
   primeiro Esc só arma, e a linha diz "Esc de novo para parar os N agentes" por 3 s; o botão Parar
@@ -1195,13 +1214,16 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   comando, o caminho) vai embaixo. A caixa do comando mostra umas 11 linhas e rola: com mais que
   isso (ou mais de 900 caracteres), o cartão avisa "Comando comprido: role a caixa para ler tudo
   antes de permitir.". Escrever na caixa de mensagem e dar Enter nega o pedido e manda o texto
-  ao Claude (ver **Responder a um pedido de permissão escrevendo**). No rodapé, **Negar e
-  explicar…** (o ícone; o texto vai ao Claude),
-  **Negar** e **Permitir**, e à esquerda a caixa de marcar **Não perguntar de novo: edições nesta
-  conversa** (ou "este comando", ou o nome da ferramenta): marcada, o Permitir grava a regra, que
-  vale já no turno em andamento (`permitir_sempre`); desmarcada, permite só esta vez. Com um
+  ao Claude (ver **Responder a um pedido de permissão escrevendo**). No rodapé, a dica "Ou
+  escreva na caixa para negar explicando", **Negar e explicar…** (o ícone; o texto vai ao
+  agente), **Negar**, **Sempre: edições nesta conversa** (ou "este comando", ou o nome da
+  ferramenta), que permite e grava a regra, já valendo no turno em andamento (`permitir_sempre`),
+  e **Permitir**, só esta vez. Até 27/11/2026 o "sempre" era uma caixa de marcar ao lado do
+  Permitir: dois cliques e pouco à vista. A moldura dos pedidos (`moldura_dupla`, estado
+  `Esperando`) é o preto da caixa com um fio azul; antes era o metal vivo, que brilhava e mexia
+  ao lado da conversa. Com um
   trecho arriscado no comando (`rm -rf`, `sudo`, `--force`, `| sh`...), o trecho aparece em
-  vermelho, um aviso explica, a caixa de marcar some e o botão é **Segure para permitir**
+  vermelho, um aviso explica, o **Sempre** some e o botão é **Segure para permitir**
   (`BotaoDeSegurar`, em `src/ui/componentes/controles.rs`, com o `Segurar` de
   `src/ui/movimento.rs`): só confirma depois de 0,9 s apertado, enchendo da esquerda para a
   direita, e soltar ou sair com o ponteiro cancela. Pelo teclado, o primeiro Enter arma ("Enter de
@@ -1214,7 +1236,7 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   `permissionDecision: "ask"` (a trava de um deploy, por exemplo): a chamada vira o mesmo cartão,
   em **todos os modos, até em Sem perguntar**, com uma linha a mais embaixo do comando, com o
   escudo em âmbar: "Um hook pediu a sua confirmação: <o motivo que o hook deu>", inteira e com
-  quebra de linha (até 600 caracteres). Esse cartão não tem a caixa **Não perguntar de novo**, e
+  quebra de linha (até 600 caracteres). Esse cartão não tem o **Sempre**, e
   uma regra já gravada na conversa não vale para ele: quem pôs o hook quer ser perguntado toda
   vez. O mesmo cartão (sem a linha) aparece para uma regra `ask` das configurações do Claude Code.
   Como funciona, medido no Claude Code 2.1.328 em 23/11/2026 com um hook de teste: com o "ask",
@@ -1239,15 +1261,18 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   enquanto os agentes em segundo plano ainda trabalham.
 - **Pergunta com opções (AskUserQuestion).** Quando o agente pergunta algo com alternativas, a
   pergunta aparece num cartão dos pedidos (`Janela::cartao_pergunta`, em `src/ui/pergunta.rs`),
-  na moldura dupla: cada pergunta com o cabeçalho curto em mono, o texto e as opções para clicar,
-  uma por linha, com o marcador redondo (escolha única) ou quadrado ("Dá para marcar mais de
-  uma.", o `multiSelect`), o rótulo e a descrição embaixo; por último a **Outra…**, que abre um
-  campo de texto livre. No rodapé, **Não responder** e **Enviar**, que só liga com todas as
-  perguntas respondidas (o Enter no campo da "Outra…" também envia; com várias perguntas, o
+  na moldura dupla: cada pergunta com o cabeçalho curto, o texto e as opções para clicar, uma por
+  linha, com o número da opção num selo (azul quando escolhida; o certo na que aceita várias, "Dá
+  para marcar mais de uma.", o `multiSelect`), o rótulo e a descrição embaixo; por último a
+  **Outra…**, com o lápis, que abre um campo de texto livre. **Uma pergunta só, de escolha
+  única: o clique na opção já responde**, sem Enviar, e o rodapé diz "Clique numa opção ou
+  escreva o número na caixa" (27/11/2026). Nos outros casos, **Não responder** e **Enviar**, que só
+  liga com todas as perguntas respondidas (o Enter no campo da "Outra…" também envia; com várias perguntas, o
   rodapé diz "1 de 2 respondidas", e as perguntas rolam dentro do cartão quando falta altura).
   O **Não responder** devolve a pergunta sem resposta (o modelo lê que ninguém respondeu), sem
   marcar a chamada como falha. Escrever na caixa de mensagem e dar Enter responde sem escolher
-  opção: o texto vale como a "Outra…" de cada pergunta (`motor::respostas_escritas`; a dica do
+  opção: o texto vale como a "Outra…" de cada pergunta; numa pergunta só, o número da opção ("2",
+  ou "1, 3" na que aceita várias) é a opção (`motor::respostas_escritas`; a dica do
   Enviar diz "Responde à pergunta com isto, sem escolher opção"). No sino, no aviso do
   canto e na lista ela aparece como "Pergunta · <texto>", com **Ver pergunta**, e nunca tem
   "Não perguntar de novo" (`modelo::regra_de_permissao`). Respondida, fica na trilha como
@@ -1336,8 +1361,9 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   linha só, "Trabalhou 6 min 12 s · 13 comandos · editou carrinho.py e motor.rs" (o nome dos
   arquivos editados até dois; acima disso, a contagem), com a resposta logo embaixo; o clique na
   linha abre e recolhe o resto. Só recolhe o turno com pelo menos uma trilha e um texto
-  intermediário; o texto intermediário que termina em pergunta, o aviso de erro e o cartão de
-  falha ficam à vista, e as imagens das chamadas escondidas continuam embaixo da linha, na pilha.
+  intermediário; todo texto intermediário (o que o agente diz no meio do turno, desde 27/11/2026:
+  antes só o que terminava em pergunta), o aviso de erro e o cartão de falha ficam à vista, também
+  no modo foco, em que o turno rodando vira uma linha só, e as imagens das chamadas escondidas continuam embaixo da linha, na pilha.
   A duração é a hora do último item menos a da mensagem (sem número nas conversas de antes da
   0.4.0). **Checagens do turno** (`src/ui/checagens.rs`): ao lado dos comandos, a linha diz como
   terminou cada checagem que o turno rodou, "tsc passou · vitest falhou 2×, passou · cargo test
@@ -1856,7 +1882,17 @@ O Codex não continua uma conversa noutra conta: com a sessão já aberta, a tro
 nova, e a conversa até ali, exportada num arquivo, vai como nota junto da próxima mensagem. Com
 **Trocar sozinho no limite**, o limite do plano numa conta passa o chat para outra conta do Codex
 com login e repete o turno nela. O anel de uso do Codex continua um só (as sessões são as mesmas).
-No Windows as contas extras ainda não funcionam (os links pedem o Modo de Desenvolvedor).
+**No Windows** (27/11/2026; `src/ligacoes.rs`) as contas extras do Claude e do Codex funcionam
+sem administrador e sem o Modo de Desenvolvedor: as pastas ligadas (`projects`, skills, sessões)
+viram junções do NTFS, e os arquivos (`settings.json`, `CLAUDE.md`, `config.toml`, `AGENTS.md`),
+link simbólico quando o Windows deixa (Modo de Desenvolvedor ou administrador) e hard link quando
+não, o que pede a configuração do Vitral (`%APPDATA%`) no mesmo disco que o `~\.claude` e o
+`~\.codex`. Cópia não serviria: a mudança numa conta não chegaria nas outras. O Claude Code e o
+Codex gravam a configuração por troca atômica, que parte o hard link; por isso os itens que
+ficaram assim vão anotados no `.vitral-hard-links` da pasta da conta, e antes de cada turno o
+Vitral refaz o que se partiu, ficando com o texto mais novo (o da conta vai para a principal,
+e as outras voltam para ele). Nos dois sistemas, o que aparece na principal depois de a conta
+ser criada passa a ser ligado no turno seguinte.
 
 No canto de cima, à direita, da janela, logo abaixo do ×, flutua um anel de 30 por serviço, um em cima do
 outro, cada um num disco opaco da peça (`uso_no_canto`, em `src/ui/uso_plano.rs`): cada um só com a conta daquele serviço conectada (o do Codex,
@@ -2157,6 +2193,22 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
   **Retomar tudo**. Os cartões são neutros como os outros (selecionado em azul); o âmbar fica no
   ponto do balão e no da prévia. O **Arquivar** do menu do chat mostra "Conversa arquivada" com
   **Desfazer** (um chat que nunca rodou sai do Vitral: "Chat vazio apagado"); desarquivar não avisa.
+  **Apagar…**, no fim do menu, tira o chat do Vitral de vez, com a fila e as imagens, depois de
+  confirmar (`Motor::apagar_chat`; dono, 27/11/2026: "algo que dê pra apagar o chat mesmo pra
+  controle de memória"); a sessão do agente continua no disco dele. O **`/clear`** limpa a conversa
+  (sai da tela e da memória) e abre sessão nova no agente e no parceiro (`Motor::nova_sessao`,
+  `limpar`); com o turno rodando, ele para o turno e limpa quando o processo sai
+  (`limpar_ao_parar`). Antes a conversa ficava na tela, o turno rodando ignorava o comando sem
+  avisar e o Codex tentava retomar uma sessão que não existia.
+- **Economia de tokens** (o "…" da caixa, só no chat do Claude; dono, 27/11/2026: "um agente sempre
+  tentar decidir quando planejar algo dividir em agents de modelos mais econômicos, tipo o
+  opusplan"). Ligada, o turno vai com o modelo `opusplan` no lugar do Opus e do Fable (Opus no
+  Planejar, Sonnet no resto: conferido no Claude Code 2.1.328 pelo `modelUsage`; o Sonnet e o
+  Haiku escolhidos ficam como estão, `modelo_com_economia`), e o prompt de sistema ganha o
+  `prompts::ECONOMIA`: planejar e dividir, mandar a parte braçal a subagentes pela ferramenta
+  Agent com `model` "haiku" (buscar, ler, conferir) ou "sonnet" (mudança bem definida), e não
+  delegar o que cabe em uma ou duas chamadas. A escolha fica no chat (`Chat.economia`) e vale para
+  os chats novos (`Config.economia_nos_novos`); muda a partir do próximo turno.
 - **Cartão de conversa**: uma linha só de 32 (o balão de 20 com o ponto do estado no canto, o
   título, em 400, a hora, o alfinete da fixada, o ponto de não lido e o número do painel; a pasta
   na dica do balão; o não lido sai em 600, dois degraus acima); a linha de baixo, com a prévia, volta só na busca que achou no texto. A hora sai em
@@ -2347,9 +2399,9 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
     do sistema; `trocar_pasta_de_trabalho`), **Avisar dentro do app**, **Notificação do
     sistema**, com o **Testar**, que manda uma notificação na hora (sem o `notify-send`, a linha diz
     o que falta), **Arquivar chats parados depois de** (nunca, 3, 7 ou 30 dias; só os chats já
-    lidos, não fixados e sem fila), **Sugerir a próxima mensagem** e **Título do chat pelo Claude
-    Code** (ligado; desligado, o título fica o das primeiras palavras e nem o pedido do título sai,
-    `opcoes::titulo_pelo_claude_vale`). Mais três grupos, todos gravando na hora em `Config`:
+    lidos, não fixados e sem fila), **Sugerir a próxima mensagem** e **Título gerado** (ligado;
+    desligado, o título fica o das primeiras palavras e nem o pedido do título sai), com **Quem dá
+    o título** e, com um agente fixo, o **Modelo do título** (`motor::caminho_do_titulo`). Mais três grupos, todos gravando na hora em `Config`:
     **Abas** (**Chat chamado por outro abre numa aba**, ligada, e **Fechar a aba para o chat**,
     ligada), **Caixa de mensagem** (**Seta ↑ na caixa vazia**: Corrigir a última, como era, ou
     Percorrer as enviadas; **Enter com o turno rodando**: Entra no turno, como era, ou Vai para a
@@ -2827,7 +2879,9 @@ desfoque**, em **Acabamento**; no Windows 10 ele pode pesar ao arrastar); o
 arrastar, o clique duplo, o Snap e os botões –, □ e × são do próprio Windows. Os avisos saem como
 notificações do Windows (AppUserModelID `VictorMenegate.Vitral`), o Parar manda o `interrupt` pela
 entrada do Claude Code (nos dois sistemas) e o Parar de verdade é o Job Object, que derruba a
-árvore inteira. Ainda não: contas extras e "Instalar o Codex".
+árvore inteira. As contas extras usam junções e hard links (ver **Contas e uso dos planos**), o
+computador não suspende sozinho com um chat trabalhando (o `SetThreadExecutionState`, no lugar do
+`systemd-inhibit`) e a dica do relógio mostra a memória do chat.
 
 Para instalar no Windows, o `vitral-<versão>-windows-x86_64-instalador.exe` do release: só para o
 usuário, sem administrador (sem certificado de assinatura, o SmartScreen avisa na primeira vez: Mais
@@ -3023,6 +3077,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/processos/` | Todo processo que o Vitral abre (`novo_comando`, sem janela de console no Windows) e os que ele para por inteiro: escopos do systemd ou grupos de processos (`unix.rs`), Job Objects (`windows.rs`); `entrada.rs` escreve na entrada do claude e do codex numa thread própria, porque o pipe enche em 64 KiB e a janela não pode esperar o processo ler |
 | `src/sistema/` | O que abre fora do Vitral, nos dois sistemas: editor, terminal, gerenciador de arquivos, o bash dos comandos (no Windows, o do Git para Windows, nunca o do WSL) e o aviso do que falta instalar (`linux.rs`, `windows.rs`) |
 | `src/contas.rs`, `src/contas/` | Contas extras (`CLAUDE_CONFIG_DIR`), login e o uso e o plano (o que o Claude Code guarda em `.claude.json` e a busca direta na Anthropic, `busca.rs`) |
+| `src/ligacoes.rs` | Os links das contas extras com a principal nos dois sistemas (link simbólico no Linux; junção e hard link no Windows) e a conferência que refaz o hard link partido antes de cada turno |
 | `src/codex.rs` | Uso do plano do Codex, lido das sessões em `~/.codex/sessions` |
 | `src/agente_gemini.rs` | O Gemini como agente de um chat, pelo `agy acp` (ACP): o canal da entrada, a tradução da saída para os eventos do Claude Code, o pedido de permissão, os modos e o catálogo de modelos |
 | `src/agente_codex.rs` | O Codex como agente de um chat: os argumentos do processo e o protocolo JSON-RPC em `src/agente_codex/servidor.rs`, a tradução da saída para os eventos do Claude Code, o sandbox de cada modo e o catálogo de modelos |

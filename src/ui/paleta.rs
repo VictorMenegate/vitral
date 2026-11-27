@@ -109,7 +109,7 @@ impl Direto {
             PerguntarAoOutro => tr!("Perguntar também ao {agente}", agente = chat.map_or(Agente::Codex, |c| c.agente.outro()).nome()).to_string(),
             Compactar => tr!("Compactar a conversa").to_string(),
             Agentes => tr!("Agentes desta conversa").to_string(),
-            SessaoNova => tr!("Sessão nova").to_string(),
+            SessaoNova => tr!("Limpar a conversa (/clear)").to_string(),
             Bifurcar => tr!("Continuar em outro chat a partir da última resposta").to_string(),
             Renomear => tr!("Renomear a conversa…").to_string(),
             Fixar if chat.is_some_and(|c| c.fixado) => tr!("Desafixar a conversa").to_string(),
@@ -181,7 +181,6 @@ impl Direto {
                     Compactar if c.agente.acp() => Some(tr!("O {agente} não tem o /compact", agente = c.agente.nome()).to_string()),
                     Compactar if !c.com_sessao => Some(tr!("A conversa ainda não tem sessão").to_string()),
                     Agentes if !c.tem_agentes => Some(tr!("Esta conversa não abriu agentes").to_string()),
-                    SessaoNova if c.rodando => Some(tr!("Espere o turno terminar").to_string()),
                     Bifurcar if !c.tem_resposta => Some(tr!("A conversa ainda não tem resposta").to_string()),
                     Bifurcar if c.rodando => Some(tr!("Espere o turno terminar").to_string()),
                     _ => None,
@@ -760,7 +759,10 @@ mod testes {
         assert_eq!(acha(&com, "Compactar a conversa").motivo, None);
         // Sem conversa no painel ativo, os comandos da conversa pedem uma.
         let vazio = entradas(&Momento::default());
-        assert_eq!(acha(&vazio, "Sessão nova").motivo.as_deref(), Some("Abra uma conversa no painel ativo"));
+        assert_eq!(acha(&vazio, "Limpar a conversa (/clear)").motivo.as_deref(), Some("Abra uma conversa no painel ativo"));
+        // Com o turno rodando, o /clear vale: ele para o turno e limpa depois (27/11/2026).
+        let rodando = entradas(&com_chat(ChatAgora { rodando: true, ..Default::default() }));
+        assert_eq!(acha(&rodando, "Limpar a conversa (/clear)").motivo, None);
         assert_eq!(acha(&vazio, "Contas do Claude").motivo, None);
         // A caixa vazia não tem pergunta para o outro agente.
         let caixa_vazia = entradas(&com_chat(ChatAgora { caixa_vazia: true, outro_instalado: true, ..Default::default() }));

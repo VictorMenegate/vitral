@@ -38,6 +38,9 @@ pub(super) struct PaginaAberta {
     lido: String,
     foco: Option<Foco>,
     menu: Option<MenuDaBarra>,
+    /// O bloco que acabou de ser solto num arrasto e quantas vezes já se soltou um: ele pisca de
+    /// 0,4 a 1 em 200 ms, como o `.bloco.solto` do protótipo.
+    solto: Option<(u64, u64)>,
 }
 
 /// O bloco em edição e o campo dele.
@@ -225,7 +228,7 @@ impl Janela {
         };
         if precisa {
             let texto = do_editor.or_else(|| do_disco.map(str::to_string)).unwrap_or_default();
-            *pagina = Some(PaginaAberta { completo: completo.to_path_buf(), doc: Pagina::ler(&texto), lido: texto, foco: None, menu: None });
+            *pagina = Some(PaginaAberta { completo: completo.to_path_buf(), doc: Pagina::ler(&texto), lido: texto, foco: None, menu: None, solto: None });
         }
     }
 
@@ -351,26 +354,32 @@ impl Janela {
             ),
             Tipo::Tarefa => {
                 let feito = b.feito;
+                let caixinha = div()
+                    .id("caixinha")
+                    .flex_none()
+                    .size(r(15.))
+                    .mt(esp::E4)
+                    .mr(crate::tema::pagina::CAIXINHA_DIREITA)
+                    .ml(esp::E2)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(raio::de(11.))
+                    .border(px(1.5))
+                    .text_color(Cores::forte())
+                    .cursor_pointer()
+                    .when(feito, |s| s.child(super::componentes::icone(Lucide::Check, 10., window)))
+                    .on_click(cx.listener(move |this, _, window, cx| this.alternar_tarefa(id, window, cx)));
+                // A cor anda ao marcar e desmarcar (150 ms, a `.caixinha` do protótipo).
                 Some(
-                    div()
-                        .id("caixinha")
-                        .flex_none()
-                        .size(r(15.))
-                        .mt(esp::E4)
-                        .mr(crate::tema::pagina::CAIXINHA_DIREITA)
-                        .ml(esp::E2)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(raio::de(11.))
-                        .border(px(1.5))
-                        .border_color(if feito { Cores::destaque() } else { Cores::apagado() })
-                        .when(feito, |s| s.bg(Cores::destaque()))
-                        .text_color(Cores::forte())
-                        .cursor_pointer()
-                        .when(feito, |s| s.child(super::componentes::icone(Lucide::Check, 10., window)))
-                        .on_click(cx.listener(move |this, _, window, cx| this.alternar_tarefa(id, window, cx)))
-                        .into_any_element(),
+                    super::movimento::com_estado(move |window, cx| {
+                        let t = super::movimento::valor(("caixinha-t", id as usize), if feito { 1f32 } else { 0f32 }, super::movimento::COR, super::movimento::Curva::Mover, window, cx);
+                        caixinha
+                            .border_color(Cores::apagado().blend(Cores::destaque().opacity(t)))
+                            .bg(Cores::destaque().opacity(t))
+                            .into_any_element()
+                    })
+                    .into_any_element(),
                 )
             }
             _ => None,
@@ -402,8 +411,11 @@ impl Janela {
             .child(alca)
             .children(marca)
             .child(conteudo);
-        // O bloco que acabou de nascer (Enter, "+", o fim da página) entra de cima, uma vez.
-        if p.doc.novo(id) {
+        // O bloco que acabou de nascer (Enter, "+", o fim da página) entra de cima, uma vez; o que
+        // foi solto num arrasto pisca, também uma vez por soltura.
+        if let Some((_, vez)) = p.solto.filter(|(solto, _)| *solto == id) {
+            super::movimento::entrar(bloco, SharedString::from(format!("bloco-solto-{id}-{vez}")), super::movimento::De::Parado).into_any_element()
+        } else if p.doc.novo(id) {
             super::movimento::entrar(bloco, ("entra-bloco", id as usize), super::movimento::De::Cima).into_any_element()
         } else {
             bloco.into_any_element()
@@ -1027,6 +1039,8 @@ impl Janela {
             let bloco = p.doc.blocos.remove(de);
             let para = antes_de.and_then(|a| p.doc.indice(a)).unwrap_or(p.doc.blocos.len());
             p.doc.blocos.insert(para, bloco);
+            let vez = p.solto.map_or(0, |(_, n)| n) + 1;
+            p.solto = Some((id, vez));
         }
         self.pagina_mudou(window, cx);
     }

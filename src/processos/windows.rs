@@ -25,12 +25,13 @@ use windows_sys::Win32::{
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next},
         JobObjects::{
             AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, SetInformationJobObject,
-            TerminateJobObject,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicProcessIdList, JobObjectExtendedLimitInformation,
+            QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
         },
+        ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS_EX2},
         Threading::{
             CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED, GetExitCodeProcess, OpenProcess, OpenThread,
-            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, ResumeThread,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, PROCESS_VM_READ, ResumeThread,
             THREAD_SUSPEND_RESUME, TerminateProcess, WaitForSingleObject,
         },
     },
@@ -202,9 +203,30 @@ impl Escopo {
         self.parar();
     }
 
-    /// A memória do chat só é lida no Linux, do cgroup do escopo do systemd; aqui, nada aparece.
+    /// A memória que o processo e tudo o que ele abriu ocupam agora, em bytes: a soma do conjunto
+    /// de trabalho privado (a coluna Memória do Gerenciador de Tarefas) de cada processo do job. É
+    /// o par do `memory.current` do cgroup no Linux, sem o cache de arquivos que lá entra na conta.
+    /// `None` sem o job, com processos demais para a lista ou sem conseguir ler nenhum.
     pub fn memoria(&self) -> Option<u64> {
-        None
+        let job = self.job.as_ref()?;
+        let mut lista = ListaDoJob { _atribuidos: 0, na_lista: 0, ids: [0; PROCESSOS_NA_LISTA] };
+        // SAFETY: a struct tem o formato do JOBOBJECT_BASIC_PROCESS_ID_LIST e vive durante a
+        // chamada, com o tamanho dela; o handle do job vive enquanto o escopo existe.
+        let listou = unsafe {
+            QueryInformationJobObject(
+                job.handle(),
+                JobObjectBasicProcessIdList,
+                (&mut lista as *mut ListaDoJob).cast(),
+                size_of::<ListaDoJob>() as u32,
+                std::ptr::null_mut(),
+            )
+        } != 0;
+        if !listou {
+            return None;
+        }
+        let ids = &lista.ids[..(lista.na_lista as usize).min(PROCESSOS_NA_LISTA)];
+        let lidas: Vec<u64> = ids.iter().filter_map(|&pid| memoria_do_processo(pid as u32)).collect();
+        (!lidas.is_empty()).then(|| lidas.iter().sum())
     }
 
     /// O processo principal terminou?
@@ -213,6 +235,37 @@ impl Escopo {
         // SAFETY: o handle do processo vive enquanto o escopo existe.
         unsafe { WaitForSingleObject(self.handle(), 0) == WAIT_OBJECT_0 }
     }
+}
+
+/// Quantos processos a lista do job comporta: o agente, os shells, os testes e os servidores dele.
+/// Com mais, o Windows recusa a lista e a memória não aparece.
+const PROCESSOS_NA_LISTA: usize = 1024;
+
+/// O `JOBOBJECT_BASIC_PROCESS_ID_LIST`, com espaço para `PROCESSOS_NA_LISTA` ids (o do windows-sys
+/// tem espaço para um só).
+#[repr(C)]
+struct ListaDoJob {
+    _atribuidos: u32,
+    na_lista: u32,
+    ids: [usize; PROCESSOS_NA_LISTA],
+}
+
+/// O conjunto de trabalho privado do processo `pid`, em bytes (o `PrivateWorkingSetSize`, do
+/// Windows 10 1809 em diante).
+fn memoria_do_processo(pid: u32) -> Option<u64> {
+    let processo = abrir_processo(pid, PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ)?;
+    let tamanho = size_of::<PROCESS_MEMORY_COUNTERS_EX2>() as u32;
+    let mut contadores = PROCESS_MEMORY_COUNTERS_EX2 { cb: tamanho, ..Default::default() };
+    // SAFETY: handle vivo com os direitos de consulta e de leitura; a struct estendida vive durante
+    // a chamada, e o tamanho dela vai no `cb` e no argumento (é por ele que o Windows a reconhece).
+    let leu = unsafe {
+        K32GetProcessMemoryInfo(
+            processo.as_raw_handle() as HANDLE,
+            (&mut contadores as *mut PROCESS_MEMORY_COUNTERS_EX2).cast(),
+            tamanho,
+        )
+    } != 0;
+    leu.then_some(contadores.PrivateWorkingSetSize as u64)
 }
 
 /// Um handle novo para o processo `pid`, com os direitos pedidos.
@@ -344,6 +397,16 @@ mod testes {
         assert!(inicio.elapsed() < Duration::from_secs(4));
         assert!(morre_logo(neto), "o neto continuou rodando");
         assert!(morre_logo(bisneto), "o bisneto continuou rodando");
+    }
+
+    #[test]
+    fn a_memoria_soma_os_processos_do_job() {
+        let (mut filho, escopo, _, _) = arvore();
+        let memoria = escopo.memoria();
+        escopo.parar();
+        let _ = filho.wait();
+        // Dois cmd e um ping vivos: mais que nada, bem menos que 1 GB.
+        assert!(memoria.is_some_and(|m| m > 100_000 && m < 1 << 30), "{memoria:?}");
     }
 
     #[test]

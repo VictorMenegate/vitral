@@ -2,6 +2,7 @@
 //! tem uma pasta própria usada como `CLAUDE_CONFIG_DIR`, onde só o login é dela: CLAUDE.md,
 //! configurações, skills, plugins e as conversas (`projects`) são links para `~/.claude`, então
 //! uma conversa pode continuar em qualquer conta e tudo se comporta igual ao Claude Code normal.
+//! No Windows os links são junções e hard links, sem pedir administrador (`ligacoes`).
 //!
 //! O cadastro fica em `~/.config/vitral/contas.json`; as pastas em `~/.config/vitral/contas/<id>`.
 
@@ -133,6 +134,19 @@ pub fn status(pasta: Option<&Path>) -> Result<(String, String)> {
     Ok((texto("email"), texto("subscriptionType")))
 }
 
+/// O que fica de `~/.claude` ligado em cada conta extra: tudo menos o login.
+const COMPARTILHADOS: [&str; 9] = [
+    "CLAUDE.md",
+    "settings.json",
+    "settings.local.json",
+    "skills",
+    "plugins",
+    "agents",
+    "commands",
+    "output-styles",
+    "projects",
+];
+
 /// Prepara a pasta de uma conta nova: links para o que é compartilhado com `~/.claude` e um
 /// `.claude.json` com os servidores MCP do usuário.
 pub fn preparar_pasta(id: &str) -> Result<PathBuf> {
@@ -140,21 +154,10 @@ pub fn preparar_pasta(id: &str) -> Result<PathBuf> {
     fs::create_dir_all(&pasta)?;
     let home = dirs::home_dir().context("sem pasta pessoal")?;
     let original = home.join(".claude");
-    for item in [
-        "CLAUDE.md",
-        "settings.json",
-        "settings.local.json",
-        "skills",
-        "plugins",
-        "agents",
-        "commands",
-        "output-styles",
-        "projects",
-    ] {
-        let fonte = original.join(item);
-        let destino = pasta.join(item);
-        if fonte.exists() && fs::symlink_metadata(&destino).is_err() {
-            ligar(&fonte, &destino)?;
+    for item in COMPARTILHADOS {
+        if original.join(item).exists() && fs::symlink_metadata(pasta.join(item)).is_err() {
+            crate::ligacoes::ligar_item(&original, &pasta, item)
+                .with_context(|| format!("não liguei {item} da principal na conta"))?;
         }
     }
     let config = pasta.join(".claude.json");
@@ -171,20 +174,22 @@ pub fn preparar_pasta(id: &str) -> Result<PathBuf> {
     Ok(pasta)
 }
 
-#[cfg(unix)]
-pub(crate) fn ligar(fonte: &Path, destino: &Path) -> std::io::Result<()> {
-    std::os::unix::fs::symlink(fonte, destino)
-}
-
-/// No Windows o link pede o Modo de Desenvolvedor (o certo lá é junction e hard link): as contas
-/// extras ficam para depois.
-#[cfg(windows)]
-pub(crate) fn ligar(_fonte: &Path, _destino: &Path) -> std::io::Result<()> {
-    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "as contas extras ainda não funcionam no Windows"))
+/// Antes de cada turno do Claude Code: confere as ligações de todas as contas extras
+/// (`ligacoes::conferir`). De todas, e não só a do turno: no Windows sem o Modo de Desenvolvedor, o
+/// que uma conta mudou na configuração chega à principal e às outras no próximo turno de qualquer
+/// chat. No Linux, só liga o que apareceu em `~/.claude` depois que a conta foi criada.
+pub fn conferir_ligacoes() {
+    let Some(casa) = dirs::home_dir() else {
+        return;
+    };
+    let original = casa.join(".claude");
+    for pasta in carregar().iter().filter_map(Conta::pasta) {
+        crate::ligacoes::conferir(&original, &pasta, &COMPARTILHADOS);
+    }
 }
 
 pub fn apagar_pasta(id: &str) {
-    if id != PRINCIPAL && !id.is_empty() && !id.contains('/') && !id.starts_with('.')
+    if id != PRINCIPAL && !id.is_empty() && !id.contains(['/', '\\']) && !id.starts_with('.')
         && let Some(pasta) = pasta_contas()
     {
         let _ = fs::remove_dir_all(pasta.join(id));

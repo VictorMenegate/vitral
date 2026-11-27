@@ -481,6 +481,60 @@ pub fn link_permitido(url: &str, do_assistente: bool) -> bool {
     do_assistente && comeca("vitral:") && (ler_link(url).is_some() || ler_comando(url).is_some())
 }
 
+/// Os arquivos que uma resposta já ligada aponta (os `vitral:arquivo/…` dela), sem repetir, na
+/// ordem em que aparecem.
+pub fn arquivos_ligados(markdown: &str) -> Vec<String> {
+    let mut vistos = Vec::new();
+    for (i, _) in markdown.match_indices("vitral:arquivo/") {
+        let url: String = markdown[i..].chars().take_while(|c| !matches!(c, ')' | ' ' | '>' | '"' | '\n')).collect();
+        if let Some((caminho, _)) = ler_link(&url)
+            && !vistos.contains(&caminho)
+        {
+            vistos.push(caminho);
+        }
+    }
+    vistos
+}
+
+/// Que tipo de entrega é um arquivo que o agente passa para você ver: o que se olha fora do
+/// Vitral, ou de mais de um jeito (dono, 27/11/2026: "quando é passado algum arquivo pra mim ver,
+/// tipo um html ou imagem, tem que ter a opção de abrir o html em código aqui ou no navegador, e
+/// pensa em outros cenários desse tipo"). Código e texto não entram: o link já abre no painel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Entrega {
+    /// .html e .htm: no navegador, ou o código aqui.
+    Pagina,
+    /// .png, .jpg, .gif, .webp, .bmp: no visor, ou no aplicativo do sistema.
+    Imagem,
+    /// .svg: é imagem e é código.
+    Svg,
+    /// .pdf e os de escritório: no aplicativo do sistema.
+    Documento,
+    /// .csv e .tsv: na planilha, ou o texto aqui.
+    Planilha,
+    /// Vídeo e áudio: no aplicativo do sistema.
+    Midia,
+    /// .zip, .tar.gz, .7z: na pasta.
+    Pacote,
+}
+
+/// A entrega de um caminho, pela extensão.
+pub fn entrega_de(caminho: &str) -> Option<Entrega> {
+    let minusculo = caminho.to_lowercase();
+    let ext = std::path::Path::new(&minusculo).extension()?.to_str()?.to_string();
+    Some(match ext.as_str() {
+        "html" | "htm" => Entrega::Pagina,
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => Entrega::Imagem,
+        "svg" => Entrega::Svg,
+        "pdf" | "docx" | "doc" | "odt" | "pptx" | "ppt" | "odp" | "xlsx" | "xls" | "ods" | "epub" => Entrega::Documento,
+        "csv" | "tsv" => Entrega::Planilha,
+        "mp4" | "webm" | "mov" | "mkv" | "mp3" | "wav" | "ogg" | "m4a" | "flac" => Entrega::Midia,
+        "zip" | "7z" | "rar" | "tgz" => Entrega::Pacote,
+        "gz" if minusculo.ends_with(".tar.gz") => Entrega::Pacote,
+        _ => return None,
+    })
+}
+
 /// O caminho inteiro e a linha de um `vitral:arquivo/<linha>/<caminho em %XX>` ou de uma menção,
 /// `vitral:mencao/<linhas>/<caminho em %XX>` (a primeira das linhas "120-134").
 pub fn ler_link(url: &str) -> Option<(String, Option<u32>)> {

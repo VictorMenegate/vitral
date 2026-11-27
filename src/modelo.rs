@@ -278,6 +278,10 @@ pub struct RevisaoEmCurso {
     /// versão de antes), o outro agente do chat.
     #[serde(default)]
     pub revisor: Option<Agente>,
+    /// A sessão do chat quando a revisão começou. Com o revisor do mesmo agente (o Claude revendo
+    /// o Claude), é ela que diz de quem é a vez na hora de fechar.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sessao_principal: String,
 }
 
 impl RevisaoEmCurso {
@@ -491,6 +495,16 @@ pub struct Chat {
     /// Conta do Codex (id em `contas_codex`); `None` segue a configuração (`Config.conta_codex`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conta_codex: Option<String>,
+    /// O título de antes do gerado, para o "Voltar ao título de antes" (some ao renomear).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub titulo_antes: Option<String>,
+    /// O título gerado foi desfeito: este chat não pede outro.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub titulo_desfeito: bool,
+    /// Economia de tokens (o "…" da caixa): no Claude, o Opus só para planejar e o Sonnet no resto
+    /// (o `opusplan`), e a parte braçal em subagentes mais baratos (`prompts::ECONOMIA`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub economia: bool,
     /// Tokens no contexto e tamanho da janela, do último turno.
     #[serde(default)]
     pub contexto: Option<u64>,
@@ -573,6 +587,9 @@ impl Chat {
             esforco: None,
             conta: None,
             conta_codex: None,
+            titulo_antes: None,
+            titulo_desfeito: false,
+            economia: false,
             contexto: None,
             janela: None,
             comandos: Vec::new(),
@@ -834,9 +851,10 @@ pub struct Config {
     pub revisao_manda_sozinha: bool,
     /// A linha "Codex revisou: nada a acrescentar" aparece na conversa.
     pub revisao_mostra_nada: bool,
-    /// Quem revisa: vazio é o outro agente (o Codex num chat do Claude, o Claude nos outros);
-    /// "claude", "codex" ou "gemini" fixam o revisor. Num chat do próprio revisor, vale o outro
-    /// (dono, 26/11/2026: "faz dar pra escolher que IA uso na revisão e qual modelo").
+    /// Quem revisa: "claude", "codex", "gemini" ou um dos ACP; vazio é o Codex (o Claude sem ele).
+    /// Revisa também os chats dele mesmo, numa sessão à parte (dono, 27/11/2026: "só escolher a IA
+    /// e o modelo, aí até em um chat dessa mesma IA ser ela"). Num chat que já é uma dupla, revisa
+    /// o parceiro.
     pub revisao_agente: String,
     /// O modelo de cada revisor, pelo agente ("claude" → "opus"); sem a chave, o padrão dele.
     pub revisao_modelos: std::collections::BTreeMap<String, String>,
@@ -875,8 +893,17 @@ pub struct Config {
     pub arquivos_mostrar_ignorados: bool,
     /// O último "Ignorar espaço em branco" do diff (vale ao abrir com `lembrar_arquivos`).
     pub diff_sem_espaco: bool,
-    /// O título do chat vem do Claude Code (`ai-title`), no lugar das primeiras palavras.
+    /// O título do chat é gerado (no lugar das primeiras palavras). O nome ficou do tempo em que
+    /// só o Claude Code o gerava (`ai-title`).
     pub titulo_pelo_claude: bool,
+    /// Quem dá o título: vazio é o automático (o Claude Code no próprio chat do Claude; nos outros,
+    /// um pedido avulso ao Claude Haiku); "claude", "codex" ou "gemini" pedem a esse, em todo chat
+    /// (dono, 27/11/2026: "pode fazer", o título pelo modelo escolhido).
+    pub titulo_agente: String,
+    /// O modelo de quem dá o título; vazio é o padrão (o Haiku no Claude).
+    pub titulo_modelo: String,
+    /// Os chats novos nascem com a economia de tokens ligada: a última escolha feita no "…".
+    pub economia_nos_novos: bool,
     /// Quais anéis de uso o canto mostra (cada um ainda depende de a conta estar conectada).
     pub anel_claude: bool,
     pub anel_codex: bool,
@@ -1005,6 +1032,9 @@ impl Default for Config {
             arquivos_mostrar_ignorados: false,
             diff_sem_espaco: false,
             titulo_pelo_claude: true,
+            titulo_agente: String::new(),
+            titulo_modelo: String::new(),
+            economia_nos_novos: false,
             anel_claude: true,
             anel_codex: true,
             anel_gemini: true,

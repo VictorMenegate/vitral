@@ -1,6 +1,6 @@
 [package]
 name = "vitral"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/VictorMenegate/vitral"
@@ -46,15 +46,19 @@ uuid = { version = "1.29.0", features = ["v4"] }
 libc = "0.2.191"
 
 [target.'cfg(windows)'.dependencies]
-# windows-sys: Job Objects e threads (src/processos/windows.rs), o shell (src/sistema/windows.rs) e,
-# no atualizador, o MoveFileExW, o espaço livre e o relógio desde o boot (src/atualizacao). Já vinha
-# no Cargo.lock pelo GPUI.
+# windows-sys: Job Objects, threads e a memória de cada processo (src/processos/windows.rs), o shell
+# (src/sistema/windows.rs), a junção e o hard link das contas extras (src/ligacoes.rs), a trava da
+# suspensão (src/motor.rs) e, no atualizador, o MoveFileExW, o espaço livre e o relógio desde o boot
+# (src/atualizacao). Já vinha no Cargo.lock pelo GPUI.
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_IO",
     "Win32_System_JobObjects",
+    "Win32_System_Power",
+    "Win32_System_ProcessStatus",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_Shell",

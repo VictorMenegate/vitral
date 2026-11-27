@@ -1067,7 +1067,7 @@ impl RenderOnce for ControleSegmentado {
         let lugar = alvo.map(|alvo| {
             let chave = movimento::chave(&self.id, "pilula");
             let inicial = inicial.unwrap_or(alvo);
-            movimento::valor_desde(chave, inicial, alvo, movimento::MOVER, Curva::Mover, window, cx)
+            movimento::valor_desde(chave, inicial, alvo, movimento::DESLIZAR, Curva::Mover, window, cx)
         });
         {
             let mut m = medidas.borrow_mut();
@@ -1449,11 +1449,10 @@ pub enum EstadoDaMoldura {
 pub fn moldura_dupla(estado: EstadoDaMoldura) -> Div {
     let moldura = div().flex().flex_col().w_full().p(esp::E4).rounded(raio::PECA);
     match estado {
-        // Aberta e não perigosa, a moldura de fora é metal vivo: o aro de 4 px do que espera você
-        // (o miolo opaco, por cima, deixa só o aro à vista).
-        EstadoDaMoldura::Esperando => moldura
-            .relative()
-            .child(div().absolute().top_0().left_0().size_full().child(abertura(Encaixe::Cobrir, None, Corners::all(raio::peca())))),
+        // Aberta e não perigosa: o preto da moldura da caixa, com o fio azul do que espera você.
+        // Era o metal vivo, que brilhava e mexia sem parar ao lado da conversa (dono, 27/11/2026:
+        // "melhora o design ... e o de permitir também"; o protótipo Linear não tem relevo).
+        EstadoDaMoldura::Esperando => moldura.bg(Cores::preto()).border_1().border_color(Cores::tinta_solida(Cores::destaque(), 0.6)),
         EstadoDaMoldura::Perigo => moldura.bg(Cores::tinta_solida(Cores::vermelho(), 0.35)),
         EstadoDaMoldura::Recolhida => moldura.bg(Cores::preto()).border_1().border_color(Cores::borda()),
     }

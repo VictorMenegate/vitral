@@ -48,7 +48,6 @@
  "Com a cabeça solta em {nome}": "Con la cabeza suelta en {nome}",
  "Comandos": "Comandos",
  "Comece um chat": "Empieza un chat",
- "Começa uma sessão nova (o agente esquece a conversa)": "Inicia una sesión nueva (el agente olvida la conversación)",
  "Começando…": "Iniciando…",
  "Compactar": "Compactar",
  "Compactar a conversa": "Compactar la conversación",
@@ -212,7 +211,6 @@
  "Recentes": "Recientes",
  "Relatório": "Informe",
  "Remover o anexo": "Quitar el adjunto",
- "Respondendo a": "Respondiendo a",
  "Responder": "Responder",
  "Resposta nova": "Respuesta nueva",
  "Resume a conversa agora, sem mexer no que está escrito na caixa (com o turno rodando, entra na fila). Para compactar com foco, escreva “/compact” e a instrução na caixa.": "Resume la conversación ahora, sin tocar lo escrito en la caja (con el turno en curso, entra en la cola). Para compactar con un enfoque, escribe “/compact” y la instrucción en la caja.",
@@ -386,5 +384,8 @@
  "Última resposta copiada": "Última respuesta copiada",
  "… (cortado)": "… (cortado)",
  "… mais {n} linhas": "… {n} líneas más",
- "… mais {quantas} saíram": "… {quantas} más eliminadas"
+ "… mais {quantas} saíram": "… {quantas} más eliminadas",
+ "Limpa a conversa e começa do zero": "Borra la conversación y empieza de cero",
+ "Economia de tokens": "Ahorro de tokens",
+ "Limpar a conversa": "Borrar la conversación"
 }

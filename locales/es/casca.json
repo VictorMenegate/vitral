@@ -423,5 +423,9 @@
  "{pasta} · arquivada": "{pasta} · archivada",
  "{tempo} em {turnos}": "{tempo} en {turnos}",
  "É esta lista": "Es esta misma lista",
- "É o arranjo em uso": "Es la disposición en uso"
+ "É o arranjo em uso": "Es la disposición en uso",
+ "Voltar ao título de antes": "Volver al título anterior",
+ "Limpar a conversa (/clear)": "Borrar la conversación (/clear)",
+ "IA": "IA",
+ "Apagar…": "Eliminar…"
 }

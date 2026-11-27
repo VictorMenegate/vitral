@@ -645,6 +645,7 @@ gpui_kit::assets::icon_assets!(
         KeyRound,
         Kanban,
         Keyboard,
+        Leaf,
         Lightbulb,
         LayoutGrid,
         Link,

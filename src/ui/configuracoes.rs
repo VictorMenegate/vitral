@@ -35,7 +35,7 @@ use crate::{
     claude::{self, Atualizacao, Versao},
     modelo::{Agente, Config},
     motor::{self, Motor},
-    paleta::{Cor, CoresDoFundo, FundoVivo, PERSONALIZADO, Paleta, TEMAS},
+    paleta::{Cor, FundoVivo, PERSONALIZADO, Paleta, TEMAS},
     tema::{Cores, Lucide, esp, linear, r, raio, tam},
     versoes_agentes::{self, Publicadas},
 };
@@ -490,8 +490,7 @@ impl Configuracoes {
             FundoVivo::Mesh => "mesh",
             FundoVivo::Desligado => "desligado",
         };
-        let cores_do_fundo = if p.cores_do_fundo == CoresDoFundo::Receita { "receita" } else { "tema" };
-        let (v1, v2) = (vista.clone(), vista.clone());
+        let v1 = vista.clone();
         let fundo = GrupoDeOpcoes::new(None)
             .linha(com(
                 LinhaDeOpcao::new("cfg-fundo-vivo", tr!("Fundo animado")).cabeca(),
@@ -512,23 +511,9 @@ impl Configuracoes {
                     window,
                     cx,
                 ),
-            ))
-            .linha(com(
-                LinhaDeOpcao::new("cfg-cores-do-fundo", tr!("Cores do fundo")).cabeca(),
-                menu_escolha(
-                    "cfg-cores-do-fundo",
-                    ancora,
-                    vec![Opcao::new("tema", tr!("Do tema")), Opcao::new("receita", tr!("Da receita"))],
-                    cores_do_fundo,
-                    cores_do_fundo,
-                    move |valor, _, cx| {
-                        let novo = if valor == "receita" { CoresDoFundo::Receita } else { CoresDoFundo::Tema };
-                        v2.update(cx, |este, cx| este.mudar_paleta(true, move |p| p.cores_do_fundo = novo, cx));
-                    },
-                    window,
-                    cx,
-                ),
             ));
+        // Sem o "Cores do fundo" (dono, 27/11/2026: "tira essa opção aqui"): vale o que estiver
+        // gravado em `Paleta::cores_do_fundo`, que de fábrica é o do tema.
 
         let v = vista.clone();
         let bordas = GrupoDeOpcoes::new(None).linha(
@@ -813,7 +798,7 @@ impl Configuracoes {
             ("Enter com o turno rodando".to_string(), if c.enter_na_fila { "vai para a fila" } else { "entra no turno" }.to_string()),
             ("Números nas abas".to_string(), if c.numeros_so_com_ctrl { "só com Ctrl" } else { "sempre" }.to_string()),
             ("Lembrar a aba Arquivos".to_string(), ligado(c.lembrar_arquivos)),
-            ("Título pelo Claude Code".to_string(), ligado(c.titulo_pelo_claude)),
+            ("Título gerado".to_string(), ligado(c.titulo_pelo_claude)),
             ("Anéis de uso".to_string(), format!("Claude {}, Codex {}, Gemini {}", ligado(c.anel_claude), ligado(c.anel_codex), ligado(c.anel_gemini))),
             ("Versão nova dos agentes".to_string(), if c.consultar_versoes { "consulta sozinho" } else { "só pelo botão" }.to_string()),
             ("Letra da conversa na caixa".to_string(), ligado(c.letra_na_caixa)),
@@ -1126,87 +1111,70 @@ impl Configuracoes {
             botao_cfg("cfg-revisao-instrucoes", if vazio { tr!("Escrever…") } else { tr!("Editar…") }, window, cx)
                 .on_click(move |_, window, cx| instrucoes::abrir_da_revisao(motor.clone(), window, cx))
         };
-        // Quem revisa e com que modelo (dono, 26/11/2026: "faz dar pra escolher que IA uso na
-        // revisão e qual modelo"). Num chat do escolhido, quem revisa é o outro agente.
+        // A IA que revisa e o modelo dela, e só (dono, 27/11/2026: "tinha que ter como só escolher
+        // a IA e o modelo, aí até em um chat dessa mesma IA ser ela"). A lista traz as instaladas,
+        // com o logo, sem descrição.
+        let escolhida = self.motor.read(cx).revisor_escolhido();
         let quem = {
             let motor = m();
-            let mut opcoes = vec![Opcao::new("", tr!("O outro agente")).descricao(tr!("O Codex num chat do Claude, o Claude nos outros"))];
-            opcoes.extend(Agente::TODOS.into_iter().map(|a| {
-                let descricao = if a.instalado() { tr!("Num chat do {agente}, revisa o {outro}", agente = a.nome(), outro = a.outro().nome()).to_string() } else { tr!("Não instalado").to_string() };
-                Opcao::new(a.nome().to_lowercase(), a.nome()).descricao(descricao)
-            }));
+            let opcoes: Vec<Opcao> = Agente::TODOS
+                .into_iter()
+                .filter(|a| a.instalado() || *a == escolhida)
+                .map(|a| Opcao::new(a.nome().to_lowercase(), a.nome()).simbolo(Simbolo::Glifo(Marca::do_agente(a))))
+                .collect();
             menu_escolha(
                 "cfg-revisao-agente",
                 Anchor::TopRight,
                 opcoes,
-                &config.revisao_agente,
-                "",
+                &escolhida.nome().to_lowercase(),
+                &escolhida.nome().to_lowercase(),
                 move |valor, _, cx| motor.update(cx, |m, cx| m.mudar_config(|c| c.revisao_agente = valor, cx)),
                 window,
                 cx,
             )
         };
-        // Um modelo por revisor que pode entrar: o escolhido e o outro (que revisa os chats dele),
-        // ou, sem escolha, o Claude e o Codex.
-        let fixo = Agente::TODOS.into_iter().find(|a| a.nome().eq_ignore_ascii_case(config.revisao_agente.trim()));
-        let mut revisores: Vec<Agente> = match fixo {
-            Some(a) => vec![a, a.outro()],
-            None => vec![Agente::Claude, Agente::Codex],
+        let modelo_do_revisor = {
+            let chave = escolhida.nome().to_lowercase();
+            let mut opcoes = vec![Opcao::new("", tr!("Padrão"))];
+            match escolhida {
+                Agente::Claude => opcoes.extend(MODELOS[1..].iter().map(|(valor, nome)| Opcao::new(*valor, SharedString::from(crate::i18n::traduzir(nome))))),
+                Agente::Codex => opcoes.extend(crate::agente_codex::modelos().into_iter().map(|m| Opcao::new(m.slug, m.nome))),
+                outro => opcoes.extend(crate::agente_gemini::modelos_de(outro).into_iter().map(|m| Opcao::new(m.valor, m.nome))),
+            }
+            let atual = config.revisao_modelos.get(&chave).cloned().unwrap_or_default();
+            // O modelo escolhido antes, que o catálogo de agora não traz, continua na lista.
+            if !atual.is_empty() && !opcoes.iter().any(|o| o.valor == atual) {
+                opcoes.push(Opcao::new(atual.clone(), atual.clone()));
+            }
+            let motor = m();
+            menu_escolha(
+                "cfg-revisao-modelo",
+                Anchor::TopRight,
+                opcoes,
+                &atual,
+                "",
+                move |valor, _, cx| {
+                    let chave = chave.clone();
+                    motor.update(cx, |m, cx| {
+                        m.mudar_config(
+                            |c| {
+                                if valor.is_empty() {
+                                    c.revisao_modelos.remove(&chave);
+                                } else {
+                                    c.revisao_modelos.insert(chave, valor);
+                                }
+                            },
+                            cx,
+                        )
+                    })
+                },
+                window,
+                cx,
+            )
         };
-        revisores.dedup();
-        let linhas_de_modelo: Vec<LinhaDeOpcao> = revisores
-            .into_iter()
-            .map(|agente| {
-                let chave = agente.nome().to_lowercase();
-                let mut opcoes = vec![Opcao::new("", tr!("Padrão")).descricao(tr!("O modelo padrão do agente"))];
-                match agente {
-                    Agente::Claude => opcoes.extend(
-                        MODELOS[1..].iter().zip(DESCRICOES_DE_MODELO).map(|((valor, nome), descricao)| Opcao::new(*valor, SharedString::from(crate::i18n::traduzir(nome))).descricao(SharedString::from(crate::i18n::traduzir(descricao)))),
-                    ),
-                    Agente::Codex => opcoes.extend(crate::agente_codex::modelos().into_iter().map(|m| Opcao::new(m.slug, m.nome))),
-                    outro => opcoes.extend(crate::agente_gemini::modelos_de(outro).into_iter().map(|m| Opcao::new(m.valor, m.nome))),
-                }
-                let atual = config.revisao_modelos.get(&chave).cloned().unwrap_or_default();
-                // O modelo escolhido antes, que o catálogo de agora não traz, continua na lista.
-                if !atual.is_empty() && !opcoes.iter().any(|o| o.valor == atual) {
-                    opcoes.push(Opcao::new(atual.clone(), atual.clone()));
-                }
-                let motor = m();
-                let chave_salva = chave.clone();
-                LinhaDeOpcao::new(SharedString::from(format!("cfg-revisao-modelo-{chave}")), tr!("Modelo do {agente}", agente = agente.nome())).controle(menu_escolha(
-                    SharedString::from(format!("cfg-revisao-modelo-{chave}")),
-                    Anchor::TopRight,
-                    opcoes,
-                    &atual,
-                    "",
-                    move |valor, _, cx| {
-                        let chave = chave_salva.clone();
-                        motor.update(cx, |m, cx| {
-                            m.mudar_config(
-                                |c| {
-                                    if valor.is_empty() {
-                                        c.revisao_modelos.remove(&chave);
-                                    } else {
-                                        c.revisao_modelos.insert(chave, valor);
-                                    }
-                                },
-                                cx,
-                            )
-                        })
-                    },
-                    window,
-                    cx,
-                ))
-            })
-            .collect();
-        let mut revisor = GrupoDeOpcoes::new(Some(tr!("Revisor").into())).linha(
-            LinhaDeOpcao::new("cfg-revisao-agente", tr!("Quem revisa"))
-                .info(tr!("Num chat que já tem dois agentes, revisa o parceiro dele."))
-                .controle(quem),
-        );
-        for linha in linhas_de_modelo {
-            revisor = revisor.linha(linha);
-        }
+        let revisor = GrupoDeOpcoes::new(Some(tr!("Revisor").into()))
+            .linha(LinhaDeOpcao::new("cfg-revisao-agente", tr!("IA")).controle(quem))
+            .linha(LinhaDeOpcao::new("cfg-revisao-modelo", tr!("Modelo")).controle(modelo_do_revisor));
         let revisor = revisor
             .linha(LinhaDeOpcao::new("cfg-revisao-foco", tr!("Foco")).controle(h_flex().flex_wrap().justify_end().gap(esp::E4).children(chips)))
             .linha(
@@ -1286,7 +1254,7 @@ impl Configuracoes {
                 .info(
                     tr!("Cada conta tem uma pasta própria, em que só o login é dela: a configuração e as conversas são as da \
                      principal. Trocar a conta de um chat que já conversou abre uma sessão nova, com a conversa até ali \
-                     junto da próxima mensagem. Não funciona no Windows por enquanto."),
+                     junto da próxima mensagem."),
                 )
                 .controle(botao_cfg("cfg-codex-adicionar", tr!("Adicionar…"), window, cx).on_click(move |_, window, cx| {
                     if let Err(erro) = motor_e.update(cx, |m, cx| m.adicionar_conta_codex(cx)) {
@@ -1320,11 +1288,25 @@ impl Configuracoes {
         let padrao = linhas.into_iter().fold(GrupoDeOpcoes::new(Some(tr!("Conta padrão").into())), |g, (id, nome, detalhe)| {
             let marcado = escolha == id;
             let motor_e = self.motor.clone();
+            // Toda conta de verdade se desconecta aqui, a principal também (dono, 27/11/2026: "tem
+            // que dar pra desconectar a conta que tá usando ... aqui também").
+            let sair = (id != crate::contas::AUTOMATICA).then(|| {
+                let (motor_s, id_s) = (self.motor.clone(), id.clone());
+                botao_icone(SharedString::from(format!("cfg-conta-sair-{id}")), Lucide::Unplug, tr!("Desconectar…"), TamanhoBotao::Linha, window, cx)
+                    .on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        super::painel_contas::confirmar_desconectar(motor_s.clone(), id_s.clone(), window, cx);
+                    })
+            });
             g.linha(
                 div()
                     .id(SharedString::from(format!("cfg-conta-{id}")))
                     .cursor_pointer()
-                    .child(LinhaDeOpcao::new(SharedString::from(format!("cfg-conta-linha-{id}")), nome).descricao(detalhe.unwrap_or_default()).controle(radio(marcado)))
+                    .child(
+                        LinhaDeOpcao::new(SharedString::from(format!("cfg-conta-linha-{id}")), nome)
+                            .descricao(detalhe.unwrap_or_default())
+                            .controle(h_flex().gap(esp::E8).items_center().children(sair).child(radio(marcado))),
+                    )
                     .on_click(move |_, _, cx| super::painel_contas::escolher_conta(&motor_e, &id, cx)),
             )
         });
@@ -1469,6 +1451,65 @@ impl Render for Configuracoes {
         let (anel_claude, anel_codex, anel_gemini) = (m(), m(), m());
         let (avisos_no_app, alternar_avisos) = (config.avisos_no_app, m());
         let (titulo_claude, alternar_titulo) = (config.titulo_pelo_claude, m());
+        // Quem dá o título e com que modelo (dono, 27/11/2026: "pode fazer", o título pelo modelo
+        // escolhido). O automático é o de antes: o Claude Code no chat dele, o Haiku nos outros.
+        let titulador = {
+            let motor = m();
+            let mut opcoes = vec![Opcao::new("", tr!("Automático")).descricao(tr!("O Claude Code no chat do Claude, o Haiku nos outros"))];
+            opcoes.extend(crate::titulo::TITULADORES.into_iter().map(|a| {
+                let descricao = if a.instalado() { tr!("Em todo chat").to_string() } else { tr!("Não instalado").to_string() };
+                Opcao::new(a.nome().to_lowercase(), a.nome()).descricao(descricao)
+            }));
+            menu_escolha(
+                "cfg-titulo-agente",
+                Anchor::TopRight,
+                opcoes,
+                &config.titulo_agente,
+                "",
+                // Outro agente, outro catálogo: o modelo volta ao padrão dele.
+                move |valor, _, cx| {
+                    motor.update(cx, |m, cx| {
+                        m.mudar_config(
+                            |c| {
+                                c.titulo_agente = valor;
+                                c.titulo_modelo.clear();
+                            },
+                            cx,
+                        )
+                    })
+                },
+                window,
+                cx,
+            )
+        };
+        let modelo_do_titulo = crate::titulo::TITULADORES.into_iter().find(|a| a.nome().eq_ignore_ascii_case(config.titulo_agente.trim())).map(|agente| {
+            let mut opcoes = vec![match crate::titulo::modelo_padrao(agente) {
+                Some(_) => Opcao::new("", tr!("Padrão")).descricao(tr!("O Haiku, o mais rápido e barato")),
+                None => Opcao::new("", tr!("Padrão")).descricao(tr!("O modelo padrão do agente")),
+            }];
+            match agente {
+                Agente::Claude => opcoes.extend(
+                    MODELOS[1..].iter().zip(DESCRICOES_DE_MODELO).map(|((valor, nome), descricao)| Opcao::new(*valor, SharedString::from(crate::i18n::traduzir(nome))).descricao(SharedString::from(crate::i18n::traduzir(descricao)))),
+                ),
+                Agente::Codex => opcoes.extend(crate::agente_codex::modelos().into_iter().map(|m| Opcao::new(m.slug, m.nome))),
+                outro => opcoes.extend(crate::agente_gemini::modelos_de(outro).into_iter().map(|m| Opcao::new(m.valor, m.nome))),
+            }
+            let atual = config.titulo_modelo.clone();
+            if !atual.is_empty() && !opcoes.iter().any(|o| o.valor == atual) {
+                opcoes.push(Opcao::new(atual.clone(), atual.clone()));
+            }
+            let motor = m();
+            LinhaDeOpcao::new("cfg-titulo-modelo", tr!("Modelo do título")).controle(menu_escolha(
+                "cfg-titulo-modelo",
+                Anchor::TopRight,
+                opcoes,
+                &atual,
+                "",
+                move |valor, _, cx| motor.update(cx, |m, cx| m.mudar_config(|c| c.titulo_modelo = valor, cx)),
+                window,
+                cx,
+            ))
+        });
         // A pasta em que o "+" cria os chats (era "Escolher a pasta de trabalho…" no menu do logo).
         let pasta_de_trabalho = {
             let janela = self.janela.clone();
@@ -1509,12 +1550,19 @@ impl Render for Configuracoes {
                     }),
             )
             .linha(
-                LinhaDeOpcao::new("cfg-titulo-claude", tr!("Título pelo Claude"))
-                    .info(tr!("O Claude Code dá um título à conversa depois da primeira mensagem, e o Vitral o põe no lugar das primeiras palavras. Nunca troca um nome que você deu. Desligado, o título fica o das primeiras palavras. É uma chamada curta ao modelo, uma vez por chat."))
+                LinhaDeOpcao::new("cfg-titulo-claude", tr!("Título gerado"))
+                    .info(tr!("Depois da primeira mensagem, um modelo dá um título à conversa no lugar das primeiras palavras. Nunca troca um nome que você deu, e o clique direito no chat volta ao título de antes. Desligado, o título fica o das primeiras palavras."))
                     .interruptor(titulo_claude, move |ligado, _, cx| {
                         alternar_titulo.update(cx, |m, cx| m.mudar_config(|c| c.titulo_pelo_claude = ligado, cx))
                     }),
-            );
+            )
+            .when(titulo_claude, |grupo| {
+                let mut grupo = grupo.linha(LinhaDeOpcao::new("cfg-titulo-agente", tr!("Quem dá o título")).controle(titulador));
+                if let Some(linha) = modelo_do_titulo {
+                    grupo = grupo.linha(linha);
+                }
+                grupo
+            });
         // As abas: o chat que outro chat põe para trabalhar e o fechar (dono, 24/11/2026).
         let (abre_aba, alternar_abre_aba) = (config.chat_chamado_abre_aba, m());
         let (fecha_para, alternar_fecha_para) = (config.fechar_aba_para_o_chat, m());
@@ -2043,10 +2091,11 @@ impl Render for Configuracoes {
                             // A parte escolhida entra com fade e desliza do lado para onde se foi (de
                             // baixo descendo na coluna, de cima subindo); abrir as Configurações não
                             // anima aqui (o diálogo já entra).
-                            .child(movimento::entrada(
+                            .child(movimento::entrada_em(
                                 SharedString::from(format!("cfg-mostra-{}", atual.nome())),
                                 entra_de.is_some(),
                                 entra_de.unwrap_or(movimento::De::Parado),
+                                movimento::PAINEL,
                                 v_flex().w_full().gap(esp::E8).children(grupos),
                             )),
                     ),

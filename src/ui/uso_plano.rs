@@ -168,7 +168,9 @@ impl Janela {
             // soltas por cima da conversa (dono, 18/11/2026: "melhora o design dessa parte").
             // No Linear (25/11/2026) ela se arrasta para qualquer lugar (o modo foco é onde ela
             // aparece) e fica onde foi deixada.
-            .child(
+            // Entra 80 ms depois da lista sair, vindo da direita (o `trilho-entra` do protótipo).
+            .child(super::movimento::entrar_depois_em(
+                div().relative().child(
                 v_flex()
                     .id("trilho-de-uso")
                     .relative()
@@ -187,7 +189,12 @@ impl Janela {
                         }),
                     )
                     .children(botoes),
-            )
+                ),
+                "trilho-de-uso-entra",
+                super::movimento::De::Direita,
+                std::time::Duration::from_millis(80),
+                super::movimento::DESLIZAR,
+            ))
                 .into_any_element(),
         )
     }
@@ -417,6 +424,7 @@ impl RenderOnce for BotaoUso {
             })
             .child(
                 AnelDeUso::new(("uso-anel", id), self.marca, l.fora.map(|f| f as f32))
+                    .encher()
                     .semana(l.dentro.map(|f| f as f32))
                     .diametro(self.diametro)
                     .bloqueado(l.bloqueado)
@@ -995,8 +1003,9 @@ fn linha_conta(
     } else {
         div().child(resumo_conta(&uso))
     };
-    let removivel = linha.id != contas::PRINCIPAL;
-    let menu = removivel.then(|| menu_conta(linha.id.clone(), motor, popover, window, cx));
+    // Toda conta se desconecta, a principal também: com uma só, é o jeito de trocar (dono,
+    // 27/11/2026: "tem que dar pra desconectar a conta que tá usando").
+    let menu = Some(menu_conta(linha.id.clone(), motor, popover, window, cx));
     CartaoDeLista::new(SharedString::from(format!("uso-conta-{}", linha.id)), linha.rotulo)
         .titulo_no_meio()
         .simbolo(Simbolo::Elemento(anel.into_any_element()))

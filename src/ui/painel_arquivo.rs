@@ -1273,7 +1273,10 @@ impl Janela {
                     .children(barra_do_trecho),
             )
             // Na edição do agente, o campo do comentário da linha e o "Enviar comentários (N)".
-            .children(edicao.as_ref().and_then(|_| self.barra_de_comentarios(window, cx)).map(|barra| div().flex_none().p(esp::E8).child(barra)))
+            // Sobe ao aparecer (o `.arq-rodape` do protótipo, 200 ms).
+            .children(edicao.as_ref().and_then(|_| self.barra_de_comentarios(window, cx)).map(|barra| {
+                movimento::entrar(div().flex_none().p(esp::E8).child(barra), "barra-de-comentarios-entra", De::Baixo)
+            }))
             .when(!na_gaveta, |s| s.aresta_encostada(crate::tema::Esquerda::Emendada))
             .on_prepaint(medir)
             .into_any_element()
@@ -1678,7 +1681,8 @@ impl Janela {
             .child(div().flex_none().text_color(Cores::ambar()).child(super::componentes::icone(Lucide::TriangleAlert, 15., window)))
             .child(div().flex_1().min_w(r(120.)).text_size(r(12.5)).text_color(Cores::texto_da_fala()).child(frase))
             .child(div().flex().flex_none().items_center().gap(esp::E2).children(dele).child(manter));
-        movimento::entrada("entra-conflito-do-arquivo", nova, De::Cima, faixa).into_any_element()
+        // Sobe de baixo em 240 ms, como a faixa âmbar do protótipo.
+        movimento::entrada_em("entra-conflito-do-arquivo", nova, De::Baixo, movimento::SUBIR_LEVE, faixa).into_any_element()
     }
 
     /// Onde o código está rolado (a leitura em linhas), para o editor abrir no mesmo lugar.

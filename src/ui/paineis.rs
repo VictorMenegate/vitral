@@ -113,6 +113,11 @@ pub struct Painel {
     /// Onde a conversa abre no próximo desenho: no começo da resposta nova ou na âncora de leitura
     /// guardada (dono, 16/11/2026: rodada de uso, item 2.2).
     pub alvo: Option<super::mensagens::AlvoDeAbertura>,
+    /// No desenho anterior, um espaço de mensagem não montada caiu dentro da área à vista (a
+    /// conta das alturas errou, por exemplo logo depois de trocar de chat): este desenho monta
+    /// tudo, mede de novo e a conversa não fica com um vão em branco (dono, 27/11/2026: "troquei
+    /// de chat e aí o histórico do chat ficou bugado").
+    pub montar_tudo: bool,
     /// A âncora de leitura de cada chat que saiu deste painel sem estar no fim: o item no alto e
     /// quanto dele já tinha subido. Só durante a sessão, em memória.
     pub ancoras: std::collections::HashMap<String, super::mensagens::Ancora>,
@@ -587,6 +592,7 @@ impl Janela {
             foco_faixa: cx.focus_handle(),
             dica_caixa: tr!("Mensagem"),
             alvo: None,
+            montar_tudo: false,
             ancoras: Default::default(),
             novo_desde: None,
             posicoes: Default::default(),
