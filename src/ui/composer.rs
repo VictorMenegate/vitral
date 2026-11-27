@@ -763,6 +763,22 @@ fn envio(rodando: bool, vazio: bool) -> Envio {
     }
 }
 
+/// A prévia do trecho citado na caixa: numa linha corrida (as quebras viram espaço) e com até 180
+/// letras, cortada numa palavra, com "…" no fim quando corta.
+fn previa_da_citacao(trecho: &str) -> String {
+    const MAXIMO: usize = 180;
+    let corrido = trecho.split_whitespace().collect::<Vec<_>>().join(" ");
+    if corrido.chars().count() <= MAXIMO {
+        return corrido;
+    }
+    let corte: String = corrido.chars().take(MAXIMO).collect();
+    let corte = match corte.rfind(' ') {
+        Some(i) if i > MAXIMO / 2 => &corte[..i],
+        _ => corte.as_str(),
+    };
+    format!("{}…", corte.trim_end_matches([',', ';', ':', '.', ' ']))
+}
+
 /// A miniatura de uma imagem anexada na caixa: 40 de altura, até 120 de largura, com a imagem
 /// inteira dentro (era 56 e cortava: o print largo e baixo virava um pedaço ampliado do meio; dono,
 /// 27/11/2026: "ficou muito grande isso").
@@ -1333,28 +1349,40 @@ impl Janela {
             trecho.hash(&mut h);
             h.finish()
         };
-        let cartao = h_flex()
-            .relative()
-            .items_start()
-            .gap(esp::E6)
+        // "Respondendo" em cima, com o ícone e o X; embaixo, o trecho numa prévia limpa (sem as
+        // quebras de linha, cortada numa palavra com "…") e o fio azul ao lado dele (dono,
+        // 27/11/2026: "esse de responder também tá bem ruim"; era o trecho cru, cortado no meio de
+        // uma palavra, sem dizer o que era).
+        let tirar = BotaoRedondo::new(SharedString::from(format!("tirar-citacao-{chat}")), Some(Lucide::X.into()), tr!("Tirar a citação"))
+            .variante(VarianteRedonda::Plano)
+            .diametro(20.)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.citacoes.remove(&chat);
+                cx.notify();
+            }));
+        let cartao = v_flex()
+            .gap(esp::E4)
             .pl(esp::E12)
             .pr(esp::E4)
-            .py(esp::E4)
-            .rounded(raio::de(11.))
+            .pt(esp::E4)
+            .pb(esp::E8)
+            .rounded(raio::CONTROLE)
             .bg(Cores::preto())
-            .text_size(r(12.5))
-            .line_height(r(17.))
-            .text_color(Cores::tenue())
-            .child(div().absolute().left(r(5.)).top(esp::E6).bottom(esp::E6).w(px(2.)).rounded_full().bg(Cores::destaque_texto()))
-            .child(div().flex_1().min_w_0().line_clamp(2).text_ellipsis().child(trecho.to_string()))
             .child(
-                BotaoRedondo::new(SharedString::from(format!("tirar-citacao-{chat}")), Some(Lucide::X.into()), tr!("Tirar a citação"))
-                    .variante(VarianteRedonda::Plano)
-                    .diametro(20.)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.citacoes.remove(&chat);
-                        cx.notify();
-                    })),
+                h_flex()
+                    .gap(esp::E6)
+                    .items_center()
+                    .child(super::mensagens::icone_de(Lucide::Reply, 12.).text_color(Cores::destaque_texto()))
+                    .child(div().flex_1().text_size(r(11.5)).text_color(Cores::tenue()).child(tr!("Respondendo")))
+                    .child(tirar),
+            )
+            .child(
+                div()
+                    .relative()
+                    .pl(esp::E12)
+                    .pr(esp::E8)
+                    .child(div().absolute().left_0().top(esp::E2).bottom(esp::E2).w(px(2.)).rounded_full().bg(Cores::destaque_texto()))
+                    .child(div().min_w_0().line_clamp(2).text_size(r(13.)).line_height(r(18.)).text_color(Cores::texto_da_fala()).child(previa_da_citacao(trecho))),
             );
         movimento::entrar_em(cartao, SharedString::from(format!("citacao-{marca}")), movimento::De::Baixo, movimento::SUBIR_LEVE)
     }
@@ -1541,7 +1569,7 @@ impl Janela {
                 // fio claro, com o X no canto por cima; o arquivo é uma pílula escura com o ícone,
                 // o nome e o tamanho (dono, 27/11/2026: "melhora o design das imagens anexadas";
                 // era um risco de 24 de altura numa pílula de borda clara).
-                let (largura_mini, altura_mini) = super::imagens::medida_da_miniatura(lido.medidas, ALTURA_DA_MINIATURA, LARGURA_DA_MINIATURA);
+                let (largura_mini, _) = super::imagens::medida_da_miniatura(lido.medidas, ALTURA_DA_MINIATURA, LARGURA_DA_MINIATURA);
                 let aberta = self.ilha.as_ref().is_some_and(|(c, p)| *c == chat && *p == caminho);
                 let abre_ilha = imagem && lido.existe;
                 let (chat_ilha, alvo_ilha) = (chat.clone(), caminho.clone());
@@ -2710,6 +2738,21 @@ mod testes_nome_modelo {
         assert_eq!(nome_curto_modelo("gpt-5"), "gpt-5");
         assert_eq!(nome_curto_modelo("claude-"), "claude-");
         assert_eq!(nome_curto_modelo("claude-opus-mais-5"), "claude-opus-mais-5");
+    }
+}
+
+#[cfg(test)]
+mod testes_da_previa_da_citacao {
+    use super::previa_da_citacao;
+
+    /// A prévia junta as linhas e corta numa palavra, com "…".
+    #[test]
+    fn a_previa_e_corrida_e_corta_numa_palavra() {
+        assert_eq!(previa_da_citacao("uma linha\n\n  e outra"), "uma linha e outra");
+        let longo = "palavra ".repeat(40);
+        let previa = previa_da_citacao(&longo);
+        assert!(previa.ends_with("palavra…"), "{previa}");
+        assert!(previa.chars().count() <= 181);
     }
 }
 

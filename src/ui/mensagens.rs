@@ -3711,17 +3711,10 @@ impl Janela {
         } else {
             montar(mostradas, aberto).into_any_element()
         };
-        // O grupo num cartão de fundo quase transparente, com o fio de meio pixel e o raio dos
-        // cartões; a chamada solta fica como estava.
+        // Sem o cartão de fio fino que a 0.13.0 pôs em volta do grupo (dono, 27/11/2026: "isso tá
+        // bem feio"): o grupo volta ao desenho de antes; ficam o acordeão, o ponto e o relógio.
         v_flex()
             .w_full()
-            .when(recolhivel, |s| {
-                s.p(esp::E2)
-                    .rounded(raio::CARTAO)
-                    .bg(gpui_kit::hsla(0., 0., 1., 0.025))
-                    .border(px(0.5))
-                    .border_color(gpui_kit::hsla(0., 0., 1., 0.10))
-            })
             .children(cabecalho)
             .children(editados_do_grupo.flatten())
             .children(fileira)

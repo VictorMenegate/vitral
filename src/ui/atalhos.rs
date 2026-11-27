@@ -148,6 +148,12 @@ tabela! {
     // No visor de imagem (o Esc que fecha é o do diálogo).
     "left", visor_imagem::ImagemAnterior, Some("Visor"), Grupo::Conversa, "Imagem anterior e seguinte no visor", "←+→";
     "right", visor_imagem::ImagemSeguinte, Some("Visor"), Grupo::Conversa, "", "";
+    "+", visor_imagem::AproximarImagem, Some("Visor"), Grupo::Conversa, "Aproximar e afastar a imagem no visor", "+ e −";
+    "=", visor_imagem::AproximarImagem, Some("Visor"), Grupo::Conversa, "", "";
+    "-", visor_imagem::AfastarImagem, Some("Visor"), Grupo::Conversa, "", "";
+    "0", visor_imagem::CaberImagem, Some("Visor"), Grupo::Conversa, "Caber na janela e tamanho real no visor", "0 e 1";
+    "1", visor_imagem::TamanhoRealImagem, Some("Visor"), Grupo::Conversa, "", "";
+    "ctrl-c", visor_imagem::CopiarImagem, Some("Visor"), Grupo::Conversa, "Copiar a imagem do visor", "Ctrl+C";
 
     // ---------- conversas ----------
     // O Ctrl+Z é do texto dentro de um campo (o "!Input" o tira de quem está escrevendo): fora dele

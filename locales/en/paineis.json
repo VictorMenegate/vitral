@@ -233,5 +233,12 @@
  "Sair": "Sign out",
  "Saindo da conta principal…": "Signing out of the main account…",
  "Revisar": "Review",
- "Ajustar": "Fit"
+ "Ajustar": "Fit",
+ "Respondendo": "Replying",
+ "Copiar a imagem (Ctrl+C)": "Copy the image (Ctrl+C)",
+ "Imagem copiada": "Image copied",
+ "Não deu para copiar a imagem": "Couldn't copy the image",
+ "Aproximar e afastar a imagem no visor": "Zoom the image in and out in the viewer",
+ "Caber na janela e tamanho real no visor": "Fit to window and actual size in the viewer",
+ "Copiar a imagem do visor": "Copy the image in the viewer"
 }
