@@ -2371,7 +2371,9 @@ fn poco_de_codigo(raio: Rems) -> StyleRefinement {
         .p(dentro_da_borda(12.))
         .pr(COLUNA_DO_COPIAR)
         .bg(Cores::preto())
-        .border_color(Cores::borda())
+        // Sem o fio claro em volta (o kit põe o traço de 1: fica na cor do fundo), como a caixa
+        // de saída de comando e o bloco de código do protótipo Linear.
+        .border_color(Cores::preto())
         .rounded(raio)
         .whitespace_nowrap();
     // Os dois eixos: só com o de pé o kit põe o Copiar fora do que rola (ele fica no canto), e só
@@ -4551,8 +4553,9 @@ fn cartao_de_edicao(chave: &str, pedido: &str) -> Div {
         .group(grupo.clone())
         .w_full()
         .rounded(raio::CARTAO)
+        // O traço fica, na cor do fundo: chapado como a caixa de código (27/11/2026).
         .border_1()
-        .border_color(Cores::borda())
+        .border_color(Cores::preto())
         .bg(Cores::preto())
         .overflow_hidden()
         .child(bloco_do_pedido(pedido, &diff))

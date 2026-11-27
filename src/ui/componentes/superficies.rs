@@ -924,7 +924,7 @@ impl RenderOnce for EstadoVazio {
 }
 
 /// Teclas separadas de uma combinação, cada uma no desenho único de tecla (o do kit, que a dica e
-/// o menu também usam): em relevo, mono 10, sem borda.
+/// o menu também usam): chapada, mono 10, sem borda nem relevo.
 pub fn desenho_teclas(partes: Vec<SharedString>) -> AnyElement {
     desenho_de_teclas(partes, Cores::hover(), Cores::tenue(), FONTE_MONO.into(), raio::de(18.)).into_any_element()
 }
