@@ -743,8 +743,20 @@ impl Janela {
                 && parcial.is_none()
                 && texto_atividade(&chat.itens, false, motor.dirigidas_no_turno(&chat.id)) == *crate::tr!("Pensando…")
             {
-                let rotulo = rotulo_do_turno_calado(compactando, motor.esperando_agentes(&chat.id));
-                blocos.push(Planejado::pronto(Bloco::Log, None, linha_pensando(painel_id, crate::i18n::traduzir(rotulo).into(), cx.theme().font_family.clone())));
+                let esperando = motor.esperando_agentes(&chat.id);
+                let rotulo = rotulo_do_turno_calado(compactando, esperando);
+                // Pensando de verdade, o relógio conta desde o último passo do turno (ou o começo dele).
+                let desde = (!compactando && !esperando)
+                    .then(|| {
+                        let comeco = match motor.execucao(&chat.id) {
+                            Execucao::Rodando { desde } => desde,
+                            _ => 0,
+                        };
+                        chat.itens.last().map_or(comeco, |i| i.em()).max(comeco)
+                    })
+                    .filter(|desde| *desde > 0)
+                    .map(|desde| desde as f64);
+                blocos.push(Planejado::pronto(Bloco::Log, None, linha_pensando(painel_id, crate::i18n::traduzir(rotulo).into(), cx.theme().font_family.clone(), desde)));
             }
         }
         // Só o que está à vista (e a sobra em volta) é montado; o resto entra como um espaço da
@@ -3565,8 +3577,16 @@ impl Janela {
         let recolhivel = chamadas.len() > 1;
         // Os itens só crescem no fim: o índice da primeira chamada identifica o grupo.
         let chave = format!("{}:{}:grupo", contexto.chat.id, chamadas[0].0);
+        // O agente já falou neste turno, antes deste grupo: o grupo começa recolhido, com só a linha
+        // viva à vista, em vez de a trilha abrir e fechar a cada fala (o "Chain of Thought" no nível
+        // de Linear/v0/Cursor, 27/11/2026). A escolha feita à mão vale sempre.
+        let inicio_do_turno = contexto.chat.itens[..chamadas[0].0].iter().rposition(|i| matches!(i, Item::Usuario { .. })).map_or(0, |u| u + 1);
+        let ja_falou = contexto.chat.itens[inicio_do_turno..chamadas[0].0]
+            .iter()
+            .any(|i| matches!(i, Item::Assistente { texto, .. } if !texto.trim().is_empty()));
+        let do_turno_atual = contexto.rodando && chamadas[0].0 >= inicio_do_turno && contexto.chat.itens.len().saturating_sub(chamadas[0].0) < 200;
         let aberto = !recolhivel || self.expandidos.contains(&chave)
-            || (ao_vivo && !self.expandidos.contains(&format!("{chave}:fechado")));
+            || (ao_vivo && !ja_falou && !self.expandidos.contains(&format!("{chave}:fechado")));
         let mostradas = if aberto {
             chamadas
         } else if ao_vivo {
@@ -3609,7 +3629,7 @@ impl Janela {
                 .when(falhas > 0, |s| {
                     s.child(Selo::cor(contagem(falhas, &crate::tr!("falhou"), &crate::tr!("falharam")), Cores::vermelho()))
                 })
-                .when(rodando_escondida, |s| s.child(super::componentes::lugar_do_anel(contexto.painel, Cores::destaque(), 14.)))
+                .when(rodando_escondida, |s| s.child(super::componentes::lugar_do_ponto(contexto.painel, Cores::destaque(), 14.)))
                 .child(div().flex_none().text_color(Cores::apagado()).child(chevron(&chave, aberto)))
                 .on_click(cx.listener({ let chave = chave.clone(); move |j, _, _, cx| {
                     if aberto { j.expandidos.remove(&chave); j.expandidos.insert(format!("{chave}:fechado")); }
@@ -3660,7 +3680,6 @@ impl Janela {
             });
             self.editados_do_recolhido(contexto, &format!("{chave}:ed"), escondidas, mais)
         });
-        let ultima = mostradas.len().saturating_sub(1);
         let (base, vistos) = contexto.entrada;
         let primeira = chamadas[0].0;
         // A chamada que chega numa trilha já à vista entra com fade e 8 px de baixo (a primeira
@@ -3670,23 +3689,39 @@ impl Janela {
             Some(nova) => movimento::entrada(("entra-grupo", primeira), nova, De::Parado, c).into_any_element(),
             None => c.into_any_element(),
         });
-        let linhas = v_flex().w_full().children(
-            mostradas
-                .iter()
-                .enumerate()
-                // Recolhido e ao vivo, a chamada à vista é uma linha solta, sem trilho.
-                .map(|(k, (indice, item))| {
-                    let linha = self.chamada(contexto, *indice, item, aberto.then_some(k < ultima), cx);
-                    match entrada_da_chamada(*indice == primeira, *indice, base, vistos) {
-                        Some(nova) => movimento::entrada(("entra-chamada", *indice), nova, De::Baixo, div().child(linha)).into_any_element(),
-                        None => linha,
-                    }
-                }),
-        );
-        // Aberto pelo clique, o que estava escondido entra com fade e 6 px de cima.
-        let linhas = if recolhivel && aberto { self.ao_abrir(&chave, linhas) } else { linhas.into_any_element() };
+        let montar = |lista: &[(usize, &Item)], com_trilho: bool| {
+            let ultima = lista.len().saturating_sub(1);
+            v_flex().w_full().children(lista.iter().enumerate().map(|(k, (indice, item))| {
+                let linha = self.chamada(contexto, *indice, item, com_trilho.then_some(k < ultima), cx);
+                match entrada_da_chamada(*indice == primeira, *indice, base, vistos) {
+                    Some(nova) => movimento::entrada(("entra-chamada", *indice), nova, De::Baixo, div().child(linha)).into_any_element(),
+                    None => linha,
+                }
+            }))
+        };
+        let linhas = if recolhivel {
+            // O acordeão: as chamadas abrem e fecham na altura (300 ms), também quando o grupo
+            // recolhe sozinho porque a resposta começou. Fora do turno que roda, o grupo fechado
+            // nem monta as linhas.
+            let todas = (aberto || do_turno_atual).then(|| montar(chamadas, true));
+            let acordeao = todas.map(|todas| movimento::na_altura(SharedString::from(format!("acordeao-{chave}")), aberto, movimento::DESLIZAR, move || todas.into_any_element()));
+            // Recolhido e ao vivo, a chamada que roda fica à vista, solta, sem trilho.
+            let viva = (!aberto && ao_vivo).then(|| montar(&chamadas[chamadas.len() - 1..], false));
+            v_flex().w_full().children(acordeao).children(viva).into_any_element()
+        } else {
+            montar(mostradas, aberto).into_any_element()
+        };
+        // O grupo num cartão de fundo quase transparente, com o fio de meio pixel e o raio dos
+        // cartões; a chamada solta fica como estava.
         v_flex()
             .w_full()
+            .when(recolhivel, |s| {
+                s.p(esp::E2)
+                    .rounded(raio::CARTAO)
+                    .bg(gpui_kit::hsla(0., 0., 1., 0.025))
+                    .border(px(0.5))
+                    .border_color(gpui_kit::hsla(0., 0., 1., 0.10))
+            })
             .children(cabecalho)
             .children(editados_do_grupo.flatten())
             .children(fileira)
@@ -3736,7 +3771,7 @@ impl Janela {
             .tab_index(0)
             .focus_visible(|s| s.shadow(halo_foco()))
             .child(coluna_do_icone().text_color(Cores::tenue()).child(if turno.ao_vivo {
-                super::componentes::lugar_do_anel(contexto.painel, Cores::destaque(), 14.).into_any_element()
+                super::componentes::lugar_do_ponto(contexto.painel, Cores::destaque(), 14.).into_any_element()
             } else {
                 icone_de(Lucide::Clock, 14.).into_any_element()
             }))
@@ -4191,8 +4226,10 @@ impl Janela {
         let grupo = SharedString::from(format!("chamada-{chave}"));
         // Sem resultado e fora do turno que está rodando: foi interrompida.
         let interrompida = resultado.is_none() && !pendente;
+        // A etapa ativa: o ponto que pulsa com o halo, no lugar do anel girando (a trilha "no
+        // nível de Linear/v0/Cursor", 27/11/2026).
         let icone = if pendente {
-            super::componentes::lugar_do_anel(contexto.painel, Cores::destaque(), 14.).into_any_element()
+            super::componentes::lugar_do_ponto(contexto.painel, Cores::destaque(), 14.).into_any_element()
         } else {
             let cor = if *erro {
                 Cores::vermelho()
@@ -4904,15 +4941,20 @@ fn selo_dirigido(painel: u64, n: usize, estreita: bool) -> AnyElement {
         .into_any_element()
 }
 
-/// A linha viva do turno que pensa, com o desenho de uma chamada em andamento na trilha: o anel
-/// girando e o rótulo com o brilho passando.
-fn linha_pensando(painel: u64, rotulo: SharedString, fonte: SharedString) -> AnyElement {
+/// A linha viva do turno que pensa: o ponto que pulsa com o halo e, pensando, "Pensando por 3,2 s",
+/// com o relógio em décimos. O ponto e o relógio são só lugares: quem os pinta a cada batida é a
+/// vista dos anéis (`AneisDaConversa`), sem redesenhar a conversa.
+fn linha_pensando(painel: u64, rotulo: SharedString, fonte: SharedString, desde: Option<f64>) -> AnyElement {
     h_flex()
         .h(ALTURA_DO_LOG)
         .gap(esp::E8)
-        // Só o lugar do anel: ele gira por cima, numa vista própria (`AneisDaConversa`).
-        .child(coluna_do_icone().child(super::componentes::lugar_do_anel(painel, Cores::destaque(), 14.)))
-        .child(div().font_family(fonte).metadado().text_color(Cores::texto()).child(rotulo))
+        .child(coluna_do_icone().child(super::componentes::lugar_do_ponto(painel, Cores::destaque(), 14.)))
+        .map(|s| match desde {
+            Some(desde) => s
+                .child(div().font_family(fonte).metadado().text_color(Cores::texto()).child(crate::tr!("Pensando por")))
+                .child(super::componentes::lugar_do_relogio(painel, Cores::tenue(), desde, 72.)),
+            None => s.child(div().font_family(fonte).metadado().text_color(Cores::texto()).child(rotulo)),
+        })
         .into_any_element()
 }
 

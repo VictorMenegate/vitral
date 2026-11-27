@@ -743,6 +743,27 @@ mod testes {
     }
 }
 
+/// O ponto da etapa ativa: o miolo de 6 px na cor e um halo que cresce e some a cada batida.
+fn pintar_ponto(b: Bounds<Pixels>, cor: Hsla, fase: f32, window: &mut Window) {
+    let centro = b.center();
+    let miolo = px(3.);
+    let halo = px(3. + 5. * fase);
+    window.paint_quad(fill(Bounds::new(point(centro.x - halo, centro.y - halo), size(halo * 2., halo * 2.)), cor.opacity(0.35 * (1. - fase))).corner_radii(halo));
+    window.paint_quad(fill(Bounds::new(point(centro.x - miolo, centro.y - miolo), size(miolo * 2., miolo * 2.)), cor).corner_radii(miolo));
+}
+
+/// O relógio da trilha, em mono, no lugar dele, com o tempo desde `desde`.
+fn pintar_relogio(b: Bounds<Pixels>, cor: Hsla, desde: f64, window: &mut Window, cx: &mut App) {
+    let agora = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(desde);
+    let texto: SharedString = tempo_com_decimos(agora - desde).into();
+    let mut fonte = window.text_style().font();
+    fonte.family = crate::tema::FONTE_MONO.into();
+    let corrida = TextRun { len: texto.len(), font: fonte, color: cor, background_color: None, underline: None, strikethrough: None };
+    let tamanho = b.size.height * 0.75;
+    let linha = window.text_system().shape_line(texto, tamanho, &[corrida], None);
+    let _ = linha.paint(b.origin, b.size.height, TextAlign::Left, None, window, cx);
+}
+
 // ---------- os anéis que giram dentro da conversa ----------
 //
 // Dentro das mensagens (uma vista em cache), um anel girando redesenhava a conversa inteira a cada
@@ -754,7 +775,17 @@ mod testes {
 thread_local! {
     /// Os lugares dos anéis de cada painel, na janela, com a cor: zerados a cada desenho das
     /// mensagens dele (`limpar_aneis`), preenchidos no prepaint.
-    static ANEIS: std::cell::RefCell<std::collections::HashMap<u64, Vec<(Bounds<Pixels>, Hsla)>>> = Default::default();
+    static ANEIS: std::cell::RefCell<std::collections::HashMap<u64, Vec<(Bounds<Pixels>, Hsla, Forma)>>> = Default::default();
+}
+
+/// O que a vista dos anéis pinta num lugar: o anel girando, o ponto que pulsa com o halo (o estado
+/// ativo da trilha, no lugar do anel: dono, 27/11/2026, a trilha "no nível de Linear/v0/Cursor")
+/// ou o relógio com décimos desde `desde` (segundos desde a época, com fração).
+#[derive(Clone, Copy, Debug)]
+pub enum Forma {
+    Anel,
+    Ponto,
+    Relogio { desde: f64 },
 }
 
 /// Começo do desenho das mensagens de um painel: os lugares de antes saem.
@@ -766,8 +797,35 @@ pub fn limpar_aneis(painel: u64) {
 /// o anel ali.
 pub fn lugar_do_anel(painel: u64, cor: Hsla, lado: f32) -> Div {
     div().flex_none().size(r(lado)).on_prepaint(move |limites, _, _| {
-        ANEIS.with(|a| a.borrow_mut().entry(painel).or_default().push((limites, cor)));
+        ANEIS.with(|a| a.borrow_mut().entry(painel).or_default().push((limites, cor, Forma::Anel)));
     })
+}
+
+/// O lugar do ponto que pulsa (a etapa ativa da trilha): `AneisDaConversa` o pinta ali.
+pub fn lugar_do_ponto(painel: u64, cor: Hsla, lado: f32) -> Div {
+    div().flex_none().size(r(lado)).on_prepaint(move |limites, _, _| {
+        ANEIS.with(|a| a.borrow_mut().entry(painel).or_default().push((limites, cor, Forma::Ponto)));
+    })
+}
+
+/// O lugar do relógio com décimos ("3,2 s"), contado desde `desde`: a vista dos anéis escreve o
+/// número a cada batida, sem redesenhar a conversa. `largura` em px a 100%.
+pub fn lugar_do_relogio(painel: u64, cor: Hsla, desde: f64, largura: f32) -> Div {
+    div().flex_none().w(r(largura)).h(r(16.)).on_prepaint(move |limites, _, _| {
+        ANEIS.with(|a| a.borrow_mut().entry(painel).or_default().push((limites, cor, Forma::Relogio { desde })));
+    })
+}
+
+/// "3,2 s", "1 min 04 s": o tempo do relógio da trilha, com décimos no primeiro minuto.
+pub fn tempo_com_decimos(segundos: f64) -> String {
+    let segundos = segundos.max(0.);
+    if segundos < 60. {
+        let decimos = (segundos * 10.).floor() / 10.;
+        format!("{} s", format!("{decimos:.1}").replace('.', ","))
+    } else {
+        let s = segundos as u64;
+        format!("{} min {:02} s", s / 60, s % 60)
+    }
 }
 
 /// Os anéis da conversa de um painel, girando por cima dela numa vista própria. `ativo`: o turno
@@ -797,12 +855,20 @@ impl RenderOnce for AneisDaConversa {
                         return;
                     }
                     let aneis = ANEIS.with(|a| a.borrow().get(&painel).cloned().unwrap_or_default());
-                    for (b, cor) in aneis.into_iter().filter(|(b, _)| limites.intersects(b)) {
-                        let lado = b.size.width.as_f32().max(1.);
-                        let raio_fora = b.size.width.min(b.size.height).as_f32() / 2.;
-                        let espessura = (lado * 0.16).max(1.5);
-                        let giro = giro_em_passos(giro);
-                        pintar_arco(b, raio_fora, espessura, giro, giro + TAU * 0.72, cor, window, cx);
+                    // A fase do pulso do ponto: 1,4 s por batida.
+                    let pulso = ((giro - parado) / TAU).rem_euclid(1.);
+                    for (b, cor, forma) in aneis.into_iter().filter(|(b, ..)| limites.intersects(b)) {
+                        match forma {
+                            Forma::Anel => {
+                                let lado = b.size.width.as_f32().max(1.);
+                                let raio_fora = b.size.width.min(b.size.height).as_f32() / 2.;
+                                let espessura = (lado * 0.16).max(1.5);
+                                let giro = giro_em_passos(giro);
+                                pintar_arco(b, raio_fora, espessura, giro, giro + TAU * 0.72, cor, window, cx);
+                            }
+                            Forma::Ponto => pintar_ponto(b, cor, pulso, window),
+                            Forma::Relogio { desde } => pintar_relogio(b, cor, desde, window, cx),
+                        }
                     }
                 },
             )
