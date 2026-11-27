@@ -225,5 +225,13 @@
  "{valor} mil": "{valor}k",
  "Áudio": "Audio",
  "É uma pasta, não um arquivo.": "It's a folder, not a file.",
- "Último turno": "Last turn"
+ "Último turno": "Last turn",
+ "Revisar com o {nome}\nEle só lê o que este turno fez e diz o que achou; nada muda sozinho": "Review with {nome}\nIt only reads what this turn did and says what it found; nothing changes on its own",
+ "Sair da conta principal?": "Sign out of the main account?",
+ "O Claude Code sai do login dela neste computador. Depois, entre de novo com a conta que quiser.": "Claude Code signs out of it on this computer. Then sign in again with the account you want.",
+ "Os chats ficam; o próximo turno pede o login": "Chats stay; the next turn asks you to sign in",
+ "Sair": "Sign out",
+ "Saindo da conta principal…": "Signing out of the main account…",
+ "Revisar": "Review",
+ "Ajustar": "Fit"
 }

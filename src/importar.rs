@@ -1305,8 +1305,6 @@ mod testes {
         assert_eq!(titulo_de("supercalifragilistico", 5), "super…");
     }
 
-    // O link simbólico da conta extra é do Unix (as contas extras ainda não existem no Windows).
-    #[cfg(unix)]
     #[test]
     fn listagem_filtra_e_nao_repete_pelo_link_da_conta() {
         let raiz = pasta_de_teste("listar");
@@ -1329,10 +1327,10 @@ mod testes {
         fs::create_dir_all(projects.join("x").join("memory")).unwrap();
         fs::write(projects.join("x").join("agent-1234.jsonl"), sessao_antiga(&casa)).unwrap();
         fs::write(projects.join("solto.jsonl"), sessao_antiga(&casa)).unwrap();
-        // A conta extra liga o mesmo `projects` por link simbólico.
+        // A conta extra liga o mesmo `projects` (link simbólico no Linux, junção no Windows).
         let conta = raiz.join("conta");
         fs::create_dir_all(&conta).unwrap();
-        std::os::unix::fs::symlink(&projects, conta.join("projects")).unwrap();
+        crate::ligacoes::ligar(&projects, &conta.join("projects")).unwrap();
         let pastas = pastas_de_projects(&[principal.clone(), conta.clone(), raiz.join("sem-claude")]);
         assert_eq!(pastas, vec![projects.clone()]);
         let nenhuma = HashSet::new();

@@ -344,7 +344,6 @@ impl PainelContas {
     fn menu_conta(&self, ix: usize, conta: &Conta, escolhida: bool, window: &Window, cx: &Context<Self>) -> AnyElement {
         let (motor, id, email) = (self.motor.clone(), conta.id.clone(), conta.email.clone());
         let painel = cx.entity().downgrade();
-        let extra = conta.id != contas::PRINCIPAL;
         botao_icone(("conta-menu", ix), Lucide::Ellipsis, tr!("Opções da conta"), TamanhoBotao::Linha, window, cx)
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                 let (padrao, sair) = ((motor.clone(), id.clone()), (motor.clone(), id.clone()));
@@ -364,7 +363,8 @@ impl PainelContas {
                         window.push_notification(aviso(Tom::Pronto, tr!("E-mail copiado")).chave("copiar"), cx);
                     }))
                 })
-                .when(extra, |menu| {
+                // Também a principal: sai do login do Claude Code (`claude auth logout`).
+                .map(|menu| {
                     menu.separator().item(
                         PopupMenuItem::new(tr!("Desconectar…"))
                             .icon(Lucide::Unplug)
@@ -658,7 +658,28 @@ pub(super) fn valor_da_config(escolha: &str) -> String {
 /// Pergunta antes de desconectar uma conta extra (apaga o login dela neste computador); a
 /// principal, o login normal do Claude Code, não sai. O Enter só fecha.
 pub(super) fn confirmar_desconectar(motor: Entity<Motor>, id: String, window: &mut Window, cx: &mut App) {
+    // A principal é o login normal do Claude Code: sair dela é o `claude auth logout`, e depois o
+    // "Entrar de novo" (ou "Entrar com outra conta…") faz o login em outra.
     if id == contas::PRINCIPAL {
+        confirmar(
+            Confirmacao {
+                tom: TomConfirmacao::Perigo,
+                icone: Lucide::Unplug.into(),
+                titulo: tr!("Sair da conta principal?").into(),
+                texto: tr!("O Claude Code sai do login dela neste computador. Depois, entre de novo com a conta que quiser.").into(),
+                detalhes: vec![(Lucide::MessagesSquare.into(), tr!("Os chats ficam; o próximo turno pede o login").into(), false)],
+                ok: tr!("Sair").into(),
+                cancelar: tr!("Cancelar").into(),
+                ok_perigo: true,
+            },
+            move |window, cx| {
+                motor.update(cx, |m, cx| m.sair_da_conta_principal(cx));
+                window.push_notification(aviso(Tom::Info, tr!("Saindo da conta principal…")).chave("sair-da-principal"), cx);
+            },
+            None,
+            window,
+            cx,
+        );
         return;
     }
     let nome = motor.read(cx).contas.iter().find(|c| c.id == id).map(|c| c.nome.clone()).unwrap_or_default();

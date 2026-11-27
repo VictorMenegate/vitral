@@ -1003,8 +1003,9 @@ fn linha_conta(
     } else {
         div().child(resumo_conta(&uso))
     };
-    let removivel = linha.id != contas::PRINCIPAL;
-    let menu = removivel.then(|| menu_conta(linha.id.clone(), motor, popover, window, cx));
+    // Toda conta se desconecta, a principal também: com uma só, é o jeito de trocar (dono,
+    // 27/11/2026: "tem que dar pra desconectar a conta que tá usando").
+    let menu = Some(menu_conta(linha.id.clone(), motor, popover, window, cx));
     CartaoDeLista::new(SharedString::from(format!("uso-conta-{}", linha.id)), linha.rotulo)
         .titulo_no_meio()
         .simbolo(Simbolo::Elemento(anel.into_any_element()))

@@ -1684,13 +1684,20 @@ impl Janela {
         let (janela, entidade, id_menu) = (ctx.janela.clone(), ctx.motor.clone(), chat.id.clone());
         // A dica da linha: a pasta e o ramo do git em que ela está (lido quando a dica aparece). O
         // balão da frente, que levava a pasta na dica, saiu da linha; os botões dela têm a deles.
+        // O nome inteiro do chat vem em cima (na lista ele corta; dono, 27/11/2026: "quando passa o
+        // mouse em cima tem que aparecer o nome do chat também").
         let pasta_da_dica = (!ctx.motor.read(cx).sem_pasta(chat)).then(|| chat.cwd.clone());
+        let titulo_da_dica = chat.titulo.clone();
         div()
             .id(SharedString::from(format!("linha-{}", chat.id)))
             // Sem vão entre as linhas, como no protótipo Linear (25/11/2026).
             .child(cartao)
-            .when_some(pasta_da_dica, |s, pasta| {
-                s.dica_no_ponteiro(move |window, cx| Tooltip::new(super::ramo::com_ramo(&com_til(&pasta), &pasta)).build(window, cx))
+            .dica_no_ponteiro(move |window, cx| {
+                let texto = match &pasta_da_dica {
+                    Some(pasta) => format!("{titulo_da_dica}\n{}", super::ramo::com_ramo(&com_til(pasta), pasta)),
+                    None => titulo_da_dica.clone(),
+                };
+                Tooltip::new(texto).build(window, cx)
             })
             .on_drag(arrasto, move |a, _, _, cx| cx.new(|_| PreviaArrasto { titulo: a.titulo.clone(), simbolo: None }))
             .on_aux_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {

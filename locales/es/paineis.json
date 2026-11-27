@@ -225,5 +225,13 @@
  "{valor} mil": "{valor} mil",
  "Áudio": "Audio",
  "É uma pasta, não um arquivo.": "Es una carpeta, no un archivo.",
- "Último turno": "Último turno"
+ "Último turno": "Último turno",
+ "Revisar com o {nome}\nEle só lê o que este turno fez e diz o que achou; nada muda sozinho": "Revisar con {nome}\nSolo lee lo que hizo este turno y dice lo que encontró; nada cambia solo",
+ "Sair da conta principal?": "¿Salir de la cuenta principal?",
+ "O Claude Code sai do login dela neste computador. Depois, entre de novo com a conta que quiser.": "Claude Code cierra su sesión en este equipo. Después, entra de nuevo con la cuenta que quieras.",
+ "Os chats ficam; o próximo turno pede o login": "Los chats se quedan; el próximo turno pide iniciar sesión",
+ "Sair": "Cerrar sesión",
+ "Saindo da conta principal…": "Saliendo de la cuenta principal…",
+ "Revisar": "Revisar",
+ "Ajustar": "Ajustar"
 }

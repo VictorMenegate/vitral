@@ -1,6 +1,7 @@
 //! A memória de cada chat trabalhando: quanto o agente e tudo o que ele abriu (shells, testes,
-//! servidores) ocupam agora, lido do cgroup do escopo do systemd (`Escopo::memoria`). Só no Linux
-//! com systemd; no resto, `None`, e nada aparece.
+//! servidores) ocupam agora (`Escopo::memoria`): no Linux, lido do cgroup do escopo do systemd; no
+//! Windows, a soma da coluna Memória do Gerenciador de Tarefas dos processos do Job Object do chat.
+//! No Linux sem systemd, `None`, e nada aparece.
 //!
 //! A leitura é de quem pergunta (a dica da linha de estado do turno), guardada por alguns
 //! segundos: a linha redesenha a cada segundo, e dois arquivos do /proc e do /sys por desenho
@@ -41,8 +42,8 @@ impl Leituras {
 }
 
 impl Motor {
-    /// A memória que o turno em andamento do chat ocupa, em bytes. `None` com o chat parado, no
-    /// Windows e sem systemd.
+    /// A memória que o turno em andamento do chat ocupa, em bytes. `None` com o chat parado e no
+    /// Linux sem systemd.
     pub fn memoria_do_chat(&self, chat: &str) -> Option<u64> {
         let Some(processo) = self.processos.get(chat) else {
             self.memorias.esquecer(chat);

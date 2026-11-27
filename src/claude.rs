@@ -543,6 +543,7 @@ impl Processo {
     ) -> Result<Self> {
         let agente = opcoes.agente;
         let comando = if agente == crate::modelo::Agente::Codex {
+            crate::contas_codex::conferir_ligacoes();
             let mut comando = processos::comando(crate::agente_codex::binario(), "codex");
             comando.current_dir(&opcoes.cwd).args(crate::agente_codex::argumentos_servidor(opcoes));
             for (chave, valor) in &opcoes.ambiente_codex {
@@ -562,6 +563,7 @@ impl Processo {
             comando.current_dir(&opcoes.cwd).args(perfil.argumentos(opcoes));
             comando
         } else {
+            crate::contas::conferir_ligacoes();
             let mut comando = processos::comando(binario_claude(), "claude");
             comando.current_dir(&opcoes.cwd).args(argumentos(opcoes));
             if let Some(pasta) = &opcoes.pasta_conta {

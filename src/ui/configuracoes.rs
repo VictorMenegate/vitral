@@ -35,7 +35,7 @@ use crate::{
     claude::{self, Atualizacao, Versao},
     modelo::{Agente, Config},
     motor::{self, Motor},
-    paleta::{Cor, CoresDoFundo, FundoVivo, PERSONALIZADO, Paleta, TEMAS},
+    paleta::{Cor, FundoVivo, PERSONALIZADO, Paleta, TEMAS},
     tema::{Cores, Lucide, esp, linear, r, raio, tam},
     versoes_agentes::{self, Publicadas},
 };
@@ -490,8 +490,7 @@ impl Configuracoes {
             FundoVivo::Mesh => "mesh",
             FundoVivo::Desligado => "desligado",
         };
-        let cores_do_fundo = if p.cores_do_fundo == CoresDoFundo::Receita { "receita" } else { "tema" };
-        let (v1, v2) = (vista.clone(), vista.clone());
+        let v1 = vista.clone();
         let fundo = GrupoDeOpcoes::new(None)
             .linha(com(
                 LinhaDeOpcao::new("cfg-fundo-vivo", tr!("Fundo animado")).cabeca(),
@@ -512,23 +511,9 @@ impl Configuracoes {
                     window,
                     cx,
                 ),
-            ))
-            .linha(com(
-                LinhaDeOpcao::new("cfg-cores-do-fundo", tr!("Cores do fundo")).cabeca(),
-                menu_escolha(
-                    "cfg-cores-do-fundo",
-                    ancora,
-                    vec![Opcao::new("tema", tr!("Do tema")), Opcao::new("receita", tr!("Da receita"))],
-                    cores_do_fundo,
-                    cores_do_fundo,
-                    move |valor, _, cx| {
-                        let novo = if valor == "receita" { CoresDoFundo::Receita } else { CoresDoFundo::Tema };
-                        v2.update(cx, |este, cx| este.mudar_paleta(true, move |p| p.cores_do_fundo = novo, cx));
-                    },
-                    window,
-                    cx,
-                ),
             ));
+        // Sem o "Cores do fundo" (dono, 27/11/2026: "tira essa opção aqui"): vale o que estiver
+        // gravado em `Paleta::cores_do_fundo`, que de fábrica é o do tema.
 
         let v = vista.clone();
         let bordas = GrupoDeOpcoes::new(None).linha(
@@ -1269,7 +1254,7 @@ impl Configuracoes {
                 .info(
                     tr!("Cada conta tem uma pasta própria, em que só o login é dela: a configuração e as conversas são as da \
                      principal. Trocar a conta de um chat que já conversou abre uma sessão nova, com a conversa até ali \
-                     junto da próxima mensagem. Não funciona no Windows por enquanto."),
+                     junto da próxima mensagem."),
                 )
                 .controle(botao_cfg("cfg-codex-adicionar", tr!("Adicionar…"), window, cx).on_click(move |_, window, cx| {
                     if let Err(erro) = motor_e.update(cx, |m, cx| m.adicionar_conta_codex(cx)) {
@@ -1303,11 +1288,25 @@ impl Configuracoes {
         let padrao = linhas.into_iter().fold(GrupoDeOpcoes::new(Some(tr!("Conta padrão").into())), |g, (id, nome, detalhe)| {
             let marcado = escolha == id;
             let motor_e = self.motor.clone();
+            // Toda conta de verdade se desconecta aqui, a principal também (dono, 27/11/2026: "tem
+            // que dar pra desconectar a conta que tá usando ... aqui também").
+            let sair = (id != crate::contas::AUTOMATICA).then(|| {
+                let (motor_s, id_s) = (self.motor.clone(), id.clone());
+                botao_icone(SharedString::from(format!("cfg-conta-sair-{id}")), Lucide::Unplug, tr!("Desconectar…"), TamanhoBotao::Linha, window, cx)
+                    .on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        super::painel_contas::confirmar_desconectar(motor_s.clone(), id_s.clone(), window, cx);
+                    })
+            });
             g.linha(
                 div()
                     .id(SharedString::from(format!("cfg-conta-{id}")))
                     .cursor_pointer()
-                    .child(LinhaDeOpcao::new(SharedString::from(format!("cfg-conta-linha-{id}")), nome).descricao(detalhe.unwrap_or_default()).controle(radio(marcado)))
+                    .child(
+                        LinhaDeOpcao::new(SharedString::from(format!("cfg-conta-linha-{id}")), nome)
+                            .descricao(detalhe.unwrap_or_default())
+                            .controle(h_flex().gap(esp::E8).items_center().children(sair).child(radio(marcado))),
+                    )
                     .on_click(move |_, _, cx| super::painel_contas::escolher_conta(&motor_e, &id, cx)),
             )
         });

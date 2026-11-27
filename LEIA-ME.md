@@ -1157,13 +1157,15 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   Com a resposta já dada e os agentes ainda rodando, ela diz o agente e o que ele faz ("Mapear o
   carrinho: Rodando cargo test…") ou, com mais de um, "3 agentes trabalhando em segundo plano…"
   (a linha da caixa só diz o que o chat faz com a conversa rolada para cima; no fim, quem diz são
-  as linhas dos agentes). **Memória do chat**: no Linux, a dica do relógio diz quanto o turno ocupa
+  as linhas dos agentes). **Memória do chat**: a dica do relógio diz quanto o turno ocupa
   agora, "Memória deste chat: 3,1 GB" (o agente e tudo o que ele abriu: comandos, testes,
-  servidores). O número é o `memory.current` do cgroup do escopo do systemd em que o chat roda
-  (`Escopo::memoria`, em `src/processos/unix.rs`, achado pelo `/proc/<pid>/cgroup` do processo e
-  só aceito se o cgroup é o do escopo), lido quando a linha pergunta e guardado por 3 s
-  (`src/motor/memoria.rs`); chat parado não é lido. No Windows, sem systemd ou sem o controlador
-  de memória no cgroup do usuário, a dica não aparece. Não há aviso de máquina no limite (o dono
+  servidores). No Linux o número é o `memory.current` do cgroup do escopo do systemd em que o chat
+  roda (`Escopo::memoria`, em `src/processos/unix.rs`, achado pelo `/proc/<pid>/cgroup` do processo
+  e só aceito se o cgroup é o do escopo); no Windows, a soma da coluna Memória do Gerenciador de
+  Tarefas (o conjunto de trabalho privado) dos processos do Job Object do chat
+  (`src/processos/windows.rs`). É lido quando a linha pergunta e guardado por 3 s
+  (`src/motor/memoria.rs`); chat parado não é lido. No Linux sem systemd ou sem o controlador de
+  memória no cgroup do usuário, a dica não aparece. Não há aviso de máquina no limite (o dono
   não quis aviso novo). **Esc que não custa caro** (rodada de uso, item 6.2): quando parar derrubaria o
   processo inteiro (agentes em segundo plano, a espera por eles, um turno com Ultracode), o
   primeiro Esc só arma, e a linha diz "Esc de novo para parar os N agentes" por 3 s; o botão Parar
@@ -1880,7 +1882,17 @@ O Codex não continua uma conversa noutra conta: com a sessão já aberta, a tro
 nova, e a conversa até ali, exportada num arquivo, vai como nota junto da próxima mensagem. Com
 **Trocar sozinho no limite**, o limite do plano numa conta passa o chat para outra conta do Codex
 com login e repete o turno nela. O anel de uso do Codex continua um só (as sessões são as mesmas).
-No Windows as contas extras ainda não funcionam (os links pedem o Modo de Desenvolvedor).
+**No Windows** (27/11/2026; `src/ligacoes.rs`) as contas extras do Claude e do Codex funcionam
+sem administrador e sem o Modo de Desenvolvedor: as pastas ligadas (`projects`, skills, sessões)
+viram junções do NTFS, e os arquivos (`settings.json`, `CLAUDE.md`, `config.toml`, `AGENTS.md`),
+link simbólico quando o Windows deixa (Modo de Desenvolvedor ou administrador) e hard link quando
+não, o que pede a configuração do Vitral (`%APPDATA%`) no mesmo disco que o `~\.claude` e o
+`~\.codex`. Cópia não serviria: a mudança numa conta não chegaria nas outras. O Claude Code e o
+Codex gravam a configuração por troca atômica, que parte o hard link; por isso os itens que
+ficaram assim vão anotados no `.vitral-hard-links` da pasta da conta, e antes de cada turno o
+Vitral refaz o que se partiu, ficando com o texto mais novo (o da conta vai para a principal,
+e as outras voltam para ele). Nos dois sistemas, o que aparece na principal depois de a conta
+ser criada passa a ser ligado no turno seguinte.
 
 No canto de cima, à direita, da janela, logo abaixo do ×, flutua um anel de 30 por serviço, um em cima do
 outro, cada um num disco opaco da peça (`uso_no_canto`, em `src/ui/uso_plano.rs`): cada um só com a conta daquele serviço conectada (o do Codex,
@@ -2867,7 +2879,9 @@ desfoque**, em **Acabamento**; no Windows 10 ele pode pesar ao arrastar); o
 arrastar, o clique duplo, o Snap e os botões –, □ e × são do próprio Windows. Os avisos saem como
 notificações do Windows (AppUserModelID `VictorMenegate.Vitral`), o Parar manda o `interrupt` pela
 entrada do Claude Code (nos dois sistemas) e o Parar de verdade é o Job Object, que derruba a
-árvore inteira. Ainda não: contas extras e "Instalar o Codex".
+árvore inteira. As contas extras usam junções e hard links (ver **Contas e uso dos planos**), o
+computador não suspende sozinho com um chat trabalhando (o `SetThreadExecutionState`, no lugar do
+`systemd-inhibit`) e a dica do relógio mostra a memória do chat.
 
 Para instalar no Windows, o `vitral-<versão>-windows-x86_64-instalador.exe` do release: só para o
 usuário, sem administrador (sem certificado de assinatura, o SmartScreen avisa na primeira vez: Mais
@@ -3063,6 +3077,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/processos/` | Todo processo que o Vitral abre (`novo_comando`, sem janela de console no Windows) e os que ele para por inteiro: escopos do systemd ou grupos de processos (`unix.rs`), Job Objects (`windows.rs`); `entrada.rs` escreve na entrada do claude e do codex numa thread própria, porque o pipe enche em 64 KiB e a janela não pode esperar o processo ler |
 | `src/sistema/` | O que abre fora do Vitral, nos dois sistemas: editor, terminal, gerenciador de arquivos, o bash dos comandos (no Windows, o do Git para Windows, nunca o do WSL) e o aviso do que falta instalar (`linux.rs`, `windows.rs`) |
 | `src/contas.rs`, `src/contas/` | Contas extras (`CLAUDE_CONFIG_DIR`), login e o uso e o plano (o que o Claude Code guarda em `.claude.json` e a busca direta na Anthropic, `busca.rs`) |
+| `src/ligacoes.rs` | Os links das contas extras com a principal nos dois sistemas (link simbólico no Linux; junção e hard link no Windows) e a conferência que refaz o hard link partido antes de cada turno |
 | `src/codex.rs` | Uso do plano do Codex, lido das sessões em `~/.codex/sessions` |
 | `src/agente_gemini.rs` | O Gemini como agente de um chat, pelo `agy acp` (ACP): o canal da entrada, a tradução da saída para os eventos do Claude Code, o pedido de permissão, os modos e o catálogo de modelos |
 | `src/agente_codex.rs` | O Codex como agente de um chat: os argumentos do processo e o protocolo JSON-RPC em `src/agente_codex/servidor.rs`, a tradução da saída para os eventos do Claude Code, o sandbox de cada modo e o catálogo de modelos |

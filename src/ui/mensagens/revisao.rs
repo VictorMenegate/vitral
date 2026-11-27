@@ -82,7 +82,7 @@ impl Janela {
         RolarAoAchado::novo(format!("rolar-{chave}").into(), &realce, contexto.rolagem, cartao).into_any_element()
     }
 
-    /// "Revisar com o Codex" (ou "com o Claude"), na ponta da linha "Trabalhou…" do último turno
+    /// "Revisar", com a IA da revisão, na ponta da linha "Trabalhou…" do último turno
     /// pronto: só quando o motor diz que dá (`Motor::pode_revisar`: chat parado, turno ainda não
     /// revisto, o outro agente à mão e sem revisão rodando). Discreta, no tom da linha; no painel
     /// estreito, só o ícone, com a dica.
@@ -91,9 +91,12 @@ impl Janela {
             return None;
         }
         let revisor = contexto.motor.pode_revisar(&contexto.chat.id)?;
-        let rotulo = crate::tr!("Revisar com o {nome}", nome = revisor.nome());
+        // Só "Revisar": quem revisa é a IA escolhida em Configurações › Revisão, e o nome dela vai
+        // na dica (dono, 27/11/2026: "esse revisar com o Codex tinha que ser só revisar e funcionar
+        // com a IA que tá configurada").
+        let rotulo = crate::tr!("Revisar");
         let so_icone = matches!(contexto.nivel, LarguraPainel::Minimo | LarguraPainel::Estreito);
-        let dica = crate::tr!("{rotulo}\nEle só lê o que este turno fez e diz o que achou; nada muda sozinho", rotulo = rotulo);
+        let dica = crate::tr!("Revisar com o {nome}\nEle só lê o que este turno fez e diz o que achou; nada muda sozinho", nome = revisor.nome());
         let (motor, chat) = (self.motor.clone(), contexto.chat.id.clone());
         let _ = cx;
         let dica = dica.clone();

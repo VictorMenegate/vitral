@@ -1585,17 +1585,23 @@ impl Motor {
     /// Com algum chat trabalhando, o computador não suspende sozinho por inatividade: deixar um
     /// turno longo rodando e ir para outro aplicativo (ou sair de perto) não o congela no meio
     /// (dono, 17/11/2026: "se deixar rodando e for mexer em outro aplicativo ele não vai parar").
-    /// É uma trava `sleep` do logind (`systemd-inhibit`): a tela ainda apaga e bloqueia, e fechar
-    /// a tampa ainda suspende (o logind ignora a trava na tampa). Ela morre junto com o Vitral
-    /// (`tail --pid`), mesmo numa queda. Só no Linux.
+    /// No Linux é uma trava `sleep` do logind (`systemd-inhibit`): a tela ainda apaga e bloqueia, e
+    /// fechar a tampa ainda suspende (o logind ignora a trava na tampa). Ela morre junto com o
+    /// Vitral (`tail --pid`), mesmo numa queda. No Windows é o `SetThreadExecutionState`
+    /// (`segurar_a_suspensao`), com o mesmo efeito.
     fn acertar_trava(&mut self) {
-        if !cfg!(target_os = "linux") {
+        if !cfg!(any(target_os = "linux", windows)) {
             return;
         }
         // Só turno andando: o chat parado num pedido de permissão (ou com o processo vivo à toa)
         // não segura a suspensão de um notebook que ninguém está olhando.
         let trabalhando =
             self.processos.keys().any(|chat| matches!(self.execucao_real(chat), Execucao::Rodando { .. }));
+        if cfg!(windows) {
+            #[cfg(windows)]
+            segurar_a_suspensao(trabalhando);
+            return;
+        }
         if let Some(trava) = self.trava_de_suspensao.as_mut()
             && trava.try_wait().ok().flatten().is_some()
         {
@@ -3714,6 +3720,37 @@ impl Motor {
         self.contas.push(conta);
         let _ = contas::salvar(&self.contas);
         cx.notify();
+    }
+
+    /// Sai do login da conta principal (`claude auth logout`, em segundo plano): com uma conta só,
+    /// é o jeito de trocar por outra (dono, 27/11/2026). O e-mail e o plano dela somem da tela, e
+    /// o próximo turno (ou o "Entrar de novo") pede o login.
+    pub fn sair_da_conta_principal(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |motor, cx| {
+            let saiu = cx
+                .background_spawn(async move {
+                    let mut comando = crate::processos::comando_leve(claude::binario_claude(), "logout");
+                    comando
+                        .args(["auth", "logout"])
+                        .env_remove("CLAUDE_CONFIG_DIR")
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null());
+                    let Ok((mut filho, _escopo)) = crate::processos::abrir(comando) else {
+                        return false;
+                    };
+                    filho.wait().is_ok_and(|s| s.success())
+                })
+                .await;
+            let _ = motor.update(cx, |m, cx| {
+                if saiu && let Some(c) = m.contas.iter_mut().find(|c| c.id == contas::PRINCIPAL) {
+                    c.email.clear();
+                    c.plano.clear();
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub fn remover_conta(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -6630,6 +6667,27 @@ pub fn janela_padrao(modelo: Option<&str>) -> u64 {
             1_000_000
         }
         _ => 200_000,
+    }
+}
+
+/// A trava da suspensão no Windows (`Motor::acertar_trava`): `ES_SYSTEM_REQUIRED` contínuo
+/// enquanto algum chat trabalha. Vale para a thread que chamou (a da interface, onde o motor anda)
+/// até ela chamar de novo ou acabar, então some sozinha com o Vitral, mesmo numa queda. Sem o
+/// `ES_DISPLAY_REQUIRED`, a tela ainda apaga e bloqueia; fechar a tampa ou mandar suspender ainda
+/// suspende. Só chama o Windows quando muda.
+#[cfg(windows)]
+fn segurar_a_suspensao(segurar: bool) {
+    use windows_sys::Win32::System::Power::{ES_CONTINUOUS, ES_SYSTEM_REQUIRED, SetThreadExecutionState};
+    thread_local! {
+        static SEGURANDO: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if SEGURANDO.get() == segurar {
+        return;
+    }
+    let estado = if segurar { ES_CONTINUOUS | ES_SYSTEM_REQUIRED } else { ES_CONTINUOUS };
+    // SAFETY: só muda o estado de energia desta thread; devolve 0 no erro.
+    if unsafe { SetThreadExecutionState(estado) } != 0 {
+        SEGURANDO.set(segurar);
     }
 }
 

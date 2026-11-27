@@ -284,6 +284,12 @@ fn gravar_por_inteiro(caminho: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if original.as_ref().is_some_and(|dados| std::os::unix::fs::MetadataExt::nlink(dados) > 1) {
         return fs::write(&destino, bytes);
     }
+    // No Windows o número de nomes só vem pelo handle. É o caso do `settings.json` das contas
+    // extras sem o Modo de Desenvolvedor (`ligacoes`): trocar o arquivo separaria a conta.
+    #[cfg(windows)]
+    if original.is_some() && crate::ligacoes::nomes(&destino).is_ok_and(|n| n > 1) {
+        return fs::write(&destino, bytes);
+    }
     let pasta = destino.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let temporario = pasta.join(format!(".{}.vitral-{}", nome_do_arquivo(&destino), crate::modelo::novo_id()));
     let mut abrir = fs::OpenOptions::new();
