@@ -124,15 +124,20 @@ impl SecaoDaLista {
     }
 }
 
+/// A seta de recolher que gira 90° ao abrir e ao fechar (240 ms, o `.secao svg` do protótipo),
+/// em vez de trocar de ícone de uma vez.
+pub fn seta_que_gira(id: SharedString, aberto: bool, lado: f32, window: &mut Window, cx: &mut App) -> Icon {
+    let giro = crate::ui::movimento::valor(id, if aberto { 1f32 } else { 0f32 }, crate::ui::movimento::GIRAR, crate::ui::movimento::Curva::Mover, window, cx);
+    Icon::new(Lucide::ChevronRight).with_size(tam(window, lado)).rotate(radians(giro * std::f32::consts::FRAC_PI_2))
+}
+
 impl RenderOnce for SecaoDaLista {
-    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         const GRUPO: &str = "secao-da-lista";
         // Protótipo Linear (25/11/2026): 28 de altura, 10 antes e dos lados, o nome no tênue da
         // lista, o número no apagado e a seta de 14 logo depois.
         let seta = self.recolhivel.as_ref().map(|(aberto, _)| {
-            div()
-                .flex_none()
-                .child(Icon::new(if *aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }).with_size(tam(window, 14.)))
+            div().flex_none().child(seta_que_gira(SharedString::from(format!("seta-secao-{}", self.titulo)), *aberto, 14., window, cx))
         });
         let clique = self.recolhivel.map(|(_, f)| f);
         div()
@@ -160,7 +165,7 @@ impl RenderOnce for SecaoDaLista {
 }
 
 impl RenderOnce for CabecalhoDeSecao {
-    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         const GRUPO: &str = "cabecalho-de-secao";
         let contagem = self.contagem.map(|n| {
             let selo = Selo::contagem(n);
@@ -179,10 +184,7 @@ impl RenderOnce for CabecalhoDeSecao {
                 .flex()
                 .items_center()
                 .group_hover(GRUPO, |s| s.text_color(Cores::texto()))
-                .child(
-                    Icon::new(if *aberto { Lucide::ChevronDown } else { Lucide::ChevronRight })
-                        .with_size(tam(window, CHEVRON)),
-                )
+                .child(seta_que_gira(SharedString::from(format!("seta-cabecalho-{}", self.titulo)), *aberto, CHEVRON, window, cx))
         });
         let linha = div()
             .id(SharedString::from(format!("secao-{}", self.titulo)))
@@ -268,6 +270,7 @@ pub struct CartaoDeLista {
     acoes: Vec<AnyElement>,
     acao_fixa: Option<AnyElement>,
     selecionado: bool,
+    fundo_por_fora: bool,
     nao_lido: bool,
     realce: bool,
     nivel: u8,
@@ -292,6 +295,7 @@ impl CartaoDeLista {
             acoes: Vec::new(),
             acao_fixa: None,
             selecionado: false,
+            fundo_por_fora: false,
             nao_lido: false,
             realce: false,
             nivel: 0,
@@ -360,6 +364,13 @@ impl CartaoDeLista {
 
     pub fn selecionado(mut self, s: bool) -> Self {
         self.selecionado = s;
+        self
+    }
+
+    /// O fundo do escolhido vem de fora (o marcador que desliza atrás da lista): a linha fica só
+    /// com o texto do escolhido.
+    pub fn fundo_por_fora(mut self, f: bool) -> Self {
+        self.fundo_por_fora = f;
         self
     }
 
@@ -519,6 +530,7 @@ impl RenderOnce for CartaoDeLista {
         // protótipo: com o fundo do hover, dois seguidos (um escolhido, outro aberto) emendavam
         // um no outro (dono, 26/11/2026).
         let (fundo, hover) = match self.selecionado {
+            true if self.fundo_por_fora => (transparent_black(), transparent_black()),
             // Na lista (a linha de uma linha só), o escolhido é o da lista: as cores dela podem ser
             // outras (Configurações › Aparência › Cores da lista).
             true if folgada => (Cores::selecao_da_lista(), Cores::selecao_da_lista()),

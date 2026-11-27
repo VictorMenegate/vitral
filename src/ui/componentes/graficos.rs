@@ -535,8 +535,9 @@ impl RenderOnce for AnelDeUso {
         // Sem número, sem arco.
         let alvo = fora.unwrap_or(0.).clamp(0., 1.);
         let chave = movimento::chave(&self.id, "arcos");
+        // Ao aparecer, enche em 1 s, como os anéis do protótipo (o trilho do modo foco, o popover).
         let f = if self.encher {
-            movimento::valor_desde(chave, 0., alvo, movimento::ENCHER, Curva::Mover, window, cx)
+            movimento::valor_desde(chave, 0., alvo, movimento::ENCHER_AO_APARECER, Curva::Mover, window, cx)
         } else {
             movimento::valor(chave, alvo, movimento::ENCHER, Curva::Mover, window, cx)
         };

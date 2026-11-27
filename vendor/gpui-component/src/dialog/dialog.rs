@@ -900,12 +900,13 @@ impl RenderOnce for Dialog {
                                         .shadow(dialog_shadow(visibility))
                                         .text_selection_scope(selection_scope)
                                         .map(|surface| {
-                                            if entrance == DialogEntrance::FadeSlide {
+                                            if matches!(entrance, DialogEntrance::FadeSlide | DialogEntrance::FadeRise) {
                                                 let mut surface = EntranceSurface::new(
                                                     surface.into_any_element(),
                                                     travel,
                                                     window_paddings.top + margin,
-                                                );
+                                                )
+                                                .rising(entrance == DialogEntrance::FadeRise);
                                                 surface.progress = visibility;
                                                 surface.into_any_element()
                                             } else {

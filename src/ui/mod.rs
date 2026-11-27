@@ -494,13 +494,23 @@ pub struct Janela {
     /// O que a direita encaixada mostrou no último desenho ("arquivo" ou "chat"; `None` fechada) e
     /// se já apareceu alguma vez: aberta pelo Ctrl+J ou trocada de aba, ela entra com fade (na
     /// abertura do app, pronta).
-    direita_vista: Option<&'static str>,
+    direita_vista: Option<String>,
     direita_ja_vista: bool,
     /// Os avisos do canto do último desenho (o que aparece entra com fade).
     vistos_no_canto: movimento::JaVistos,
     rolagem_lista: ScrollHandle,
     /// Seções da lista recolhidas ("Mais antigas" começa assim).
     secoes_recolhidas: HashSet<&'static str>,
+    /// Onde a linha do chat escolhido estava no último desenho da lista (do topo do conteúdo),
+    /// para o marcador que desliza atrás das linhas; e o topo do conteúdo, que a linha usa na
+    /// conta. `None` quando a linha não foi desenhada.
+    /// Quando a lista voltou (saindo do modo foco, Ctrl+B): ela e a barra de baixo entram com fade
+    /// nesse desenho (o `.lista, .rodape` do protótipo), e não a cada vez que a casca remonta.
+    mostrou_lista_em: Option<std::time::Instant>,
+    /// Quando as Tarefas fecharam: as conversas voltam subindo (o `.colunas` do protótipo).
+    voltou_do_quadro_em: Option<std::time::Instant>,
+    marcador_da_lista: std::rc::Rc<std::cell::Cell<Option<f32>>>,
+    topo_da_lista: std::rc::Rc<std::cell::Cell<f32>>,
     /// Arquivo aberto no painel da direita (a pasta e o caminho relativo a ela).
     arquivo_aberto: Option<(PathBuf, String)>,
     /// A linha que um link da conversa pediu: o painel rola até ela ao abrir e a deixa marcada.
@@ -640,6 +650,9 @@ pub struct Janela {
     /// Copiar) aparece embaixo dele. `None` na seleção pelo teclado; enquanto o botão está
     /// apertado (`segurando_trecho`), a barra não aparece.
     ponto_do_trecho: Option<Point<Pixels>>,
+    /// O Copiar da barra do trecho acabou de copiar: ela mostra "Copiado" e fecha depois de
+    /// 900 ms, como no protótipo (antes fechava na hora, sem dizer nada).
+    trecho_copiado: bool,
     segurando_trecho: bool,
     /// Há texto selecionado na janela (ou uma seleção em curso), conferido a cada desenho: com
     /// ele, as conversas montam todos os blocos, para a seleção alcançar o que saiu da vista.
@@ -1020,6 +1033,10 @@ impl Janela {
             vistos_no_canto: Default::default(),
             rolagem_lista: ScrollHandle::new(),
             secoes_recolhidas: HashSet::from(RECOLHIDAS_DE_INICIO),
+            mostrou_lista_em: None,
+            voltou_do_quadro_em: None,
+            marcador_da_lista: std::rc::Rc::new(std::cell::Cell::new(None)),
+            topo_da_lista: std::rc::Rc::new(std::cell::Cell::new(0.)),
             arquivo_aberto: None,
             arquivo_linha: Default::default(),
             arquivo_marcada: Default::default(),
@@ -1085,6 +1102,7 @@ impl Janela {
             saida_boas_vindas: false,
             trecho: None,
             ponto_do_trecho: None,
+            trecho_copiado: false,
             segurando_trecho: false,
             selecionando: false,
             citacoes: HashMap::new(),
@@ -1271,6 +1289,7 @@ impl Janela {
         } else {
             // Pedida também na gaveta: ao alargar a janela, ela fica ao lado e a gaveta fecha.
             self.lista = true;
+            self.mostrou_lista_em = Some(std::time::Instant::now());
             if !self.orcamento.cabe_lista {
                 self.abrir_gaveta(Gaveta::Lista, window, cx);
             }
@@ -1330,6 +1349,7 @@ impl Janela {
     /// Mostra a lista: ao lado das conversas, ou como gaveta quando não cabe.
     pub(super) fn mostrar_lista(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.lista = true;
+        self.mostrou_lista_em = Some(std::time::Instant::now());
         if !self.orcamento.cabe_lista && self.gaveta != Some(Gaveta::Lista) {
             self.abrir_gaveta(Gaveta::Lista, window, cx);
         }
@@ -2087,6 +2107,7 @@ impl Janela {
     /// A árvore da janela inteira (o `render`, que só mede quanto ela leva para o `VITRAL_QUADROS`).
     fn montar_janela(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         contar_quadro();
+        let lista_voltou = self.mostrou_lista_em.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(150));
         // O Ctrl solto com a janela fora do caminho do evento (um diálogo com o foco, a janela
         // desativada) não avisa: sem o Ctrl de fato apertado, o relógio dos números zera.
         if !window.modifiers().control {
@@ -2521,10 +2542,15 @@ impl Janela {
                     // Linear (25/11/2026): a barra de baixo da janela, com o logo, o uso, o contexto,
                     // a Revisão, as Arquivadas e os Avisos. Some junto com a lista (Ctrl+B).
                     .when(self.lista, |d| {
-                        d.child(
-                            AnyView::from(self.vista_da_barra.clone())
-                                .cached(StyleRefinement::default().w_full().h(crate::tema::r(34.)).flex_none()),
-                        )
+                        d.child(movimento::entrada(
+                            "barra-de-baixo-volta",
+                            lista_voltou,
+                            movimento::De::Baixo,
+                            div().w_full().flex_none().child(
+                                AnyView::from(self.vista_da_barra.clone())
+                                    .cached(StyleRefinement::default().w_full().h(crate::tema::r(34.)).flex_none()),
+                            ),
+                        ))
                     }),
             )
             .children(self.faixa_de_gravacao(&motor, cx))
@@ -2656,6 +2682,8 @@ impl Janela {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        let lista_voltou = self.mostrou_lista_em.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(150));
+        let voltou_do_quadro = self.voltou_do_quadro_em.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(150));
         let o = self.orcamento;
         self.normalizar_maximizado();
         let ids: Vec<u64> = self.paineis.iter().map(|p| p.id).collect();
@@ -2719,7 +2747,12 @@ impl Janela {
                     .size(px(largura))
                     .size_range(u(LISTA_MINIMA)..px(o.max_lista))
                     .fixed()
-                    .child(div().size_full().child(AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full()))),
+                    .child(movimento::entrada(
+                        "lista-volta",
+                        lista_voltou,
+                        movimento::De::Esquerda,
+                        div().relative().size_full().child(AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full())),
+                    )),
             );
         }
         if let Some(quadro) = quadro {
@@ -2769,20 +2802,27 @@ impl Janela {
                             .size_full()
                             .relative()
                             .map(|d| margem_do_cartao(d, k == 0, k + 1 == visiveis.len() && !painel, lista))
-                            .child(self.zona_de_soltura(id, conteudo, cx)),
+                            .child(movimento::entrada_em(
+                                ("coluna-volta", id as usize),
+                                voltou_do_quadro,
+                                movimento::De::Baixo,
+                                movimento::SUBIR,
+                                div().relative().size_full().child(self.zona_de_soltura(id, conteudo, cx)),
+                            )),
                     ),
                 );
             }
         }
         if painel {
             // Aberta (Ctrl+J) ou trocada entre o arquivo e Este chat, entra com fade, uma vez.
+            // Cada arquivo é uma vista: trocar de um para outro também entra com o fade.
             let qual = match self.aba_visivel(motor.read(cx)) {
-                abas_direita::AbaDireita::Arquivo(_) => "arquivo",
-                abas_direita::AbaDireita::Arquivos => "arquivos",
-                abas_direita::AbaDireita::Chat => "chat",
+                abas_direita::AbaDireita::Arquivo(i) => format!("arquivo-{i}"),
+                abas_direita::AbaDireita::Arquivos => "arquivos".to_string(),
+                abas_direita::AbaDireita::Chat => "chat".to_string(),
             };
-            let antes = self.direita_vista.replace(qual);
-            let nova = antes != Some(qual) && (antes.is_some() || self.direita_ja_vista);
+            let antes = self.direita_vista.replace(qual.clone());
+            let nova = antes.as_deref() != Some(qual.as_str()) && (antes.is_some() || self.direita_ja_vista);
             self.direita_ja_vista = true;
             if nova {
                 // Abriu ou trocou: a vista em cache se refaz e toca o fade (`direita_em_vista`).
@@ -3255,7 +3295,7 @@ impl Janela {
     /// O conteúdo do painel da direita, desenhado pela vista em cache dele, com o fade de quando
     /// abre ou troca (`direita_nova`, que vale uma vez).
     pub(super) fn direita_em_vista(&mut self, motor: &Entity<Motor>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let qual = self.direita_vista.unwrap_or("chat");
+        let qual = self.direita_vista.clone().unwrap_or_else(|| "chat".to_string());
         let nova = std::mem::take(&mut self.direita_nova);
         let conteudo = self.conteudo_da_direita(motor, window, cx);
         movimento::entrada(SharedString::from(format!("direita-entra-{qual}")), nova, movimento::De::Parado, div().size_full().child(conteudo))

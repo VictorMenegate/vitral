@@ -31,7 +31,7 @@ use std::{
 };
 
 use gpui_kit::base::animation::{cubic_bezier, ease_out_cubic};
-use gpui_kit::component::spinner;
+use gpui_kit::component::{ElementExt as _, spinner};
 use gpui_kit::*;
 
 use crate::tema::r;
@@ -55,6 +55,13 @@ pub const DESLIZAR: Duration = Duration::from_millis(300);
 pub const GIRAR: Duration = Duration::from_millis(240);
 pub const LUZ: Duration = Duration::from_millis(420);
 pub const ENCHER_AO_APARECER: Duration = Duration::from_millis(1000);
+/// Os tempos que faltavam do protótipo (27/11/2026, dono: "tá faltando um monte de animações"):
+/// a citação e o cartão de passo (240), a parte das Configurações e o aro da caixa (260), o passo
+/// da tela inicial (320) e os cartões que entram em cascata (360).
+pub const SUBIR_LEVE: Duration = Duration::from_millis(240);
+pub const PAINEL: Duration = Duration::from_millis(260);
+pub const PASSO: Duration = Duration::from_millis(320);
+pub const CARTAO: Duration = Duration::from_millis(360);
 
 /// Curvas sem ricochete: nenhuma passa do alvo.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -167,10 +174,15 @@ pub fn subir<E: IntoElement + Styled + 'static>(el: E, id: impl Into<ElementId>,
     el.with_animation(id, animacao(SUBIR, Curva::Entrar), move |el, t| de.aplicar(el, t))
 }
 
-/// Como o `entrar`, começando `atraso` depois de montar: as linhas de uma lista entram uma depois
-/// da outra (a tela inicial: 80 ms e mais 45 por linha, como no protótipo).
-pub fn entrar_depois<E: IntoElement + Styled + 'static>(el: E, id: impl Into<ElementId>, de: De, atraso: Duration) -> AnimationElement<E> {
-    let total = atraso + ENTRAR;
+/// Como o `entrar`, em `d` (os tempos maiores do protótipo).
+pub fn entrar_em<E: IntoElement + Styled + 'static>(el: E, id: impl Into<ElementId>, de: De, d: Duration) -> AnimationElement<E> {
+    el.with_animation(id, animacao(d, Curva::Entrar), move |el, t| de.aplicar(el, t))
+}
+
+/// Como o `entrar`, começando `atraso` depois de montar e durando `d`: as linhas de uma lista
+/// entram uma depois da outra (a tela inicial: 80 ms e mais 45 por linha, como no protótipo).
+pub fn entrar_depois_em<E: IntoElement + Styled + 'static>(el: E, id: impl Into<ElementId>, de: De, atraso: Duration, d: Duration) -> AnimationElement<E> {
+    let total = atraso + d;
     let espera = atraso.as_secs_f32() / total.as_secs_f32();
     let quadro = Duration::from_secs_f32(1. / QPS);
     el.with_animation(id, Animation::new(total.saturating_sub(quadro).max(quadro)), move |el, t| {
@@ -247,12 +259,65 @@ pub fn entrada_subindo<E: IntoElement + Styled + 'static>(id: impl Into<ElementI
     entrada_em(id, nova, de, SUBIR, el)
 }
 
-fn entrada_em<E: IntoElement + Styled + 'static>(id: impl Into<ElementId>, nova: bool, de: De, duracao: Duration, el: E) -> ComEstado {
+pub fn entrada_em<E: IntoElement + Styled + 'static>(id: impl Into<ElementId>, nova: bool, de: De, duracao: Duration, el: E) -> ComEstado {
     let id = id.into();
     com_estado(move |window, cx| {
         let inicial = if nova { 0. } else { 1. };
         let t = valor_desde(id, inicial, 1f32, duracao, Curva::Entrar, window, cx);
         de.aplicar(el, t).into_any_element()
+    })
+}
+
+/// Abre e fecha na altura (as seções da lista, o ramo da árvore, o palco da tela inicial): mede a
+/// altura do conteúdo a cada quadro e anda a altura visível de 0 até ela, e de volta, com o fade
+/// junto, como o `height` com `overflow: clip` do protótipo (dono, 27/11/2026: "tá faltando um
+/// monte de animações"; antes a seção aparecia e sumia de uma vez). Aberto e parado, o conteúdo
+/// fica solto, sem corte; fechado e parado, não é desenhado. Na montagem aparece no estado certo.
+pub fn na_altura(id: impl Into<ElementId>, aberto: bool, d: Duration, conteudo: impl FnOnce() -> AnyElement + 'static) -> ComEstado {
+    let id = id.into();
+    com_estado(move |window, cx| {
+        let t = valor(chave(&id, "altura-t"), if aberto { 1f32 } else { 0f32 }, d, Curva::Mover, window, cx);
+        if t <= 0. && !aberto {
+            return div().into_any_element();
+        }
+        let medida = window.use_keyed_state(chave(&id, "altura-medida"), cx, |_, _| Rc::new(Cell::new(0f32)));
+        let medida = medida.read(cx).clone();
+        let medir = medida.clone();
+        let miolo = div()
+            .w_full()
+            .flex_none()
+            .child(conteudo())
+            .on_prepaint(move |limites, _, _| medir.set(f32::from(limites.size.height)));
+        if t >= 1. {
+            return div().w_full().child(miolo).into_any_element();
+        }
+        div().w_full().overflow_hidden().h(px(medida.get() * t)).opacity(t.clamp(0., 1.)).child(miolo).into_any_element()
+    })
+}
+
+/// A altura que acompanha o conteúdo: quando ele muda de tamanho (o passo novo da tela inicial,
+/// o `height` do `.ini-palco` do protótipo), a altura anda da antiga para a nova em `d`, com o
+/// conteúdo cortado no caminho. Sem medida ainda (o primeiro desenho), fica solta.
+pub fn altura_que_acompanha(id: impl Into<ElementId>, d: Duration, conteudo: AnyElement) -> ComEstado {
+    let id = id.into();
+    com_estado(move |window, cx| {
+        let medida = window.use_keyed_state(chave(&id, "acompanha-medida"), cx, |_, _| Rc::new(Cell::new(0f32)));
+        let medida = medida.read(cx).clone();
+        let medir = medida.clone();
+        let miolo = div()
+            .w_full()
+            .flex_none()
+            .child(conteudo)
+            .on_prepaint(move |limites, _, _| medir.set(f32::from(limites.size.height)));
+        let alvo = medida.get();
+        if alvo <= 0. {
+            return div().w_full().child(miolo).into_any_element();
+        }
+        let altura = valor(chave(&id, "acompanha-altura"), alvo, d, Curva::Mover, window, cx);
+        if (altura - alvo).abs() < 0.5 {
+            return div().w_full().child(miolo).into_any_element();
+        }
+        div().w_full().overflow_hidden().h(px(altura)).child(miolo).into_any_element()
     })
 }
 

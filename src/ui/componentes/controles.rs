@@ -1067,7 +1067,7 @@ impl RenderOnce for ControleSegmentado {
         let lugar = alvo.map(|alvo| {
             let chave = movimento::chave(&self.id, "pilula");
             let inicial = inicial.unwrap_or(alvo);
-            movimento::valor_desde(chave, inicial, alvo, movimento::MOVER, Curva::Mover, window, cx)
+            movimento::valor_desde(chave, inicial, alvo, movimento::DESLIZAR, Curva::Mover, window, cx)
         });
         {
             let mut m = medidas.borrow_mut();

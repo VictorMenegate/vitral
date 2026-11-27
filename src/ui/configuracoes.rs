@@ -2092,10 +2092,11 @@ impl Render for Configuracoes {
                             // A parte escolhida entra com fade e desliza do lado para onde se foi (de
                             // baixo descendo na coluna, de cima subindo); abrir as Configurações não
                             // anima aqui (o diálogo já entra).
-                            .child(movimento::entrada(
+                            .child(movimento::entrada_em(
                                 SharedString::from(format!("cfg-mostra-{}", atual.nome())),
                                 entra_de.is_some(),
                                 entra_de.unwrap_or(movimento::De::Parado),
+                                movimento::PAINEL,
                                 v_flex().w_full().gap(esp::E8).children(grupos),
                             )),
                     ),

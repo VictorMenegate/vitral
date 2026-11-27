@@ -913,14 +913,35 @@ impl Janela {
                                 cx.stop_propagation();
                             }),
                         ))
-                        .child(botao("copiar-trecho", Lucide::Copy, tr!("Copiar")).on_mouse_down(
+                        .child(if self.trecho_copiado {
+                            botao("copiar-trecho", Lucide::Check, tr!("Copiado"))
+                        } else {
+                            botao("copiar-trecho", Lucide::Copy, tr!("Copiar"))
+                        }
+                        .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _, window, cx| {
-                                if let Some(trecho) = this.trecho.take() {
+                                cx.stop_propagation();
+                                if this.trecho_copiado {
+                                    return;
+                                }
+                                if let Some(trecho) = this.trecho.as_ref() {
                                     cx.write_to_clipboard(ClipboardItem::new_string(trecho.trim().to_string()));
                                 }
-                                gpui_kit::base::TextSelection::clear(window, cx);
-                                cx.stop_propagation();
+                                // "Copiado" por 900 ms; depois a seleção e a barra saem.
+                                this.trecho_copiado = true;
+                                cx.spawn_in(window, async move |this, cx| {
+                                    cx.background_executor().timer(std::time::Duration::from_millis(900)).await;
+                                    let _ = this.update_in(cx, |this, window, cx| {
+                                        if this.trecho_copiado {
+                                            this.trecho_copiado = false;
+                                            this.trecho = None;
+                                            gpui_kit::base::TextSelection::clear(window, cx);
+                                            cx.notify();
+                                        }
+                                    });
+                                })
+                                .detach();
                                 cx.notify();
                             }),
                         ));

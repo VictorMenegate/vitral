@@ -225,13 +225,20 @@ impl Janela {
                 .whitespace_nowrap()
                 .text_color(if atual { Cores::texto() } else if feito { Cores::tenue() } else { Cores::apagado() })
                 .when(atual, |s| s.bg(Cores::cartao_elevado()))
-                .child(div().flex_none().size(r(6.)).rounded_full().bg(if atual {
-                    Cores::destaque_texto()
-                } else if feito {
-                    Cores::verde()
-                } else {
-                    Cores::apagado().opacity(0.6)
-                }))
+                // A cor da bolinha anda ao trocar de passo (200 ms, o `.bola` do protótipo).
+                .child({
+                    let alvo = if atual {
+                        Cores::destaque_texto()
+                    } else if feito {
+                        Cores::verde()
+                    } else {
+                        Cores::apagado().opacity(0.6)
+                    };
+                    super::movimento::com_estado(move |window, cx| {
+                        let cor = super::movimento::valor(("bv-bola", i), alvo, super::movimento::COR, super::movimento::Curva::Mover, window, cx);
+                        div().flex_none().size(r(6.)).rounded_full().bg(cor).into_any_element()
+                    })
+                })
                 .child(SharedString::from(crate::i18n::traduzir(*nome)))
                 .when(pode && !atual, |s| {
                     s.cursor_pointer().on_click(cx.listener(move |this, _, _, cx| this.ir_ao_passo(i, cx)))
@@ -255,7 +262,7 @@ impl Janela {
         let corpo = match tela.indo {
             Some(adiante) => {
                 let de = if adiante { super::movimento::De::Direita } else { super::movimento::De::Esquerda };
-                super::movimento::entrar(div().relative().child(corpo), ("bv-passo", passo), de).into_any_element()
+                super::movimento::entrar_em(div().relative().child(corpo), ("bv-passo", passo), de, super::movimento::PASSO).into_any_element()
             }
             None => corpo,
         };
@@ -296,7 +303,17 @@ impl Janela {
             .bg(Cores::preto())
             .overflow_hidden()
             .child(h_flex().items_center().gap(esp::E12).pt(m::TOPO_Y).px(m::TOPO_X).child(logo).child(pilulas))
-            .child(div().flex_1().min_h(r(340.)).pt(m::PALCO_Y).px(m::PALCO_X).pb(esp::E8).overflow_hidden().child(corpo))
+            // A altura do palco anda de um passo para o outro (320 ms, o `.ini-palco` do protótipo).
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(r(340.))
+                    .pt(m::PALCO_Y)
+                    .px(m::PALCO_X)
+                    .pb(esp::E8)
+                    .overflow_hidden()
+                    .child(super::movimento::altura_que_acompanha("bv-palco", super::movimento::PASSO, corpo.into_any_element())),
+            )
             .child(pe);
         // O brilho de baixo (o `radial-gradient` do protótipo): o GPUI não tem degradê redondo, e uma
         // sombra grande e borrada de uma peça escondida embaixo da tela faz o mesmo efeito.
@@ -335,7 +352,13 @@ impl Janela {
                     .justify_center()
                     .px(esp::E24)
                     .pb(esp::E32)
-                    .child(super::movimento::entrar(cartao, "bv-cartao-entra", super::movimento::De::Baixo)),
+                    .child(super::movimento::entrar_depois_em(
+                        cartao,
+                        "bv-cartao-entra",
+                        super::movimento::De::Baixo,
+                        std::time::Duration::from_millis(60),
+                        super::movimento::CARTAO,
+                    )),
             )
             .into_any_element()
     }
@@ -440,7 +463,7 @@ impl Janela {
                         .child(div().text_size(r(12.5)).text_color(Cores::tenue()).child(texto)),
                 )
                 .child(acao);
-            super::movimento::entrar_depois(linha, ("bv-ia", i), super::movimento::De::Baixo, std::time::Duration::from_millis(80 + 45 * i as u64))
+            super::movimento::entrar_depois_em(linha, ("bv-ia", i), super::movimento::De::Baixo, std::time::Duration::from_millis(80 + 45 * i as u64), super::movimento::PASSO)
         });
         v_flex()
             .gap(crate::tema::inicio::PASSO_VAO)
@@ -491,7 +514,7 @@ impl Janela {
                     .child(div().text_size(r(13.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::texto()).child(titulo))
                     .child(div().text_size(r(12.5)).text_color(Cores::tenue()).child(frase)),
             );
-        super::movimento::entrar_depois(linha, ("bv-linha", i), super::movimento::De::Baixo, std::time::Duration::from_millis(80 + 45 * i as u64))
+        super::movimento::entrar_depois_em(linha, ("bv-linha", i), super::movimento::De::Baixo, std::time::Duration::from_millis(80 + 45 * i as u64), super::movimento::CARTAO)
     }
 
     /// Passo 1: o que é o Vitral, em quatro linhas, e a língua da interface (que vale na hora).
@@ -615,13 +638,7 @@ impl Janela {
                 .rounded(raio::CARTAO)
                 .border(px(1.5))
                 .cursor_pointer()
-                .map(|s| {
-                    if marcada {
-                        s.border_color(Cores::destaque()).bg(Cores::cartao_elevado().blend(Cores::destaque().opacity(0.12)))
-                    } else {
-                        s.border_color(gpui_kit::transparent_black()).bg(Cores::cartao_elevado()).hover(|s| s.bg(Cores::cartao_elevado().blend(Cores::forte().opacity(0.04))))
-                    }
-                })
+                .when(!marcada, |s| s.hover(|s| s.bg(Cores::cartao_elevado().blend(Cores::forte().opacity(0.04)))))
                 .child(super::componentes::icone(Lucide::Folder, 16., window).text_color(Cores::tenue()))
                 .child(div().min_w_0().truncate().font_family(FONTE_MONO).text_size(r(13.)).font_weight(FontWeight::MEDIUM).text_color(Cores::texto()).child(com_til(&pasta)))
                 .child(div().flex_1())
@@ -629,7 +646,8 @@ impl Janela {
                     div().flex_none().whitespace_nowrap().text_size(r(12.)).text_color(Cores::apagado()).child(if n == 1 { tr!("1 chat") } else { tr!("{n} chats", n = n) })
                 }))
                 .when(marcada, |s| {
-                    s.child(
+                    // O certo entra com o fade ao escolher a pasta.
+                    s.child(super::movimento::entrar(
                         div()
                             .flex_none()
                             .size(r(18.))
@@ -640,7 +658,9 @@ impl Janela {
                             .bg(Cores::destaque())
                             .text_color(Cores::forte())
                             .child(super::componentes::icone(Lucide::Check, 11., window)),
-                    )
+                        ("bv-pasta-certo", i),
+                        super::movimento::De::Parado,
+                    ))
                 })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if let Some(tela) = &mut this.boas_vindas {
@@ -648,7 +668,15 @@ impl Janela {
                         cx.notify();
                     }
                 }));
-            super::movimento::entrar_depois(linha, ("bv-pasta-entra", i), super::movimento::De::Baixo, std::time::Duration::from_millis(80 + 45 * i as u64))
+            // A borda e o fundo da escolhida andam (160 ms, o `.ini-pasta` do protótipo).
+            let linha = super::movimento::com_estado(move |window, cx| {
+                let t = super::movimento::valor(("bv-pasta-cor", i), if marcada { 1f32 } else { 0f32 }, super::movimento::COR, super::movimento::Curva::Mover, window, cx);
+                linha
+                    .border_color(Cores::destaque().opacity(t))
+                    .bg(Cores::cartao_elevado().blend(Cores::destaque().opacity(0.12 * t)))
+                    .into_any_element()
+            });
+            super::movimento::entrar_depois_em(div().child(linha), ("bv-pasta-entra", i), super::movimento::De::Baixo, std::time::Duration::from_millis(80 + 45 * i as u64), super::movimento::PASSO)
         }));
         v_flex()
             .gap(crate::tema::inicio::PASSO_VAO)

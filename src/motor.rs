@@ -185,7 +185,10 @@ pub fn espera(execucao: &Execucao, nao_lido: bool, parada: bool) -> Option<Esper
     match execucao {
         Execucao::EsperandoVoce => Some(Espera::Pedido),
         _ if parada => Some(Espera::Parada),
-        Execucao::Erro(_) => Some(Espera::Erro),
+        // O erro pede atenção só até você ver o chat: depois o cartão do erro fica na conversa,
+        // mas a lista, a aba e o sino param de marcar vermelho (dono, 27/11/2026: "quando o
+        // agente dá erro que não dá pra fazer mais nada ... se eu já foquei no chat sair o aviso").
+        Execucao::Erro(_) if nao_lido => Some(Espera::Erro),
         _ if nao_lido => Some(Espera::Nova),
         _ => None,
     }

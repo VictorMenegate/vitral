@@ -377,7 +377,9 @@ impl Janela {
         // arquivo fica na dica da coluna.
         let _ = dica;
         window.open_dialog(cx, move |dialogo, window, _| {
-            moldura(dialogo, super::configuracoes::LARGURA_DAS_CONFIGURACOES, window)
+            // Sobe de baixo com o fade, como o `cartao-entra` do protótipo; antes descia do topo
+            // da janela (dono, 27/11/2026: "tá faltando um monte de animações").
+            moldura(dialogo.entrance(gpui_kit::component::dialog::DialogEntrance::FadeRise), super::configuracoes::LARGURA_DAS_CONFIGURACOES, window)
                 .p_0()
                 .bg(Cores::preto())
                 .border_color(gpui_kit::transparent_black())
