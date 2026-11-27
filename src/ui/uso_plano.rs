@@ -1571,33 +1571,72 @@ impl Janela {
         })
     }
 
-    /// O contexto do chat aberto na barra de baixo: o anel e "Contexto 50%".
-    pub(super) fn pilula_do_contexto(&self, m: &Motor, window: &Window) -> Option<AnyElement> {
+    /// O contexto do chat aberto na barra de baixo: o anel e "Contexto 50%". O clique abre o uso
+    /// da conversa (o custo, o modelo e o Compactar), o mesmo popover que o anel da caixa abria:
+    /// com a barra à vista, a caixa não repete o número (dono, 27/11/2026: "faz o de baixo ser
+    /// clicável").
+    pub(super) fn pilula_do_contexto(&self, m: &Motor, cx: &Context<Self>) -> Option<AnyElement> {
         let chat = self.selecionado.as_deref().and_then(|id| m.chat(id))?;
         let usados = chat.contexto?;
         let (fracao, numero, janela) = super::composer::uso_do_contexto(usados, chat.janela, chat.modelo_atual.as_deref());
-        let dica: SharedString = format!("Contexto do chat aberto: {} de {}", super::composer::milhares(usados), super::composer::tokens(janela)).into();
-        let _ = window;
-        Some(
-            h_flex()
-                .id("barra-contexto")
-                .flex_none()
-                .h(r(24.))
-                // A pílula do protótipo Linear (25/11/2026): no preto, 8 e 10 dos lados, 7 entre
-                // as partes.
-                .pl(esp::E8)
-                .pr(crate::tema::linear::USO_DIREITA)
-                .gap(crate::tema::linear::USO_VAO)
-                .rounded(crate::tema::raio::de(24.))
-                .text_size(r(12.))
-                .bg(Cores::preto())
-                .hover(|s| s.bg(Cores::preto().blend(Cores::forte().opacity(0.05))))
-                .child(Anel::new("barra-contexto-anel", fracao).diametro(14.).espessura(2.).inteiro().cor(Cores::destaque_texto()))
-                .child(div().text_color(Cores::texto_da_fala()).child(tr!("Contexto")))
-                .child(div().tabular().text_color(Cores::tenue()).child(format!("{numero}%")))
-                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
-                .into_any_element(),
-        )
+        let dica: SharedString = tr!(
+            "Contexto do chat aberto: {usados} de {janela}",
+            usados = super::composer::milhares(usados),
+            janela = super::composer::tokens(janela)
+        );
+        let pilula = PilulaDoContexto { fracao, numero, dica, aberto: false };
+        // O Compactar age no painel que mostra o chat; sem painel com ele, a pílula só informa.
+        match self.paineis.iter().find(|p| p.chat.as_deref() == Some(chat.id.as_str())) {
+            Some(painel) => Some(self.popover_do_contexto("pop-contexto-barra", Anchor::BottomLeft, pilula, chat.id.clone(), painel.id, cx)),
+            None => Some(pilula.into_any_element()),
+        }
+    }
+}
+
+/// A pílula "Contexto 50%" da barra de baixo, gatilho do popover do uso da conversa.
+#[derive(IntoElement)]
+struct PilulaDoContexto {
+    fracao: f32,
+    numero: u32,
+    dica: SharedString,
+    aberto: bool,
+}
+
+impl Selectable for PilulaDoContexto {
+    fn selected(mut self, selected: bool) -> Self {
+        self.aberto = selected;
+        self
+    }
+
+    fn is_selected(&self) -> bool {
+        self.aberto
+    }
+}
+
+impl RenderOnce for PilulaDoContexto {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let dica = self.dica;
+        h_flex()
+            .id("barra-contexto")
+            .flex_none()
+            .h(r(24.))
+            // A pílula do protótipo Linear (25/11/2026): no preto, 8 e 10 dos lados, 7 entre
+            // as partes.
+            .pl(esp::E8)
+            .pr(crate::tema::linear::USO_DIREITA)
+            .gap(crate::tema::linear::USO_VAO)
+            .rounded(crate::tema::raio::de(24.))
+            .cursor_pointer()
+            .text_size(r(12.))
+            .bg(Cores::preto())
+            .when(self.aberto, |s| s.bg(Cores::preto().blend(Cores::forte().opacity(0.10))))
+            .when(!self.aberto, |s| {
+                s.hover(|s| s.bg(Cores::preto().blend(Cores::forte().opacity(0.05))))
+                    .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+            })
+            .child(Anel::new("barra-contexto-anel", self.fracao).diametro(14.).espessura(2.).inteiro().cor(Cores::destaque_texto()))
+            .child(div().text_color(Cores::texto_da_fala()).child(tr!("Contexto")))
+            .child(div().tabular().text_color(Cores::tenue()).child(format!("{}%", self.numero)))
     }
 }
 

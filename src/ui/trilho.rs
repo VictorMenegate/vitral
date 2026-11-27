@@ -399,7 +399,7 @@ impl Janela {
         let m = motor.read(cx);
         let logo = self.botao_logo_em(m, false, true, super::resumo::precisa_em_tudo(m), cx);
         let usos = self.pilulas_de_uso(cx);
-        let contexto = self.pilula_do_contexto(m, window);
+        let contexto = self.pilula_do_contexto(m, cx);
         let revisao = {
             let ligada = m.config.revisar_edicoes;
             let motor = motor.clone();

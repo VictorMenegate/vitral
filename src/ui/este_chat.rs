@@ -111,11 +111,26 @@ impl Janela {
             grupos.extend(self.secao_git(chat, window, cx));
             grupos.push(self.grupo_revisao(motor, chat, window, cx));
         }
-        // Ao trocar de chat, o painel volta ao topo.
+        // Ao trocar de chat, o painel volta ao topo, e os grupos do chat novo entram um depois do
+        // outro, subindo 8 px com o fade (dono, 27/11/2026: "coloca animações no Este chat pra
+        // quando troca de chat focado"; antes o conteúdo trocava a seco). O estado da entrada é
+        // por chat: remontado sem troca (a lista que recolhe), o painel aparece pronto.
         let atual = self.selecionado.clone();
-        if std::mem::replace(&mut self.este_chat_rolado, atual.clone()) != atual {
+        let trocou = std::mem::replace(&mut self.este_chat_rolado, atual.clone()) != atual;
+        if trocou {
             self.rolagem_este_chat.set_offset(point(px(0.), px(0.)));
         }
+        let do_chat = atual.clone().unwrap_or_default();
+        let grupos = grupos.into_iter().enumerate().map(move |(i, grupo)| {
+            super::movimento::entrada_depois_em(
+                SharedString::from(format!("este-chat-{do_chat}-{i}")),
+                trocou,
+                super::movimento::De::Baixo,
+                std::time::Duration::from_millis(35 * i.min(6) as u64),
+                super::movimento::SUBIR_LEVE,
+                div().flex_none().w_full().child(grupo),
+            )
+        });
         let rolado = self.rolagem_este_chat.offset().y < px(0.);
         let cabecalho = self.barra_de_abas(motor, super::abas_direita::AbaDireita::Chat, rolado, "arrastar-este-chat", window, cx);
         div()

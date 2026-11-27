@@ -518,6 +518,8 @@ impl Janela {
         let (eu, ctx) = (&*self, &contexto);
         // Cada bloco com o índice do (primeiro) item dele, que identifica a entrada.
         let mut blocos: Vec<Planejado> = Vec::new();
+        // Onde ficou, em `blocos`, a trilha do turno que roda (ver a linha "Pensando por").
+        let mut trilha_viva: Option<usize> = None;
         if chat.itens.is_empty() && chat.importada.is_none() {
             blocos.push(Planejado::pronto(Bloco::Texto, None, eu.dica_inicial(motor, chat, painel_id, window, cx)));
         }
@@ -663,6 +665,9 @@ impl Janela {
                 let chamadas = &visiveis[i..fim];
                 let chave_do_bloco =
                     chave_da_faixa(TipoDaChave::Trilha, chamadas, &[u64::from(ao_vivo), chamadas.len() as u64, u64::from(contexto.rodando)]);
+                if ao_vivo {
+                    trilha_viva = Some(blocos.len());
+                }
                 blocos.push(
                     Planejado::de_tipo(Bloco::Log, Some(indice), chave_do_bloco, move || eu.trilha(ctx, chamadas, ao_vivo, cx))
                         .fica_montado(fica_montado(chamadas.iter().map(|(_, item)| *item))),
@@ -756,7 +761,19 @@ impl Janela {
                     })
                     .filter(|desde| *desde > 0)
                     .map(|desde| desde as f64);
-                blocos.push(Planejado::pronto(Bloco::Log, None, linha_pensando(painel_id, crate::i18n::traduzir(rotulo).into(), cx.theme().font_family.clone(), desde)));
+                let pensando = linha_pensando(painel_id, crate::i18n::traduzir(rotulo).into(), cx.theme().font_family.clone(), desde);
+                // Com a trilha deste turno logo acima, as duas viram uma peça só: o "Pensando" em
+                // cima e a trilha embaixo dele, recuada e ligada por um cotovelo, em vez de duas
+                // linhas soltas com um ponto cada (dono, 27/11/2026: "faz esse rodou do pensando
+                // ser tipo uma parte de baixo do pensou, com conexão entre elas").
+                match trilha_viva.filter(|i| i + 1 == blocos.len()).and_then(|_| blocos.pop()) {
+                    Some(trilha) => {
+                        let (indice, montar) = (trilha.indice, trilha.montar);
+                        let (_, trilha) = montar();
+                        blocos.push(Planejado::pronto(Bloco::Log, indice, pensando_com_trilha(pensando, trilha)));
+                    }
+                    None => blocos.push(Planejado::pronto(Bloco::Log, None, pensando)),
+                }
             }
         }
         // Só o que está à vista (e a sobra em volta) é montado; o resto entra como um espaço da
@@ -1247,7 +1264,26 @@ impl Janela {
             (Lucide::Terminal, crate::tr!("Rodar os testes"), crate::tr!("Rode os testes e conserte o que falhar.")),
             (Lucide::ListChecks, crate::tr!("Planejar uma mudança"), crate::tr!("Antes de mexer nos arquivos, me ajude a planejar esta mudança: ")),
         ];
-        let entra = |el: Div, i: usize| movimento::entrar_depois_em(el, ("nova-conversa", i), De::Baixo, std::time::Duration::from_millis(40 + 45 * i as u64), movimento::PASSO);
+        // As linhas entram uma depois da outra quando a conversa nova aparece, e só então: depois
+        // do tempo da entrada (ou remontada pela lista que sai ou volta), a tela aparece pronta.
+        let agora = std::time::Instant::now();
+        let entrou_em = self.paineis.iter().find(|p| p.id == painel).map(|p| {
+            let mut visto = p.inicial_em.borrow_mut();
+            match visto.as_ref() {
+                Some((de, quando)) if *de == chat.id => *quando,
+                _ => {
+                    *visto = Some((chat.id.clone(), agora));
+                    agora
+                }
+            }
+        });
+        let remontada = entrou_em.is_some_and(|t| agora.duration_since(t) > std::time::Duration::from_millis(700));
+        let entra = |el: Div, i: usize| {
+            if remontada {
+                return el.into_any_element();
+            }
+            movimento::entrar_depois_em(el, ("nova-conversa", i), De::Baixo, std::time::Duration::from_millis(40 + 45 * i as u64), movimento::PASSO).into_any_element()
+        };
         let mut botoes: Vec<AnyElement> = comecos.into_iter().enumerate().map(|(i, (icone, rotulo, texto))| {
             h_flex()
                 .id(("comeco", i))
@@ -1289,13 +1325,19 @@ impl Janela {
             .py(esp::E32)
             .child(entra(div().child(Marca::do_agente(chat.agente).disco(40.)), 0))
             .child(entra(
+                // Com a largura do painel, para a pasta e os botões caberem nele: soltos, eles
+                // ficavam com a largura do conteúdo e, no painel estreito, saíam cortados dos dois
+                // lados (dono, 27/11/2026: "com o chat pequeno ficou bugado essa parte").
                 v_flex()
+                    .w_full()
                     .items_center()
                     .gap(esp::E6)
                     .child(div().titulo_tela().text_color(Cores::forte()).child(crate::tr!("O que vamos fazer?")))
                     .child(
                         h_flex()
+                            .w_full()
                             .max_w(r(420.))
+                            .justify_center()
                             .gap(esp::E6)
                             .text_size(r(12.5))
                             .text_color(Cores::tenue())
@@ -1314,8 +1356,8 @@ impl Janela {
                     ),
                 1,
             ))
-            .child(entra(div().child(grade), 2))
-            .child(entra(div().child(teclas), 3))
+            .child(entra(div().w_full().flex().justify_center().child(grade), 2))
+            .child(entra(div().w_full().flex().justify_center().child(teclas), 3))
             .into_any_element()
     }
 
@@ -4962,6 +5004,35 @@ fn linha_pensando(painel: u64, rotulo: SharedString, fonte: SharedString, desde:
                 .child(super::componentes::lugar_do_relogio(painel, Cores::tenue(), desde, 72.)),
             None => s.child(div().font_family(fonte).metadado().text_color(Cores::texto()).child(rotulo)),
         })
+        .into_any_element()
+}
+
+/// A linha "Pensando por" com a trilha do turno embaixo dela, recuada e ligada por um cotovelo
+/// de fio fino que sai de baixo do ponto e entra na primeira linha da trilha.
+fn pensando_com_trilha(pensando: AnyElement, trilha: AnyElement) -> AnyElement {
+    v_flex()
+        .w_full()
+        .child(pensando)
+        .child(
+            div()
+                .relative()
+                .w_full()
+                .pl(RECUO_DO_LOG)
+                // Do centro da coluna do ícone (7), de 3 acima desta linha até o meio dela (11).
+                .child(
+                    div()
+                        .absolute()
+                        .left(r(6.5))
+                        .top(r(-3.))
+                        .w(r(10.))
+                        .h(r(14.))
+                        .border_l_1()
+                        .border_b_1()
+                        .rounded_bl(raio::CONTROLE)
+                        .border_color(Cores::borda_forte()),
+                )
+                .child(trilha),
+        )
         .into_any_element()
 }
 

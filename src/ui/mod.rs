@@ -108,7 +108,7 @@ actions!(vitral, [EditarUltima, CorrigirUltima, RecordarAnterior, RecordarSeguin
 actions!(vitral, [AbrirMenuDoPainel]);
 // Ctrl+I: o quadro de ideias.
 actions!(vitral, [AbrirQuadroDeIdeias]);
-// Linear (25/11/2026): Ctrl+. deixa só as conversas na janela.
+// Linear (25/11/2026): o modo foco deixa só as conversas na janela (Ctrl+Alt; era Ctrl+.).
 actions!(vitral, [AlternarFoco]);
 // Teclado e organização (24/11/2026): Alt+↑/↓ pulam de mensagem sua em mensagem sua; PgUp/PgDn
 // rolam a conversa; Ctrl+Shift+Enter maximiza o painel; Alt+PgUp/PgDn levam a aba ao painel
@@ -407,18 +407,12 @@ fn na_faixa_de_redimensionar(ponto: Point<Pixels>, window: &Window) -> bool {
 }
 
 /// A margem do cartão das conversas na peça dela: 8 em cima; 8 à direita na última; e, sem a
-/// lista (que leva junto a barra de baixo), 8 embaixo e 8 à esquerda na primeira. `sem_lista` vai
-/// de 0 (lista ancorada) a 1 (sem ela): no meio do caminho, a margem cresce junto com o cartão.
-fn margem_do_cartao(d: Div, primeira: bool, ultima: bool, sem_lista: f32) -> Div {
-    let folga = crate::tema::r(8. * sem_lista.clamp(0., 1.));
-    d.pt(esp::E8).when(ultima, |d| d.pr(esp::E8)).pb(folga).when(primeira, |d| d.pl(folga))
-}
-
-/// A opacidade da lista e da barra de baixo no caminho `t` (1 à vista, 0 fora) da animação que as
-/// tira e traz de volta: somem antes de o cartão acabar de crescer e só reaparecem com o lugar
-/// quase aberto, como o esmaecer de 140 ms dentro dos 320 do protótipo Linear.
-fn opacidade_ao_recolher(t: f32) -> f32 {
-    ((t - 0.35) / 0.65).clamp(0., 1.)
+/// lista (que leva junto a barra de baixo), 8 embaixo e 8 à esquerda na primeira.
+fn margem_do_cartao(d: Div, primeira: bool, ultima: bool, lista: bool) -> Div {
+    d.pt(esp::E8)
+        .when(ultima, |d| d.pr(esp::E8))
+        .when(!lista, |d| d.pb(esp::E8))
+        .when(!lista && primeira, |d| d.pl(esp::E8))
 }
 
 /// O orçamento desta janela. A margem da esquerda só existe com a lista ancorada (dono,
@@ -593,7 +587,7 @@ pub struct Janela {
     painel: bool,
     /// Lista da esquerda (conversas/arquivos) aberta ou recolhida.
     lista: bool,
-    /// Modo foco (Linear, 25/11/2026, Ctrl+.): só as conversas, sem a lista, a barra de baixo e o
+    /// Modo foco (Linear, 25/11/2026; Ctrl+Alt): só as conversas, sem a lista, a barra de baixo e o
     /// painel da direita. Guarda como a lista e o painel estavam, para voltar igual.
     antes_do_foco: Option<(bool, bool)>,
     /// O trilho de uso (os anéis do canto, à vista no modo foco) pode ser arrastado: quanto ele
@@ -613,10 +607,7 @@ pub struct Janela {
     /// Estado das divisórias, recomeçado quando muda a composição, o zoom ou a largura: as partes
     /// voltam às `larguras` na escala nova.
     estado_partes: Entity<ResizableState>,
-    chave_partes: Option<(usize, bool, bool, u32, u32, Option<u64>, bool, Option<u32>)>,
-    /// A largura da lista da última vez em que ela esteve ancorada, em px: é dela que a lista
-    /// encolhe quando sai (o orçamento já não a conta).
-    lista_vista_px: f32,
+    chave_partes: Option<(usize, bool, bool, u32, u32, Option<u64>, bool)>,
     gaveta: Option<Gaveta>,
     /// Sobe a cada abertura da gaveta: a entrada dela toca uma vez por abertura.
     geracao_gaveta: u64,
@@ -643,6 +634,11 @@ pub struct Janela {
     /// Desde quando o Ctrl está apertado (para os números só aparecerem segurando, depois de uns
     /// 150 ms); `None` com ele solto.
     ctrl_desde: Option<std::time::Instant>,
+    /// O Ctrl+Alt do modo foco: armado quando os dois estão apertados, sozinhos, e desarmado por
+    /// qualquer tecla ou clique no meio (aí é outro atalho, como o Ctrl+Alt+A). Soltar com ele
+    /// armado alterna o modo foco. E os modificadores do evento anterior.
+    foco_armado: bool,
+    modificadores: gpui_kit::Modifiers,
     _gravar_arranjo: Option<Task<()>>,
     /// A imagem anexada que está aberta na "ilha" em cima da caixa (o chat e o arquivo), e a que
     /// o clique fora acabou de fechar (para o clique na própria pílula fechar, e não reabrir).
@@ -1093,7 +1089,6 @@ impl Janela {
             larguras: Larguras::default(),
             estado_partes: cx.new(|_| ResizableState::default()),
             chave_partes: None,
-            lista_vista_px: 0.,
             gaveta: None,
             geracao_gaveta: 0,
             foco_gaveta: cx.focus_handle(),
@@ -1119,6 +1114,8 @@ impl Janela {
             arranjo: None,
             arranjo_ligado: false,
             ctrl_desde: None,
+            foco_armado: false,
+            modificadores: Default::default(),
             _gravar_arranjo: None,
             confirmando_saida: false,
             ultrathink: HashSet::new(),
@@ -1307,7 +1304,7 @@ impl Janela {
         cx.notify();
     }
 
-    /// Modo foco (Linear, 25/11/2026, Ctrl+.): só as conversas, sem a lista, a barra de baixo e o
+    /// Modo foco (Linear, 25/11/2026; Ctrl+Alt): só as conversas, sem a lista, a barra de baixo e o
     /// painel da direita; o uso dos agentes flutua no canto. De novo, volta como estava.
     pub(super) fn alternar_foco(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((lista, painel)) = self.antes_do_foco.take() {
@@ -1751,6 +1748,24 @@ impl Janela {
         cx.notify();
     }
 
+    /// O Ctrl+Alt alterna o modo foco (dono, 27/11/2026): arma quando os dois ficam apertados sem
+    /// mais nenhum modificador, vindo de menos (não de soltar o Shift de um Ctrl+Alt+Shift), e
+    /// dispara quando um deles solta, se nenhuma tecla nem clique passou no meio. Só com a janela
+    /// ativa e sem diálogo: um atalho do sistema com Ctrl+Alt costuma levar o foco embora.
+    fn modificadores_mudaram(&mut self, agora: gpui_kit::Modifiers, window: &mut Window, cx: &mut Context<Self>) {
+        let so_ctrl_alt = |m: &gpui_kit::Modifiers| m.control && m.alt && !m.shift && !m.platform && !m.function;
+        let antes = std::mem::replace(&mut self.modificadores, agora);
+        if so_ctrl_alt(&agora) {
+            self.foco_armado = !(antes.shift || antes.platform || antes.function);
+            return;
+        }
+        let armado = std::mem::take(&mut self.foco_armado);
+        let soltou = !(agora.shift || agora.platform || agora.function);
+        if armado && soltou && window.is_window_active() && !window.has_active_dialog(cx) {
+            self.alternar_foco(window, cx);
+        }
+    }
+
     /// O Ctrl foi apertado ou solto. Com "Só segurando Ctrl", os números das abas e da lista
     /// aparecem 150 ms depois de apertar e somem ao soltar (`opcoes::numeros_a_vista`).
     fn ctrl_mudou(&mut self, apertado: bool, cx: &mut Context<Self>) {
@@ -2117,7 +2132,7 @@ impl Janela {
     /// A árvore da janela inteira (o `render`, que só mede quanto ela leva para o `VITRAL_QUADROS`).
     fn montar_janela(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         contar_quadro();
-        let barra = movimento::valor("barra-de-baixo", if self.lista { 1f32 } else { 0. }, movimento::PASSO, movimento::Curva::Entrar, window, cx);
+        let lista_voltou = self.mostrou_lista_em.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(150));
         // O Ctrl solto com a janela fora do caminho do evento (um diálogo com o foco, a janela
         // desativada) não avisa: sem o Ctrl de fato apertado, o relógio dos números zera.
         if !window.modifiers().control {
@@ -2395,7 +2410,13 @@ impl Janela {
             .track_focus(&self.foco)
             // Digitar com o foco fora de campo escreve na caixa do painel ativo (item 1.1).
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| this.tecla_na_janela(ev, window, cx)))
-            .on_modifiers_changed(cx.listener(|this, ev: &ModifiersChangedEvent, _, cx| this.ctrl_mudou(ev.modifiers.control, cx)))
+            .on_modifiers_changed(cx.listener(|this, ev: &ModifiersChangedEvent, window, cx| {
+                this.ctrl_mudou(ev.modifiers.control, cx);
+                this.modificadores_mudaram(ev.modifiers, window, cx);
+            }))
+            // Uma tecla ou um clique com o Ctrl+Alt apertado é outro atalho: o modo foco desarma.
+            .capture_key_down(cx.listener(|this, _: &KeyDownEvent, _, _| this.foco_armado = false))
+            .capture_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, _, _| this.foco_armado = false))
             .on_action(cx.listener(|this, _: &NovaConversa, window, cx| this.novo_chat_direto(window, cx)))
             // O Ctrl+K seleciona o termo anterior: o que se digita troca a busca, em vez de se
             // somar a ela ("WMSPesagem"). O Esc da lista, que também foca a busca, não seleciona.
@@ -2551,23 +2572,16 @@ impl Janela {
                     )
                     // Linear (25/11/2026): a barra de baixo da janela, com o logo, o uso, o contexto,
                     // a Revisão, as Arquivadas e os Avisos. Some junto com a lista (Ctrl+B).
-                    // Ela desce e esmaece em 320 ms enquanto o cartão das conversas cresce, e volta do
-                    // mesmo jeito (o modo foco e o Ctrl+B; dono, 27/11/2026: "faz uma animação pra
-                    // quando vai pro modo foco"). A vista fica com os 34 dela; o que encolhe é a
-                    // janela em volta, que a corta.
-                    .when(barra > 0., |d| {
-                        d.child(
-                            div()
-                                .w_full()
-                                .flex_none()
-                                .h(crate::tema::r(34. * barra))
-                                .overflow_hidden()
-                                .opacity(opacidade_ao_recolher(barra))
-                                .child(
-                                    AnyView::from(self.vista_da_barra.clone())
-                                        .cached(StyleRefinement::default().w_full().h(crate::tema::r(34.)).flex_none()),
-                                ),
-                        )
+                    .when(self.lista, |d| {
+                        d.child(movimento::entrada(
+                            "barra-de-baixo-volta",
+                            lista_voltou,
+                            movimento::De::Baixo,
+                            div().w_full().flex_none().child(
+                                AnyView::from(self.vista_da_barra.clone())
+                                    .cached(StyleRefinement::default().w_full().h(crate::tema::r(34.)).flex_none()),
+                            ),
+                        ))
                     }),
             )
             .children(self.faixa_de_gravacao(&motor, cx))
@@ -2699,6 +2713,7 @@ impl Janela {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        let lista_voltou = self.mostrou_lista_em.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(150));
         let voltou_do_quadro = self.voltou_do_quadro_em.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(150));
         let o = self.orcamento;
         self.normalizar_maximizado();
@@ -2706,13 +2721,7 @@ impl Janela {
         let visiveis = paineis::paineis_a_mostrar(&ids, self.maximizado);
         let quadro = self.quadro.clone();
         let n = if quadro.is_some() { 1 } else { visiveis.len().max(1) };
-        // A lista sai e volta andando (o modo foco, o Ctrl+B): `t_lista` vai de 1 (ancorada) a 0
-        // em 320 ms, na curva que sai rápido e pousa macio, como o `grid-template-columns` do
-        // protótipo Linear. No caminho, a peça dela encolhe e o cartão das conversas fica com o
-        // que sobra (dono, 27/11/2026: "faz uma animação pra quando vai pro modo foco").
-        let t_lista = movimento::valor("lista-ancorada", if o.lista { 1f32 } else { 0. }, movimento::PASSO, movimento::Curva::Entrar, window, cx);
-        let andando = t_lista > 0. && t_lista < 1.;
-        let lista = o.lista || andando;
+        let lista = o.lista;
         let painel = o.direita == Direita::Ancorada;
         // Com outra composição, outro zoom ou outra largura de janela, as divisórias recomeçam
         // das larguras guardadas, já na escala nova: nada pula, e o que foi arrastado a 100% fica
@@ -2725,30 +2734,12 @@ impl Janela {
         let com_arquivo = painel && matches!(self.aba_visivel(motor.read(cx)), abas_direita::AbaDireita::Arquivo(_));
         // As Tarefas mudam quantas peças há: a chave muda com elas, e as larguras recomeçam.
         let pecas = if quadro.is_some() { usize::MAX } else { n };
-        // Andando, a chave muda a cada quadro: as larguras vêm da conta daqui, não do que o kit
-        // guardou.
-        let passo = andando.then(|| (t_lista * 4000.) as u32);
-        let chave = (pecas, painel, lista, (o.escala * 100.).round() as u32, o.util.round() as u32, maximizado, com_arquivo, passo);
+        let chave = (pecas, painel, lista, (o.escala * 100.).round() as u32, o.util.round() as u32, maximizado, com_arquivo);
         if self.chave_partes != Some(chave) {
             self.chave_partes = Some(chave);
             self.estado_partes.update(cx, |estado, _| estado.clear());
         }
         let mut larguras = self.larguras.em_px_com(&o, n, com_arquivo);
-        if let Some(l) = larguras.lista {
-            self.lista_vista_px = l;
-        }
-        // A lista inteira e o quanto dela está à vista agora. O orçamento já conta a lista toda
-        // (voltando) ou nenhuma (saindo): a diferença para o que se vê vai para as conversas, na
-        // proporção de cada uma.
-        let lista_cheia = larguras.lista.unwrap_or(self.lista_vista_px);
-        let lista_a_vista = if andando { (lista_cheia * t_lista).floor() } else { larguras.lista.unwrap_or(0.) };
-        if andando {
-            let sobra = larguras.lista.unwrap_or(0.) - lista_a_vista;
-            let total: f32 = larguras.conversas.iter().sum();
-            if total > 0. {
-                larguras.conversas.iter_mut().for_each(|c| *c += sobra * *c / total);
-            }
-        }
         // Maximizada no jeito do VS Code: as outras estreitas, a escolhida com o resto. Isso não
         // vira arranjo guardado (o `on_resize` não grava com uma maximizada).
         let espremidas = maximizado.and_then(|m| visiveis.iter().position(|&ix| self.paineis[ix].id == m));
@@ -2770,9 +2761,8 @@ impl Janela {
             format!("partes-{n}-{painel}-{lista}-{}", espremidas.map_or(-1, |k| k as i64))
         };
         let mut grupo = h_resizable(SharedString::from(id_do_grupo)).with_state(&self.estado_partes);
-        // Com as Tarefas, as larguras das conversas não estão à vista: nada se grava. Com a lista
-        // andando, as larguras são as do caminho, não as suas.
-        if quadro.is_none() && !andando {
+        // Com as Tarefas, as larguras das conversas não estão à vista: nada se grava.
+        if quadro.is_none() {
             grupo = grupo.on_resize(move |estado, _, cx| {
                 let tamanhos: Vec<f32> = estado.read(cx).sizes().iter().map(|t| t.as_f32()).collect();
                 let _ = janela.update(cx, |this, _| {
@@ -2782,19 +2772,18 @@ impl Janela {
                 });
             });
         }
-        if lista {
-            // Andando, a lista fica com a largura inteira dela, presa à esquerda, e a peça que
-            // encolhe a corta (o `min-width` do protótipo): nada dentro dela se rearruma, e ela
-            // esmaece no caminho.
-            let faixa = if andando { px(0.)..px(lista_cheia.max(1.)) } else { u(LISTA_MINIMA)..px(o.max_lista) };
+        if let Some(largura) = larguras.lista {
             grupo = grupo.child(
-                resizable_panel().size(px(lista_a_vista)).size_range(faixa).fixed().child(
-                    div().relative().size_full().overflow_hidden().opacity(opacidade_ao_recolher(t_lista)).child(
-                        div()
-                            .map(|d| if andando { d.absolute().top_0().bottom_0().left_0().w(px(lista_cheia)) } else { d.relative().size_full() })
-                            .child(AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full())),
-                    ),
-                ),
+                resizable_panel()
+                    .size(px(largura))
+                    .size_range(u(LISTA_MINIMA)..px(o.max_lista))
+                    .fixed()
+                    .child(movimento::entrada(
+                        "lista-volta",
+                        lista_voltou,
+                        movimento::De::Esquerda,
+                        div().relative().size_full().child(AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full())),
+                    )),
             );
         }
         if let Some(quadro) = quadro {
@@ -2809,7 +2798,7 @@ impl Janela {
             grupo = grupo.child(
                 resizable_panel()
                     .size(px(larguras.conversas.iter().sum::<f32>()))
-                    .child(div().size_full().relative().map(|d| margem_do_cartao(d, true, true, 1. - t_lista)).child(cartao)),
+                    .child(div().size_full().relative().map(|d| margem_do_cartao(d, true, true, lista)).child(cartao)),
             );
             self.direita_vista = None;
             return grupo;
@@ -2824,7 +2813,7 @@ impl Janela {
                         div()
                             .size_full()
                             .relative()
-                            .map(|d| margem_do_cartao(d, true, !painel, 1. - t_lista))
+                            .map(|d| margem_do_cartao(d, true, !painel, lista))
                             .child(self.zona_de_soltura(0, conteudo, cx)),
                     ),
             );
@@ -2843,7 +2832,7 @@ impl Janela {
                         div()
                             .size_full()
                             .relative()
-                            .map(|d| margem_do_cartao(d, k == 0, k + 1 == visiveis.len() && !painel, 1. - t_lista))
+                            .map(|d| margem_do_cartao(d, k == 0, k + 1 == visiveis.len() && !painel, lista))
                             .child(movimento::entrada_em(
                                 ("coluna-volta", id as usize),
                                 voltou_do_quadro,
@@ -2878,7 +2867,7 @@ impl Janela {
                     .size(px(larguras.direita.unwrap_or(maxima)))
                     .size_range(u(minima)..px(maxima))
                     .fixed()
-                    .child(div().size_full().map(|d| margem_do_cartao(d, false, true, 1. - t_lista)).child(conteudo)),
+                    .child(div().size_full().map(|d| margem_do_cartao(d, false, true, lista)).child(conteudo)),
             );
         } else {
             self.direita_vista = None;

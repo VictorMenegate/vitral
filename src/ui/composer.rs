@@ -11,6 +11,7 @@ use std::{
 
 use gpui_kit::component::{
     ElementExt as _,
+    Selectable,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{InlineToken, InputContent, Textarea, TextareaState},
@@ -256,10 +257,12 @@ pub(super) struct Gatilho<'a> {
 }
 
 /// O gatilho da palavra sob o cursor (dono, 24/11/2026: o menu abria só para a última palavra do
-/// texto). A palavra vai de um espaço ao outro em volta do cursor; `/` só vale na primeira palavra
-/// do texto (o Claude Code só entende comando de barra ali), `#` e `@` em qualquer uma. O cursor
-/// tem que estar depois do sinal. Um caminho com espaço vai entre aspas (`@"minha pasta/a b.rs"`):
-/// com o cursor dentro das aspas, a palavra é o trecho todo.
+/// texto). A palavra vai de um espaço ao outro em volta do cursor; `/`, `#` e `@` valem em qualquer
+/// palavra (o `/` só valia na primeira; dono, 27/11/2026: "faz o / funcionar em qualquer parte,
+/// não só no começo"). Fora do começo, o `/` de um caminho (`/home/x`) não é gatilho, e o menu só
+/// oferece as skills (ver `sugestoes_da_caixa`). O cursor tem que estar depois do sinal. Um
+/// caminho com espaço vai entre aspas (`@"minha pasta/a b.rs"`): com o cursor dentro das aspas, a
+/// palavra é o trecho todo.
 pub(super) fn gatilho_em(texto: &str, cursor: usize) -> Option<Gatilho<'_>> {
     let mut cursor = cursor.min(texto.len());
     while !texto.is_char_boundary(cursor) {
@@ -280,7 +283,11 @@ pub(super) fn gatilho_em(texto: &str, cursor: usize) -> Option<Gatilho<'_>> {
     let inicio = texto[..cursor].char_indices().rev().find(|(_, c)| c.is_whitespace()).map_or(0, |(i, c)| i + c.len_utf8());
     let fim = cursor + texto[cursor..].find(char::is_whitespace).unwrap_or(texto.len() - cursor);
     let sinal = texto[inicio..fim].chars().next().filter(|c| matches!(c, '#' | '@' | '/'))?;
-    if (sinal == '/' && inicio != 0) || cursor < inicio + sinal.len_utf8() {
+    if cursor < inicio + sinal.len_utf8() {
+        return None;
+    }
+    // No meio do texto, uma palavra com outra barra é um caminho, não um comando.
+    if sinal == '/' && inicio != 0 && texto[inicio + 1..fim].contains('/') {
         return None;
     }
     Some(Gatilho { sinal, digitado: &texto[inicio + sinal.len_utf8()..cursor], inicio, fim })
@@ -1162,7 +1169,10 @@ impl Janela {
                     .items_center()
                     .gap(linear::CONTROLES_VAO)
                     .ml(linear::CONTROLES_VAO)
-                    .children(self.anel_do_contexto(chat, b, cx))
+                    // Só sem a barra de baixo (o modo foco, a lista recolhida): com ela à vista o
+                    // contexto do chat aberto já está lá, e clicável (dono, 27/11/2026: "tira a
+                    // porcentagem do contexto da caixa ... porque tem lá embaixo").
+                    .children(self.anel_do_contexto(chat, b, cx).filter(|_| !self.lista))
                     // O clipe mora no "…" (protótipo Linear, 25/11/2026).
                     .child(em_repouso("repouso-mais", self.botao_mais(motor, chat, b, window, cx).into_any_element()))
                     .children(self.botoes_de_envio(b, vazio, enter_no_turno(motor, &chat.id), envios, cx)),
@@ -1279,45 +1289,57 @@ impl Janela {
                     .child(barra)
                     .child(div().text_size(r(12.)).line_height(r(16.)).tabular().text_color(cor_numero).child(format!("{numero}%"))),
             );
-        let (motor, janela_e, chat_id, painel) = (self.motor.clone(), cx.entity().downgrade(), chat.id.clone(), b.painel);
-        Some(
-            popover(("pop-contexto", painel as usize))
-                .anchor(Anchor::BottomRight)
-                .offset(px(8.))
-                .trigger(gatilho)
-                .content(move |_, window, cx| {
-                    let pop = cx.entity().downgrade();
-                    let janela_e = janela_e.clone();
-                    // A linha que vem depois dos tokens: o que o último turno gastou.
-                    let extras: Vec<AnyElement> = motor
-                        .as_ref()
-                        .map(|m| super::onde_uso::ultimo_turno(m.read(cx), &chat_id).into_iter().collect())
-                        .unwrap_or_default();
-                    let compactar = botao_fantasma(
-                        ("compactar", painel as usize),
-                        Some(Lucide::Minimize.into()),
-                        tr!("Compactar a conversa"),
-                        TamanhoBotao::Barra,
-                        window,
-                        cx,
-                    )
-                    .tooltip(SharedString::from(crate::i18n::traduzir(DICA_DO_COMPACTAR)))
-                    .on_click(move |_, window, cx| {
-                        if let Some(pop) = pop.upgrade() {
-                            pop.update(cx, |p, cx| p.dismiss(window, cx));
-                        }
-                        let _ = janela_e.update(cx, |this, cx| this.compactar_conversa(painel, cx));
-                    });
-                    let Some(m) = motor.as_ref().map(|m| m.read(cx)) else {
-                        return div().into_any_element();
-                    };
-                    match m.chat(&chat_id) {
-                        Some(c) => super::conversa::uso_da_conversa(m, c, extras, compactar.into_any_element()).into_any_element(),
-                        None => div().into_any_element(),
+        Some(self.popover_do_contexto(("pop-contexto", b.painel as usize), Anchor::BottomRight, gatilho, chat.id.clone(), b.painel, cx))
+    }
+
+    /// O uso da conversa (o contexto e o custo, o modelo, a conta e o Compactar) num popover que
+    /// abre para cima do `gatilho`: o anel da caixa e a pílula "Contexto" da barra de baixo.
+    pub(super) fn popover_do_contexto<G: Selectable + IntoElement + 'static>(
+        &self,
+        id: impl Into<ElementId>,
+        ancora: Anchor,
+        gatilho: G,
+        chat_id: String,
+        painel: u64,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let (motor, janela_e) = (self.motor.clone(), cx.entity().downgrade());
+        popover(id)
+            .anchor(ancora)
+            .offset(px(8.))
+            .trigger(gatilho)
+            .content(move |_, window, cx| {
+                let pop = cx.entity().downgrade();
+                let janela_e = janela_e.clone();
+                // A linha que vem depois dos tokens: o que o último turno gastou.
+                let extras: Vec<AnyElement> = motor
+                    .as_ref()
+                    .map(|m| super::onde_uso::ultimo_turno(m.read(cx), &chat_id).into_iter().collect())
+                    .unwrap_or_default();
+                let compactar = botao_fantasma(
+                    ("compactar", painel as usize),
+                    Some(Lucide::Minimize.into()),
+                    tr!("Compactar a conversa"),
+                    TamanhoBotao::Barra,
+                    window,
+                    cx,
+                )
+                .tooltip(SharedString::from(crate::i18n::traduzir(DICA_DO_COMPACTAR)))
+                .on_click(move |_, window, cx| {
+                    if let Some(pop) = pop.upgrade() {
+                        pop.update(cx, |p, cx| p.dismiss(window, cx));
                     }
-                })
-                .into_any_element(),
-        )
+                    let _ = janela_e.update(cx, |this, cx| this.compactar_conversa(painel, cx));
+                });
+                let Some(m) = motor.as_ref().map(|m| m.read(cx)) else {
+                    return div().into_any_element();
+                };
+                match m.chat(&chat_id) {
+                    Some(c) => super::conversa::uso_da_conversa(m, c, extras, compactar.into_any_element()).into_any_element(),
+                    None => div().into_any_element(),
+                }
+            })
+            .into_any_element()
     }
 
     /// Escreve na caixa do painel e põe o foco nela (quem envia é você, com Enter).
@@ -1684,7 +1706,10 @@ impl Janela {
             return (!lista.is_empty()).then_some((sinal, inicio, lista));
         }
         let itens: Vec<Sugestao> = match sinal {
-            '/' => self.catalogo_de(chat).iter().map(sugestao_do_comando).collect(),
+            // No começo, o catálogo inteiro. No meio do texto, só as skills: o Claude Code só
+            // executa comando de barra (/clear, /compact) na primeira palavra, e uma skill citada
+            // no meio da frase o agente ainda entende e aciona.
+            '/' => self.catalogo_de(chat).iter().filter(|c| inicio == 0 || c.skill).map(sugestao_do_comando).collect(),
             _ => return None,
         };
         let lista = menu_sugestoes(itens, digitado, None);
@@ -2494,7 +2519,7 @@ mod testes_sugestoes {
     fn o_gatilho_e_a_ultima_palavra() {
         assert_eq!(gatilho("/comp"), Some(('/', "comp", 0)));
         assert_eq!(gatilho("/compact agora"), None);
-        assert_eq!(gatilho("veja a /barra"), None);
+        assert_eq!(gatilho("veja a /barra"), Some(('/', "barra", 7)));
         assert_eq!(gatilho("#nin"), Some(('#', "nin", 0)));
         assert_eq!(gatilho("mande para #nin"), Some(('#', "nin", 11)));
         assert_eq!(gatilho("fale do @"), Some(('@', "", 8)));
@@ -2854,9 +2879,11 @@ mod testes_do_cursor_e_do_catalogo {
         // Depois do espaço, ou antes do sinal, não é a palavra do gatilho.
         assert_eq!(gatilho_em("veja @cent agora", 16), None);
         assert_eq!(gatilho_em("veja @cent", 5), None);
-        // O "/" só vale na primeira palavra, mesmo com o cursor nela, no meio.
+        // O "/" vale em qualquer palavra, também com o cursor no meio dela.
         assert_eq!(gatilho_em("/compact agora", 5), g('/', "comp", 0, 8));
-        assert_eq!(gatilho_em("foo /ba", 7), None);
+        assert_eq!(gatilho_em("foo /ba", 7), g('/', "ba", 4, 7));
+        // No meio do texto, um caminho não abre o menu.
+        assert_eq!(gatilho_em("veja /home/victor", 10), None);
         // Texto com mais de uma linha: a palavra acaba na quebra.
         assert_eq!(gatilho_em("a\n@b\nc", 4), g('@', "b", 2, 4));
         // Cursor no meio de um caractere de dois bytes cai na borda de antes.

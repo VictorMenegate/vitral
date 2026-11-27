@@ -427,5 +427,6 @@
  "Voltar ao título de antes": "Volver al título anterior",
  "Limpar a conversa (/clear)": "Borrar la conversación (/clear)",
  "IA": "IA",
- "Apagar…": "Eliminar…"
+ "Apagar…": "Eliminar…",
+ "Contexto do chat aberto: {usados} de {janela}": "Contexto del chat abierto: {usados} de {janela}"
 }

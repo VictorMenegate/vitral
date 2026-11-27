@@ -72,6 +72,8 @@ pub enum Curva {
     Mover,
     /// ease-out cúbica.
     Sair,
+    /// Sem curva: para quem aplica a sua por cima (a entrada com espera, `entrada_depois_em`).
+    Reta,
 }
 
 impl Curva {
@@ -81,6 +83,7 @@ impl Curva {
             Curva::Entrar => cubic_bezier(0.16, 1., 0.3, 1.)(t),
             Curva::Mover => cubic_bezier(0.2, 0., 0., 1.)(t),
             Curva::Sair => ease_out_cubic(t),
+            Curva::Reta => t,
         }
     }
 }
@@ -265,6 +268,21 @@ pub fn entrada_em<E: IntoElement + Styled + 'static>(id: impl Into<ElementId>, n
         let inicial = if nova { 0. } else { 1. };
         let t = valor_desde(id, inicial, 1f32, duracao, Curva::Entrar, window, cx);
         de.aplicar(el, t).into_any_element()
+    })
+}
+
+/// A `entrada` que espera `atraso` antes de andar: os grupos de um painel entram um depois do outro
+/// quando o assunto dele troca (o "Este chat" ao mudar de chat). Como a `entrada`, só toca quando
+/// `nova`; remontado, o grupo aparece pronto.
+pub fn entrada_depois_em<E: IntoElement + Styled + 'static>(id: impl Into<ElementId>, nova: bool, de: De, atraso: Duration, d: Duration, el: E) -> ComEstado {
+    let id = id.into();
+    com_estado(move |window, cx| {
+        let total = atraso + d;
+        let espera = atraso.as_secs_f32() / total.as_secs_f32();
+        let inicial = if nova { 0. } else { 1. };
+        let t = valor_desde(id, inicial, 1f32, total, Curva::Reta, window, cx);
+        let andou = ((t - espera) / (1. - espera)).clamp(0., 1.);
+        de.aplicar(el, Curva::Entrar.aplicar(andou)).into_any_element()
     })
 }
 
